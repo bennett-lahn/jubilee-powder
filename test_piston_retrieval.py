@@ -5,7 +5,7 @@ Prerequisites (user must do before running this test):
 1. Home jubilee (all axes)
 2. Move to global_ready position
 3. Pick up manipulator tool
-4. Pick up a mold (without cap/piston)
+4. Pick up a mold (without top piston)
 
 This test performs:
 1. Move to dispenser 0 ready position
@@ -22,7 +22,7 @@ from MotionPlatformStateMachine import MotionPlatformStateMachine
 from Manipulator import Manipulator
 from MovementExecutor import FeedRate
 from ConfigLoader import config
-from trickler_labware import WeightWell
+from trickler_labware import Mold
 
 
 class TestError(Exception):
@@ -105,7 +105,7 @@ def main():
     print("1. Jubilee has been homed (all axes)")
     print("2. Machine is at global_ready position")
     print("3. Manipulator tool has been picked up")
-    print("4. A mold (without cap) has been picked up by the manipulator")
+    print("4. A mold (without top piston) has been picked up by the manipulator")
     print("\nPress Enter to continue or Ctrl+C to abort...")
     
     try:
@@ -167,7 +167,7 @@ def main():
         
         # Create a mock mold to simulate carrying one
         print("Creating mock mold (simulating picked up mold)...")
-        mock_mold = WeightWell(
+        mock_mold = Mold(
             name="test_mold",
             depth=10.0,
             totalLiquidVolume=1000.0,
@@ -190,7 +190,7 @@ def main():
         state_machine.update_context(
             z_height_id="mold_transfer_safe",  # Required for dispenser operations
             active_tool_id="manipulator",
-            payload_state="mold_without_cap"  # Critical: must be mold_without_cap
+            payload_state="mold_without_top_piston"  # Critical: must be mold_without_top_piston
         )
         # Manually set current_well to simulate carrying a mold
         state_machine.context.current_well = mock_mold
@@ -222,12 +222,12 @@ def main():
         else:
             print_success("Active tool: manipulator ✓")
         
-        # Check 2: Payload state is mold_without_cap
-        if state_machine.context.payload_state != "mold_without_cap":
-            print_error(f"Payload state is '{state_machine.context.payload_state}', must be 'mold_without_cap'")
+        # Check 2: Payload state is mold_without_top_piston
+        if state_machine.context.payload_state != "mold_without_top_piston":
+            print_error(f"Payload state is '{state_machine.context.payload_state}', must be 'mold_without_top_piston'")
             prerequisites_met = False
         else:
-            print_success("Payload state: mold_without_cap ✓")
+            print_success("Payload state: mold_without_top_piston ✓")
         
         # Check 3: Carrying a mold (current_well is not None)
         if state_machine.context.current_well is None:

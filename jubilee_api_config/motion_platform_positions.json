@@ -68,7 +68,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       },
       "z_height_policy": {
         "allowed": [
@@ -78,7 +78,7 @@
       "engagement": {
         "requirements": {
           "active_tool_id": "manipulator",
-          "payload_state": "mold_without_cap"
+          "payload_state": "mold_without_top_piston"
         },
         "allowed_actions": []
       }
@@ -102,7 +102,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap",
+        "payload_state": "mold_without_top_piston",
         "mold_on_scale": true
       },
       "z_height_policy": {
@@ -111,7 +111,7 @@
       "engagement": {
         "requirements": {
           "active_tool_id": "manipulator",
-          "payload_state": "mold_without_cap",
+          "payload_state": "mold_without_top_piston",
           "mold_on_scale": true
         },
         "allowed_actions": [
@@ -142,7 +142,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       },
       "z_height_policy": {
         "allowed": [
@@ -153,7 +153,7 @@
       "engagement": {
         "requirements": {
           "active_tool_id": "manipulator",
-          "payload_state": "mold_without_cap"
+          "payload_state": "mold_without_top_piston"
         }
       }
     },
@@ -180,7 +180,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       },
       "z_height_policy": {
         "allowed": [
@@ -191,7 +191,7 @@
       "engagement": {
         "requirements": {
           "active_tool_id": "manipulator",
-          "payload_state": "mold_without_cap"
+          "payload_state": "mold_without_top_piston"
         }
       }
     },
@@ -669,7 +669,7 @@
   "actions": [
     {
       "id": "trickler_dispense",
-      "description": "Dispense from the trickler while holding a mold without its cap at the scale.",
+      "description": "Dispense from the trickler while holding a mold without its top piston at the scale.",
       "requires_tool_engaged": true,
       "required_tool_id": "manipulator",
       "position_scope": [
@@ -677,7 +677,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       }
     },
     {
@@ -740,7 +740,7 @@
     },
     {
       "id": "retrieve_piston",
-      "description": "Retrieve a piston from the dispenser and insert into mold. Requires manipulator tool, mold without cap, and must start from the corresponding dispenser ready position.",
+      "description": "Retrieve a piston from the dispenser and insert into mold. Requires manipulator tool, mold without top piston, and must start from the corresponding dispenser ready position.",
       "blocked_when_engaged": true,
       "required_tool_id": "manipulator",
       "position_scope": [
@@ -749,7 +749,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       }
     },
     {
@@ -778,7 +778,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       }
     },
     {
@@ -848,7 +848,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap"
+        "payload_state": "mold_without_top_piston"
       }
     },
     {
@@ -861,7 +861,7 @@
       ],
       "requirements": {
         "active_tool_id": "manipulator",
-        "payload_state": "mold_without_cap",
+        "payload_state": "mold_without_top_piston",
         "mold_on_scale": true
       }
     }

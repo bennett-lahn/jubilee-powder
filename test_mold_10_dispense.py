@@ -256,7 +256,7 @@ def main():
         print_step(4, "Place mold on scale")
         
         wait_for_user_confirmation("Place mold on scale (manipulator will move down)")
-        manipulator.place_well_on_scale()
+        manipulator.place_mold_on_scale()
         print_success("Placed mold on scale")
         
         if not state_machine.context.mold_on_scale:
@@ -287,7 +287,7 @@ def main():
         print_step(6, "Pick up mold from scale")
         
         wait_for_user_confirmation("Pick up mold from scale (manipulator will move)")
-        manipulator.pick_well_from_scale()
+        manipulator.pick_mold_from_scale()
         print_success("Picked up mold from scale")
         
         if state_machine.context.mold_on_scale:
@@ -388,7 +388,7 @@ def main():
               f"Z={current_pos['Z']}")
         
         wait_for_user_confirmation(f"Place mold {MOLD_ID} back (manipulator will move down)")
-        manipulator.place_well(well_id=MOLD_ID)
+        manipulator.place_mold(well_id=MOLD_ID)
         print_success(f"Placed mold {MOLD_ID} back in position")
         
         if state_machine.context.current_well is not None:

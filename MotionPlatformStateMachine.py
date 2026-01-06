@@ -128,7 +128,7 @@ class MotionContext:
     # Platform state tracking
     deck: Optional[Deck] = None
     scale: Optional[Scale] = None  # Reference to scale object
-    current_well: Optional[object] = None  # WeightWell object representing the mold being carried
+    current_well: Optional[object] = None  # Mold object representing the mold being carried
     mold_on_scale: bool = False  # Whether the current mold is on the scale
     piston_dispensers: List[object] = field(default_factory=list)  # List of PistonDispenser objects
 
@@ -486,19 +486,19 @@ class MotionPlatformStateMachine(StateMachine):
             deck_name: Name of the deck configuration
             config_path: Path to the deck configuration files
         """
-        from trickler_labware import WeightWell
+        from trickler_labware import Mold
         from science_jubilee.labware.Labware import Labware
         
         try:
             # Load the deck configuration
             self.context.deck = Deck(deck_name, path=config_path)
             
-            # Load weight well labware into each slot (18 slots total: 0-17)
+            # Load mold labware into each slot (18 slots total: 0-17)
             for i in range(18):
                 try:
                     # Manual labware loading to work around bug in Deck.load_labware()
                     # which doesn't pass the path parameter to Labware constructor
-                    labware = Labware("weight_well_labware", order="rows", path=config_path)
+                    labware = Labware("mold_labware", order="rows", path=config_path)
                     labware.add_slot(i)
                     offset = self.context.deck.slots[str(i)].offset
                     labware.offset = offset
@@ -509,11 +509,11 @@ class MotionPlatformStateMachine(StateMachine):
                     self.context.deck.safe_z = labware.dimensions.get("zDimension", 10)
                     
                     for well_name in labware.wells.keys():
-                        # Skip empty well names
+                        # Skip empty mold slot names
                         if not well_name or not isinstance(well_name, str):
                             continue
                         
-                        # Extract numerical ID from well name (e.g., "A0" -> "0", "A17" -> "17")
+                        # Extract numerical ID from mold slot name (e.g., "A0" -> "0", "A17" -> "17")
                         # This allows external API to use numerical IDs while labware uses letter+number format
                         # since labware internally uses A1, B1, B2... format
                         if well_name.startswith('A'):
@@ -525,9 +525,9 @@ class MotionPlatformStateMachine(StateMachine):
                         # External API uses numerical IDs like "0", "1", "2", ... "17"
                         ready_pos = f"mold_ready_{numerical_id}"
                         
-                        # Create a WeightWell with minimal required Well fields (coordinates not used)
+                        # Create a Mold with minimal required Well fields (coordinates not used)
                         # Note: Actual coordinates come from motion_platform_positions.json
-                        weight_well = WeightWell(
+                        mold = Mold(
                             # Required Well fields (dummy values since not used for movement)
                             name=numerical_id,  # Use numerical ID for external API
                             depth=0.0,
@@ -536,7 +536,7 @@ class MotionPlatformStateMachine(StateMachine):
                             x=0.0,
                             y=0.0,
                             z=0.0,
-                            # WeightWell custom parameters
+                            # Mold custom parameters
                             valid=True,
                             has_top_piston=False,
                             current_weight=0.0,
@@ -545,9 +545,9 @@ class MotionPlatformStateMachine(StateMachine):
                             ready_pos=ready_pos  # State machine position name
                         )
                         
-                        # Replace the regular well with our WeightWell
+                        # Replace the regular well with our Mold
                         # Keep the labware well name format for internal consistency
-                        labware.wells[well_name] = weight_well
+                        labware.wells[well_name] = mold
                 except Exception as e:
                     print(f"Error loading labware for slot {i}: {e}")
                     import traceback
@@ -575,15 +575,15 @@ class MotionPlatformStateMachine(StateMachine):
         ]
 
     
-    def get_well_from_deck(self, well_id: str) -> Optional[object]:
+    def get_mold_from_deck(self, well_id: str) -> Optional[object]:
         """
-        Get a weight well object from the deck by well ID.
+        Get a mold object from the deck by mold slot ID.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string "0" through "17")
             
         Returns:
-            WeightWell object if found, None otherwise
+            Mold object if found, None otherwise
         """
         if not self.context.deck:
             return None
@@ -606,9 +606,9 @@ class MotionPlatformStateMachine(StateMachine):
                 
                 # Get the well matching the labware well name
                 if labware_well_name in slot.labware.wells:
-                    from trickler_labware import WeightWell
+                    from trickler_labware import Mold
                     well = slot.labware.wells[labware_well_name]
-                    if isinstance(well, WeightWell):
+                    if isinstance(well, Mold):
                         return well
         return None
 
@@ -627,19 +627,19 @@ class MotionPlatformStateMachine(StateMachine):
     # This is the interface that Manipulator and other classes should use.
     # =====================================================================
     
-    def validated_pick_mold_from_well(
+    def validated_pick_mold(
         self,
         well_id: str,
         manipulator_config: Dict[str, object]
     ) -> MoveValidationResult:
         """
-        Validate and execute picking up a mold from a well.
+        Validate and execute picking up a mold from a mold slot.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string "0" through "17")
             manipulator_config: Configuration dict for the manipulator
         """
-        from trickler_labware import WeightWell
+        from trickler_labware import Mold
         
         # Domain-specific validation
         if self.context.current_well is not None:
@@ -654,14 +654,14 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Deck not configured"
             )
         
-        well = self.get_well_from_deck(well_id)
+        well = self.get_mold_from_deck(well_id)
         if well is None:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Well {well_id} not found"
+                reason=f"Mold slot {well_id} not found"
             )
         
-        if not isinstance(well, WeightWell):
+        if not isinstance(well, Mold):
             return MoveValidationResult(
                 valid=False,
                 reason="Invalid mold object"
@@ -679,7 +679,7 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Cannot pick up mold that already has a top piston"
             )
         
-        # Get ready position coordinates for this well
+        # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
         
         if not self._registry.has(ready_position_id):
@@ -747,7 +747,7 @@ class MotionPlatformStateMachine(StateMachine):
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="pick_up_mold",
-            execution_func=self._executor.execute_pick_mold_from_well,
+            execution_func=self._executor.execute_pick_mold,
             well_id=well_id,
             deck=self.context.deck,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
@@ -762,19 +762,19 @@ class MotionPlatformStateMachine(StateMachine):
             self.context.current_well = well
             self.context.mold_on_scale = False
             if not well.has_top_piston:
-                self.context.payload_state = "mold_without_cap"
+                self.context.payload_state = "mold_without_top_piston"
             else:
-                self.context.payload_state = "mold_with_cap"
+                self.context.payload_state = "mold_with_top_piston"
         
         return result
     
-    def validated_place_mold_in_well(
+    def validated_place_mold(
         self,
         well_id: str,
         manipulator_config: Optional[Dict[str, object]] = None
     ) -> MoveValidationResult:
         """
-        Validate and execute placing a mold in a well.
+        Validate and execute placing a mold in a mold slot.
         
         Args:
             well_id: Well identifier (numerical string "0" through "17")
@@ -793,7 +793,7 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Deck not configured"
             )
         
-        # Get ready position coordinates for this well
+        # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
         
         if not self._registry.has(ready_position_id):
@@ -861,7 +861,7 @@ class MotionPlatformStateMachine(StateMachine):
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="put_down_mold",
-            execution_func=self._executor.execute_place_mold_in_well,
+            execution_func=self._executor.execute_place_mold,
             well_id=well_id,
             deck=self.context.deck,
             ready_x=ready_coords.x,
@@ -1600,15 +1600,15 @@ class MotionPlatformStateMachine(StateMachine):
     # Validated Methods for JubileeManager Operations
     # ---------------------------------------------------------------------
     
-    def validated_move_to_well(
+    def validated_move_to_mold_slot(
         self,
         well_id: str
     ) -> MoveValidationResult:
         """
-        Validate and execute movement to a specific well.
+        Validate and execute movement to a specific mold slot.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string "0" through "17")
             
         Returns:
             MoveValidationResult with outcome
@@ -1621,14 +1621,14 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Deck not configured"
             )
         
-        # Get well from state machine's deck
-        well = self.get_well_from_deck(well_id)
+        # Get mold from state machine's deck
+        well = self.get_mold_from_deck(well_id)
         
-        # Determine target position from well's ready_pos if available, otherwise construct from well_id
+        # Determine target position from mold's ready_pos if available, otherwise construct from mold slot ID
         if well and hasattr(well, 'ready_pos') and well.ready_pos:
             target_position = well.ready_pos
         else:
-            # Fallback: construct from well_id
+            # Fallback: construct from mold slot ID
             target_position = f"mold_ready_{well_id}"
         
         # If position not in registry, return error
@@ -1651,7 +1651,7 @@ class MotionPlatformStateMachine(StateMachine):
         # Execute move using coordinates from motion_platform_positions.json
         return self._validate_and_execute_move(
             target_position_id=target_position,
-            execution_func=self._executor.execute_move_to_well_by_id,
+            execution_func=self._executor.execute_move_to_mold_slot,
             x=coords.x,
             y=coords.y,
             z=coords.z,
@@ -2010,7 +2010,7 @@ class MotionPlatformStateMachine(StateMachine):
         
         Requires:
         - Manipulator tool to be active
-        - Mold without cap (payload_state: mold_without_cap)
+        - Mold without top piston (payload_state: mold_without_top_piston)
         - Must start from the corresponding dispenser_ready position for that dispenser
         
         Args:

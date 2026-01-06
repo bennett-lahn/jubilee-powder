@@ -77,7 +77,7 @@ class MovementExecutor:
     
     # ===== MANIPULATOR MOVEMENTS =====
     
-    def execute_pick_mold_from_well(
+    def execute_pick_mold(
         self,
         well_id: str,
         deck,
@@ -90,27 +90,27 @@ class MovementExecutor:
         ready_v: float = None
     ) -> bool:
         """
-        Execute the physical movements to pick up a mold from a well.
+        Execute the physical movements to pick up a mold from a mold slot.
         
-        Assumes the toolhead is above the chosen well at safe_z height
+        Assumes the toolhead is above the chosen mold slot at safe_z height
         with tamper axis in travel position.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
-            deck: The Deck object with well configuration
+            well_id: Mold slot identifier (numerical string "0" through "17")
+            deck: The Deck object with mold configuration
             tamper_axis: Axis letter for tamper (default 'V')
             tamper_travel_pos: Travel position for tamper axis (default 30.0 mm)
             safe_z: Safe Z height (default 195.0 mm)
-            ready_x: X coordinate of well ready position (required)
-            ready_y: Y coordinate of well ready position (required)
-            ready_z: Z coordinate of well ready position (required)
-            ready_v: V coordinate of well ready position (required)
+            ready_x: X coordinate of mold slot ready position (required)
+            ready_y: Y coordinate of mold slot ready position (required)
+            ready_z: Z coordinate of mold slot ready position (required)
+            ready_v: V coordinate of mold slot ready position (required)
         
         Returns:
             True if successful, False otherwise.
         """
         # TODO: Update to use variable instead of constant for z=90 safe transfer height
-        # Get well from deck for logging
+        # Get mold from deck for logging
         well = None
         try:
             # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
@@ -140,10 +140,10 @@ class MovementExecutor:
             self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error picking up mold from well {well_id}: {e}")
+            print(f"Error picking up mold from mold slot {well_id}: {e}")
             return False
     
-    def execute_place_mold_in_well(
+    def execute_place_mold(
         self,
         well_id: str,
         deck,
@@ -153,20 +153,20 @@ class MovementExecutor:
         ready_v: float
     ) -> bool:
         """
-        Execute the physical movements to place a mold in a well.
+        Execute the physical movements to place a mold in a mold slot.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
-            deck: The Deck object with well configuration
-            ready_x: X coordinate of well ready position (required)
-            ready_y: Y coordinate of well ready position (required)
-            ready_z: Z coordinate of well ready position (required)
-            ready_v: V coordinate of well ready position (required)
+            well_id: Mold slot identifier (numerical string "0" through "17")
+            deck: The Deck object with mold configuration
+            ready_x: X coordinate of mold slot ready position (required)
+            ready_y: Y coordinate of mold slot ready position (required)
+            ready_z: Z coordinate of mold slot ready position (required)
+            ready_v: V coordinate of mold slot ready position (required)
         
         Returns:
             True if successful, False otherwise.
         """
-        # Get well from deck for logging
+        # Get mold from deck for logging
         well = None
         try:
             # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
@@ -196,7 +196,7 @@ class MovementExecutor:
             self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error placing mold in well {well_id}: {e}")
+            print(f"Error placing mold in mold slot {well_id}: {e}")
             return False
     
     def execute_place_mold_on_scale(
@@ -233,11 +233,11 @@ class MovementExecutor:
             print("Placing mold on scale...")
             self._scale.tare()
             feedrate = self._get_feedrate()
-            self._machine.move(dy=38, s=feedrate)     # Move from ready position towards scale
-            self._machine.move_to(v=67, s=feedrate)  # Move well to fit under trickler
+            self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
+            self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
             self._machine.gcode("M208 Z38:195")      # Move bed up so well fits under trickler, relax z-limit to do so
             self._machine.move_to(z=38, s=feedrate)
-            self._machine.move(dy=26, s=feedrate)     # Move well under trickler    
+            self._machine.move(dy=26, s=feedrate)    # Move mold under trickler    
             self._machine.gcode("M208 Z28:195")      # Move bed up so well is resting on scale, relax z-limit to do so
             self._machine.move_to(z=28, s=feedrate)
             self._machine.move(dy=-1, s= feedrate)   # Back off mold so tool isn't touching
@@ -560,7 +560,7 @@ class MovementExecutor:
             print(f"Error homing XYZ axes: {e}")
             return False
     
-    def execute_move_to_well_by_id(
+    def execute_move_to_mold_slot(
         self,
         x: float,
         y: float,
@@ -569,13 +569,13 @@ class MovementExecutor:
         registry = None
     ) -> bool:
         """
-        Move to a specific well position using coordinates from motion_platform_positions.json.
+        Move to a specific mold slot position using coordinates from motion_platform_positions.json.
         
         Args:
-            x: X coordinate of well ready position (required)
-            y: Y coordinate of well ready position (required)
-            z: Z coordinate of well ready position (optional, or "USE_Z_HEIGHT_POLICY")
-            v: V coordinate of well ready position (optional)
+            x: X coordinate of mold slot ready position (required)
+            y: Y coordinate of mold slot ready position (required)
+            z: Z coordinate of mold slot ready position (optional, or "USE_Z_HEIGHT_POLICY")
+            v: V coordinate of mold slot ready position (optional)
             registry: PositionRegistry to resolve z heights (required if z="USE_Z_HEIGHT_POLICY")
             
         Returns:

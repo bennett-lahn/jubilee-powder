@@ -3,7 +3,7 @@ from science_jubilee.tools.Tool import (
     ToolConfigurationError,
     ToolStateError,
 )
-from trickler_labware import WeightWell
+from trickler_labware import Mold
 import PistonDispenser
 import time
 from typing import List, Optional, Dict, Any
@@ -112,16 +112,16 @@ def requires_machine_connection(func):
 class Manipulator(Tool):
     """
     Jubilee toolhead for mold handling and tamping operations.
-    Tracks a WeightWell object representing the current mold being carried.
+    Tracks a Mold object representing the current mold being carried.
     
     State tracking:
-    - current_well: WeightWell object representing the current mold (None if not carrying one)
-    - The WeightWell object tracks has_top_piston, valid, weight, and other mold properties
+    - current_well: Mold object representing the current mold (None if not carrying one)
+    - The Mold object tracks has_top_piston, valid, weight, and other mold properties
     
     Operations:
     - Tamping: Only allowed when carrying a mold without a top piston
     - Top piston placement: Only allowed when carrying a mold without a top piston
-    - Mold handling: Pick up and place WeightWell objects
+    - Mold handling: Pick up and place Mold objects
 
     Tamping is primarily controlled using sensorless homing/stall detection, which is configured
     using the M915 command in config.g and homet.g, not this file. driver-stall.g is used to 
@@ -236,7 +236,7 @@ class Manipulator(Tool):
         return None
     
     @property
-    def placed_well_on_scale(self):
+    def placed_mold_on_scale(self):
         """Access to mold_on_scale state through state machine."""
         if self.state_machine:
             return self.state_machine.context.mold_on_scale
@@ -267,7 +267,7 @@ class Manipulator(Tool):
     @requires_mold_without_piston
     def tamp(self, target_depth: float = None):
         """
-        Perform tamping action. Only allowed if carrying a mold without a cap.
+        Perform tamping action. Only allowed if carrying a mold without a top piston.
         
         Args:
             target_depth: Target depth to tamp to (mm). If None, uses default depth.
@@ -275,7 +275,7 @@ class Manipulator(Tool):
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         
-        if not self.placed_well_on_scale:
+        if not self.placed_mold_on_scale:
             raise ToolStateError("Cannot tamp, no mold on scale.")
         
         # Call state machine method which validates and executes
@@ -320,16 +320,16 @@ class Manipulator(Tool):
             
         return status
 
-    def get_current_well(self) -> Optional[WeightWell]:
+    def get_current_mold(self) -> Optional[Mold]:
         """
         Get the current mold being carried.
         
         Returns:
-            WeightWell object if carrying a mold, None otherwise
+            Mold object if carrying a mold, None otherwise
         """
         return self.current_well
 
-    def is_carrying_well(self) -> bool:
+    def is_carrying_mold(self) -> bool:
         """
         Check if the manipulator is currently carrying a mold.
         
@@ -340,17 +340,17 @@ class Manipulator(Tool):
 
     def pick_mold(self, well_id: str):
         """
-        Pick up mold from well.
+        Pick up mold from mold slot.
         
-        Assumes toolhead is directly above the well at safe_z height with tamper axis in travel position.
+        Assumes toolhead is directly above the mold slot at safe_z height with tamper axis in travel position.
         Validates move through state machine before execution.
         
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string "0" through "17")
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
-        result = self.state_machine.validated_pick_mold_from_well(
+        result = self.state_machine.validated_pick_mold(
             well_id=well_id,
             manipulator_config=self._get_config_dict()
         )
@@ -358,24 +358,24 @@ class Manipulator(Tool):
         if not result.valid:
             raise ToolStateError(f"Cannot pick mold: {result.reason}")
 
-    def place_well(self, well_id: str) -> Optional[WeightWell]:
+    def place_mold(self, well_id: str) -> Optional[Mold]:
         """
         Place down the current mold and return it.
         
-        Assumes toolhead is directly above the well at safe_z height with tamper axis in travel position.
+        Assumes toolhead is directly above the mold slot at safe_z height with tamper axis in travel position.
         Validates move through state machine before execution.
         
         Args:
-            well_id: Well identifier (e.g., "A1")
+            well_id: Mold slot identifier (e.g., "A1")
         
         Returns:
-            The WeightWell object that was placed, or None if no mold was being carried
+            The Mold object that was placed, or None if no mold was being carried
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         
         mold_to_place = self.current_well
-        result = self.state_machine.validated_place_mold_in_well(
+        result = self.state_machine.validated_place_mold(
             well_id=well_id,
             manipulator_config=self._get_config_dict()
         )
@@ -406,7 +406,7 @@ class Manipulator(Tool):
         
         return True
 
-    def place_well_on_scale(self):
+    def place_mold_on_scale(self):
         """
         Place the current mold on the scale. Only allowed if carrying a mold without a top piston.
         
@@ -425,7 +425,7 @@ class Manipulator(Tool):
         
         return True
 
-    def pick_well_from_scale(self):
+    def pick_mold_from_scale(self):
         """
         Pick up the current mold from the scale. Only allowed if carrying a mold without a top piston.
         

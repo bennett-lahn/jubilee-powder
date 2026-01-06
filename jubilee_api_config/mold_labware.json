@@ -2,11 +2,11 @@
     "ordering": [["A0"], ["A1"], ["A2"], ["A3"], ["A4"], ["A5"], ["A6"], ["A7"], ["A8"], ["A9"], ["A10"], ["A11"], ["A12"], ["A13"], ["A14"], ["A15"], ["A16"], ["A17"]],
     "brand": {
         "brand": "Jubilee Automation",
-        "brandId": ["weight_well"]
+        "brandId": ["mold"]
     },
     "metadata": {
-        "displayName": "Weight Well",
-        "displayCategory": "well",
+        "displayName": "Mold",
+        "displayCategory": "mold",
         "displayVolumeUnits": "g"
     },
     "dimensions": {
@@ -44,7 +44,7 @@
         "format": "irregular",
         "isTiprack": false,
         "isMagneticModuleCompatible": false,
-        "loadName": "weight_well_labware"
+        "loadName": "mold_labware"
     },
     "namespace": "jubilee_automation",
     "version": 1,

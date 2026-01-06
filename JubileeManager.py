@@ -201,9 +201,9 @@ class JubileeManager:
             self._move_to_well(well_id)
             self.manipulator.pick_mold(well_id)
             self._move_to_scale()
-            self.manipulator.place_well_on_scale()
+            self.manipulator.place_mold_on_scale()
             self._dispense_powder(target_weight)
-            self.manipulator.pick_well_from_scale()
+            self.manipulator.pick_mold_from_scale()
             dispenser_index = -1
             for dispenser in self.piston_dispensers:
                 if dispenser.num_pistons > 0:
@@ -214,7 +214,7 @@ class JubileeManager:
             self._move_to_dispenser(dispenser_index)
             self.get_piston_from_dispenser(dispenser_index)
             self._move_to_well(well_id)
-            self.manipulator.place_well(well_id)
+            self.manipulator.place_mold(well_id)
             return True
         except Exception as e:
             print(f"Dispensing error: {e}")

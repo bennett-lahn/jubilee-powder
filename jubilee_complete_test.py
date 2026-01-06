@@ -2,7 +2,7 @@
 Jubilee Complete Test Program
 
 This script tests the complete workflow of:
-1. Picking up a mold from a well
+1. Picking up a mold from a mold slot
 2. Placing it on the scale
 3. Taring the scale
 4. Weighing out powder
@@ -20,7 +20,7 @@ from JubileeManager import JubileeManager
 from MovementExecutor import FeedRate, MovementExecutor
 from Scale import Scale, ScaleException
 from Manipulator import ToolStateError
-from trickler_labware import WeightWell
+from trickler_labware import Mold
 
 
 def wait_for_user(message: str = "Press Enter to continue..."):
@@ -43,7 +43,7 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
     - Deck initialization
     - All 16 slots are accessible
     - Labware is loaded in each slot
-    - Wells are WeightWell objects with valid properties
+    - Molds are Mold objects with valid properties
     - Scale coordinates are set
     
     Args:
@@ -105,7 +105,7 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
         print(f"  ✓ Labware loaded in {labware_count}/{expected_slots} slots")
         
         if missing_labware:
-            # Map slot numbers to well IDs for user reference
+            # Map slot numbers to mold slot IDs for user reference
             missing_well_ids = []
             for slot_id in missing_labware:
                 row = chr(ord('A') + (slot_id // 4))
@@ -115,10 +115,10 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
             warnings.append(f"⚠ No labware in slots: {', '.join(missing_well_ids)}")
             print(f"  ⚠ Missing labware in wells: {', '.join(missing_well_ids)}")
     
-    # Check 4: Verify wells are WeightWell objects
-    print("\n[4/6] Checking well types and properties...")
+        # Check 4: Verify molds are Mold objects
+    print("\n[4/6] Checking mold types and properties...")
     if manager.deck and hasattr(manager.deck, 'slots'):
-        weight_well_count = 0
+        mold_count = 0
         invalid_wells = []
         well_property_issues = []
         
@@ -130,7 +130,7 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
             
             # Try to get the well
             if manager.state_machine:
-                well = manager.state_machine.get_well_from_deck(well_id)
+                well = manager.state_machine.get_mold_from_deck(well_id)
             else:
                 well = None
             
@@ -138,9 +138,9 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
                 invalid_wells.append(well_id)
                 continue
             
-            # Check if it's a WeightWell
-            if isinstance(well, WeightWell):
-                weight_well_count += 1
+            # Check if it's a Mold
+            if isinstance(well, Mold):
+                mold_count += 1
                 
                 # Verify essential properties exist
                 required_props = ['valid', 'has_top_piston', 'current_weight', 
@@ -155,9 +155,9 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
                         f"{well_id} missing: {', '.join(missing_props)}"
                     )
             else:
-                invalid_wells.append(f"{well_id} (not WeightWell)")
+                invalid_wells.append(f"{well_id} (not Mold)")
         
-        print(f"  ✓ Found {weight_well_count} WeightWell objects")
+        print(f"  ✓ Found {mold_count} Mold objects")
         
         if invalid_wells:
             warnings.append(f"⚠ Wells not accessible or wrong type: {', '.join(invalid_wells)}")
@@ -260,7 +260,7 @@ def main():
     DUET_IP = "192.168.1.2"
     SCALE_PORT = "/dev/ttyUSB0"
     TARGET_WEIGHT = 0.5  # grams
-    TEST_WELL_ID = "A1"  # Well to pick up mold from (A1 = slot 0)
+    TEST_WELL_ID = "A1"  # Mold slot to pick up mold from (A1 = slot 0)
     FEEDRATE = FeedRate.MEDIUM  # Movement feedrate (FAST=5000, MEDIUM=1000, SLOW=500 mm/min)
     
     # Total number of steps
@@ -271,7 +271,7 @@ def main():
     print("="*70)
     print("\nThis test will perform the following operations:")
     print("  1. Connect to Jubilee machine and scale")
-    print("  2. Pick up a mold from a well")
+    print("  2. Pick up a mold from a mold slot")
     print("  3. Place the mold on the scale")
     print("  4. Tare the scale")
     print("  5. Weigh out powder (simulated)")
@@ -381,13 +381,13 @@ def main():
         wait_for_user("STEP 1 COMPLETE. Press Enter to continue to next step...")
         
         # ======================================================================
-        # STEP 2: Pick up mold from well
+        # STEP 2: Pick up mold from mold slot
         # ======================================================================
-        display_step(2, TOTAL_STEPS, f"Pick up mold from well {TEST_WELL_ID}")
+        display_step(2, TOTAL_STEPS, f"Pick up mold from mold slot {TEST_WELL_ID}")
         
-        print(f"Preparing to pick up mold from well {TEST_WELL_ID}")
+        print(f"Preparing to pick up mold from mold slot {TEST_WELL_ID}")
         print("\nIMPORTANT: Ensure the following:")
-        print(f"  - A mold is placed in well {TEST_WELL_ID}")
+        print(f"  - A mold is placed in mold slot {TEST_WELL_ID}")
         print(f"  - The mold does NOT have a top piston")
         print(f"  - The area is clear for movement")
         
@@ -396,7 +396,7 @@ def main():
         # Get well from deck
         if not manager.state_machine:
             raise RuntimeError("State machine not configured")
-        well = manager.state_machine.get_well_from_deck(TEST_WELL_ID)
+        well = manager.state_machine.get_mold_from_deck(TEST_WELL_ID)
         if not well:
             raise ValueError(f"Well {TEST_WELL_ID} not found in deck")
         if not well.valid:
@@ -442,7 +442,7 @@ def main():
         
         # Place mold on scale
         print("Placing mold on scale...")
-        manager.manipulator.place_well_on_scale()
+        manager.manipulator.place_mold_on_scale()
         print("✓ Mold placed on scale")
         
         # Wait for scale to stabilize
@@ -520,7 +520,7 @@ def main():
         wait_for_user("Press Enter to pick up mold from scale...")
         
         print("Picking up mold from scale...")
-        manager.manipulator.pick_well_from_scale()
+        manager.manipulator.pick_mold_from_scale()
         print("✓ Mold picked up from scale")
         
         # Verify manipulator is carrying mold
@@ -547,7 +547,7 @@ def main():
         
         # Place mold back
         print("Placing mold back in well...")
-        returned_mold = manager.manipulator.place_well(TEST_WELL_ID)
+        returned_mold = manager.manipulator.place_mold(TEST_WELL_ID)
         print(f"✓ Mold returned to {TEST_WELL_ID}")
         
         # Verify manipulator is no longer carrying mold
@@ -563,7 +563,7 @@ def main():
         print("TEST COMPLETE - ALL STEPS SUCCESSFUL")
         print("="*70)
         print("\nSummary:")
-        print(f"  ✓ Picked up mold from well {TEST_WELL_ID}")
+        print(f"  ✓ Picked up mold from mold slot {TEST_WELL_ID}")
         print(f"  ✓ Placed mold on scale")
         print(f"  ✓ Tared scale")
         print(f"  ✓ Weighed out powder (final: {final_weight:.4f}g)")
@@ -595,7 +595,7 @@ def main():
                         if original_mold:
                             print(f"Attempting to return mold to {TEST_WELL_ID}...")
                             manager._move_to_well(TEST_WELL_ID)
-                            manager.manipulator.place_well(TEST_WELL_ID)
+                            manager.manipulator.place_mold(TEST_WELL_ID)
                             print(f"✓ Mold returned to {TEST_WELL_ID}")
                     except Exception as e:
                         print(f"⚠ Failed to return mold automatically: {e}")
