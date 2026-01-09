@@ -4,9 +4,16 @@ Test script for the tamper functionality with stall detection and sensorless hom
 This demonstrates how to configure and use the tamper with TMC stall detection and sensorless homing.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import json
 import time
-from Manipulator import Manipulator, TamperStallEvent
+from src.Manipulator import Manipulator, TamperStallEvent
 
 class MockMachineConnection:
     """Mock machine connection for testing without actual hardware."""

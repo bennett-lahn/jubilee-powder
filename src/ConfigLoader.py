@@ -5,6 +5,7 @@ Loads system-wide configuration parameters from JSON files.
 
 import json
 import os
+from pathlib import Path
 from typing import Dict, Any
 
 class ConfigLoader:
@@ -24,38 +25,12 @@ class ConfigLoader:
     
     def _load_config(self):
         """Load configuration from JSON file"""
-        config_path = os.path.join("jubilee_api_config", "system_config.json")
-        try:
-            with open(config_path, "r") as f:
-                self._config = json.load(f)
-        except FileNotFoundError:
-            print(f"Warning: Config file {config_path} not found, using defaults")
-            self._config = self._get_default_config()
-        except json.JSONDecodeError as e:
-            print(f"Error loading config: {e}, using defaults")
-            self._config = self._get_default_config()
-    
-    def _get_default_config(self) -> Dict[str, Any]:
-        """Return default configuration if file loading fails"""
-        return {
-            "safety": {
-                "safe_z": 195,
-                "safe_z_offset": 20,
-                "max_weight_per_well": 10.0,
-                "weight_tolerance": 0.001
-            },
-            "machine": {
-                "default_feedrate": 3000,
-                "tamper_travel_position": 30,
-                "tamper_working_position": 50
-            },
-            "wells": {
-                "default_diameter": 15,
-                "default_depth": 8,
-                "well_spacing_x": 100,
-                "well_spacing_y": 100
-            }
-        }
+        # Get project root (parent of src directory)
+        project_root = Path(__file__).parent.parent
+        config_path = project_root / "jubilee_api_config" / "system_config.json"
+        with open(config_path, "r") as f:
+            self._config = json.load(f)
+
     
     def get(self, key_path: str, default=None):
         """Get configuration value using dot notation (e.g., 'safety.safe_z')"""

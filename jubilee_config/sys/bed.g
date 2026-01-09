@@ -13,7 +13,7 @@ G1 X52 F2000
 G1 Y177 F2000
 G30 P1 X52 Y177 Z-99999     ; probe near front right leadscrew and calibrate 3 motors
 G1 Z60 F2000
-G1 Y0 F700                  ; move near back leadscrew, avoiding trickler
+G1 Y0 F2000                  ; move near back leadscrew, avoiding trickler
 G1 X137 F2000
 G30 P2 X137 Y0 Z-99999 S3   ; probe near back leadscrew
 G1 Z95 F2000                ; Move bed to mold transfer height when finished

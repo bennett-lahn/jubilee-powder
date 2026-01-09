@@ -5,7 +5,7 @@
     },
     "machine": {
         "duet_ip": "192.168.1.2",
-        "default_feedrate": 300,
+        "default_feedrate": 600,
         "tamper_travel_position": 30
     },
     "manipulator": {

@@ -1,0 +1,104 @@
+site_name: Jubilee Powder Documentation
+site_description: Documentation for Jubilee Motion Platform powder dispensing system
+site_author: Your Name
+repo_url: https://github.com/bennett-lahn/jubilee-powder
+repo_name: jubilee-powder
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+            separate_signature: true
+            merge_init_into_class: true
+            show_if_no_docstring: false
+            members_order: source
+            group_by_category: true
+            show_category_heading: true
+            docstring_section_style: spacy
+            show_bases: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Overview: getting-started/overview.md
+    - Quick Start: getting-started/quickstart.md
+  - Concepts:
+    - Architecture: concepts/architecture.md
+    - Glossary: concepts/glossary.md
+  - How-To Guides:
+    - Running on New Data: how-to/run-new-data.md
+    - Configuration: how-to/configuration.md
+    - Using the Web UI: how-to/web-ui.md
+    - Interpreting Results: how-to/results.md
+  - API Reference:
+    - JubileeManager: api/jubilee-manager.md
+    - MotionPlatformStateMachine: api/motion-platform.md
+    - Manipulator: api/manipulator.md
+    - PistonDispenser: api/piston-dispenser.md
+    - Scale: api/scale.md
+    - ConfigLoader: api/config-loader.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bennett-lahn/jubilee-powder

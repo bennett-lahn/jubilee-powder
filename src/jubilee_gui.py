@@ -1,5 +1,7 @@
+#!/usr/bin/env python3
 # TODO: on Raspbian: Install xsel or xclip for copy-paste support.
 # TODO: Implement Abort and cancel when job is running
+# TODO: Use .JSON to make jobs configurablen
 
 # Theme configuration
 THEME = {
@@ -30,10 +32,11 @@ from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.widget import Widget
 from kivy.core.window import Window
 from kivy.clock import Clock
-from kivy.metrics import dp
-from kivy.graphics import Color, Rectangle
+from kivy.metrics import dp, sp
+from kivy.graphics import Color, Rectangle, Line, Ellipse
 from kivy.properties import ObjectProperty, StringProperty, NumericProperty, BooleanProperty
 from kivy.lang import Builder
+from kivy.uix.relativelayout import RelativeLayout
 import threading
 import time
 import json
@@ -45,9 +48,8 @@ import subprocess
 
 # Import Jubilee components
 from science_jubilee.Machine import Machine
-from Trickler import Trickler
-from Scale import Scale
-from trickler_labware import WeightWell, WeightWellSet
+from src.Scale import Scale
+from src.JubileeManager import JubileeManager
 
 # Virtual Keyboard Management Class
 class VirtualKeyboardManager:
@@ -163,6 +165,11 @@ class WeightWellButton(Button):
     weight = NumericProperty(0.0)  # Target weight (requested)
     actual_weight = NumericProperty(0.0)  # Actual measured weight
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._update_font_size)
+        Clock.schedule_once(lambda dt: self._update_font_size(self, self.size), 0.1)
+    
     def on_selected(self, instance, value):
         """Update color when selected state changes"""
         if value:
@@ -193,32 +200,51 @@ class WeightWellButton(Button):
             else:
                 self.background_color = THEME['error']  # Red when actual weight = 0
     
-    def on_size(self, instance, value):
+    def _update_font_size(self, instance, value):
         """Update font size when button size changes"""
-        # Calculate font size based on button size (minimum 8sp, maximum 32sp)
+        if value[0] <= 0 or value[1] <= 0:
+            return
+        # Calculate font size based on button size (responsive to smallest dimension)
+        # Use sp for scale-independent sizing
         min_size = min(value[0], value[1])
-        font_size = max(24, min(72, min_size // 12))
-        self.font_size = f'{font_size}sp'
+        font_size = max(sp(8), min(sp(24), min_size * 0.15))
+        self.font_size = font_size
 
 class CustomButton(Button):
     """Custom button with responsive font sizing"""
     
-    def on_size(self, instance, value):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._update_font_size)
+        Clock.schedule_once(lambda dt: self._update_font_size(self, self.size), 0.1)
+    
+    def _update_font_size(self, instance, value):
         """Update font size when button size changes"""
+        if value[1] <= 0:
+            return
         # Calculate font size based on button height (minimum 12sp, maximum 36sp)
+        # Use sp for scale-independent sizing
         height = value[1]
-        font_size = max(12, min(36, height // 3))
-        self.font_size = f'{font_size}sp'
+        font_size = max(sp(12), min(sp(36), height * 0.35))
+        self.font_size = font_size
 
 class CustomLabel(Label):
     """Custom label with responsive font sizing"""
     
-    def on_size(self, instance, value):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._update_font_size)
+        Clock.schedule_once(lambda dt: self._update_font_size(self, self.size), 0.1)
+    
+    def _update_font_size(self, instance, value):
         """Update font size when label size changes"""
-        # Calculate font size based on label height (minimum 10sp, maximum 20sp)
+        if value[1] <= 0:
+            return
+        # Calculate font size based on label height (minimum 10sp, maximum 36sp)
+        # Use sp for scale-independent sizing
         height = value[1]
-        font_size = max(10, min(36, height // 2))
-        self.font_size = f'{font_size}sp'
+        font_size = max(sp(10), min(sp(36), height * 0.45))
+        self.font_size = font_size
 
 class CustomCheckBox(CheckBox):
     """Custom checkbox with blacker outline and touchscreen-friendly sizing"""
@@ -288,7 +314,7 @@ KV = '''
     color: 1, 1, 1, 1  # White text
     size_hint_y: None
     height: dp(60)
-    font_size: '16sp'  # Responsive font size
+    font_size: sp(16)  # Scale-independent font size
     canvas.before:
         Color:
             rgba: 0.10, 0.46, 0.74, 1 if self.state == 'down' else 0.13, 0.59, 0.95, 1
@@ -299,7 +325,7 @@ KV = '''
 
 <CustomLabel>:
     color: 0.13, 0.13, 0.13, 1  # Text primary
-    font_size: '24sp'  # Responsive font size
+    font_size: sp(14)  # Scale-independent font size
     size_hint_y: None
     height: dp(40)
 
@@ -332,7 +358,7 @@ KV = '''
     background_color: 1, 1, 1, 1  # White background
     foreground_color: 0.13, 0.13, 0.13, 1  # Dark text
     cursor_color: 0.13, 0.59, 0.95, 1  # Blue cursor
-    font_size: dp(20)
+    font_size: sp(16)  # Scale-independent font size
     size_hint_y: None
     height: dp(50)
     padding: dp(10)
@@ -356,7 +382,7 @@ KV = '''
     background_normal: ''
     color: 1, 1, 1, 1  # White text for better contrast
     size_hint: 1, 1  # Fill available space
-    font_size: '14sp'  # Responsive font size
+    font_size: sp(12)  # Scale-independent font size (will be adjusted dynamically)
     text: f'{self.well_id}\\nTarget: {self.weight:.3f}g\\nActual: {self.actual_weight:.3f}g'
     canvas.before:
         Color:
@@ -381,12 +407,14 @@ KV = '''
         # Header
         BoxLayout:
             size_hint_y: None
-            height: dp(60)
+            height: dp(80)
             CustomLabel:
                 text: 'Jubilee Powder Dispensing System'
-                font_size: dp(48)
+                font_size: sp(24)
                 bold: True
                 halign: 'center'
+                valign: 'middle'
+                text_size: self.size
         
         # Platform visualization
         BoxLayout:
@@ -417,13 +445,18 @@ KV = '''
                     CustomLabel:
                         text: 'Connected' if root.scale_connected else 'Disconnected'
                         halign: 'center'
+                        valign: 'middle'
+                        text_size: self.size
                         color: 1, 1, 1, 1
+                        font_size: sp(14)
                     
                     CustomLabel:
                         text: f'{root.current_weight:.3f}g'
                         halign: 'center'
+                        valign: 'middle'
+                        text_size: self.size
                         color: 1, 1, 1, 1
-                        font_size: dp(20)
+                        font_size: sp(18)
                         bold: True
             
             # Center - Platform
@@ -436,11 +469,14 @@ KV = '''
                 CustomLabel:
                     text: 'Jubilee Platform'
                     halign: 'center'
+                    valign: 'middle'
+                    text_size: self.size
                     bold: True
+                    font_size: sp(16)
                 
                 GridLayout:
                     id: platform_grid
-                    cols: 4
+                    cols: 7
                     spacing: dp(5)
                     padding: dp(10)
                     size_hint: 1, 1  # Fill available space
@@ -477,6 +513,24 @@ KV = '''
                         on_press: root.toggle_well('A4')
                     
                     WeightWellButton:
+                        text: 'A5\\n0.0g'
+                        well_id: 'A5'
+                        selected: root.is_well_selected('A5')
+                        on_press: root.toggle_well('A5')
+                    
+                    WeightWellButton:
+                        text: 'A6\\n0.0g'
+                        well_id: 'A6'
+                        selected: root.is_well_selected('A6')
+                        on_press: root.toggle_well('A6')
+                    
+                    WeightWellButton:
+                        text: 'A7\\n0.0g'
+                        well_id: 'A7'
+                        selected: root.is_well_selected('A7')
+                        on_press: root.toggle_well('A7')
+                    
+                    WeightWellButton:
                         text: 'B1\\n0.0g'
                         well_id: 'B1'
                         selected: root.is_well_selected('B1')
@@ -501,6 +555,24 @@ KV = '''
                         on_press: root.toggle_well('B4')
                     
                     WeightWellButton:
+                        text: 'B5\\n0.0g'
+                        well_id: 'B5'
+                        selected: root.is_well_selected('B5')
+                        on_press: root.toggle_well('B5')
+                    
+                    WeightWellButton:
+                        text: 'B6\\n0.0g'
+                        well_id: 'B6'
+                        selected: root.is_well_selected('B6')
+                        on_press: root.toggle_well('B6')
+                    
+                    WeightWellButton:
+                        text: 'B7\\n0.0g'
+                        well_id: 'B7'
+                        selected: root.is_well_selected('B7')
+                        on_press: root.toggle_well('B7')
+                    
+                    WeightWellButton:
                         text: 'C1\\n0.0g'
                         well_id: 'C1'
                         selected: root.is_well_selected('C1')
@@ -523,30 +595,6 @@ KV = '''
                         well_id: 'C4'
                         selected: root.is_well_selected('C4')
                         on_press: root.toggle_well('C4')
-                    
-                    WeightWellButton:
-                        text: 'D1\\n0.0g'
-                        well_id: 'D1'
-                        selected: root.is_well_selected('D1')
-                        on_press: root.toggle_well('D1')
-                    
-                    WeightWellButton:
-                        text: 'D2\\n0.0g'
-                        well_id: 'D2'
-                        selected: root.is_well_selected('D2')
-                        on_press: root.toggle_well('D2')
-                    
-                    WeightWellButton:
-                        text: 'D3\\n0.0g'
-                        well_id: 'D3'
-                        selected: root.is_well_selected('D3')
-                        on_press: root.toggle_well('D3')
-                    
-                    WeightWellButton:
-                        text: 'D4\\n0.0g'
-                        well_id: 'D4'
-                        selected: root.is_well_selected('D4')
-                        on_press: root.toggle_well('D4')
             
             # Right side - Controls
             BoxLayout:
@@ -558,7 +606,10 @@ KV = '''
                 CustomLabel:
                     text: 'Controls'
                     halign: 'center'
+                    valign: 'middle'
+                    text_size: self.size
                     bold: True
+                    font_size: sp(16)
                 
                 CustomButton:
                     text: 'Select All'
@@ -605,6 +656,8 @@ KV = '''
                 halign: 'left'
                 valign: 'middle'
                 text_size: self.size
+                font_size: sp(14)
+                padding: dp(10), 0
 
 
 
@@ -631,9 +684,11 @@ KV = '''
         # Header
         CustomLabel:
             text: 'Job Progress'
-            font_size: dp(48)
+            font_size: sp(32)
             bold: True
             halign: 'center'
+            valign: 'middle'
+            text_size: self.size
             color: 0.13, 0.13, 0.13, 1  # Text primary color
             size_hint_y: None
             height: dp(80)
@@ -679,26 +734,32 @@ KV = '''
                     
                     CustomLabel:
                         text: f'{root.completed_wells}/{root.total_wells}'
-                        font_size: dp(48)
+                        font_size: sp(32)
                         bold: True
                         halign: 'center'
+                        valign: 'middle'
+                        text_size: self.size
                         color: 0.13, 0.13, 0.13, 1  # Text primary color
                         size_hint_y: None
                         height: dp(60)
                     
                     CustomLabel:
                         text: 'Completed'
-                        font_size: dp(24)
+                        font_size: sp(18)
                         halign: 'center'
+                        valign: 'middle'
+                        text_size: self.size
                         color: 0.13, 0.13, 0.13, 1  # Text primary color
                         size_hint_y: None
                         height: dp(40)
                     
                     CustomLabel:
                         text: f'{root.progress_value:.1f}%'
-                        font_size: dp(32)
+                        font_size: sp(24)
                         bold: True
                         halign: 'center'
+                        valign: 'middle'
+                        text_size: self.size
                         color: 0.13, 0.59, 0.95, 1  # Blue percentage
                         size_hint_y: None
                         height: dp(50)
@@ -707,8 +768,10 @@ KV = '''
         CustomLabel:
             text: root.current_well_text
             halign: 'center'
+            valign: 'middle'
+            text_size: self.size
             color: 0.13, 0.13, 0.13, 1  # Text primary color
-            font_size: dp(28)
+            font_size: sp(20)
             size_hint_y: None
             height: dp(60)
         
@@ -725,7 +788,7 @@ KV = '''
                 background_color: 0.96, 0.60, 0.0, 1  # Warning color
                 color: 1, 1, 1, 1  # White text
                 size_hint_x: 0.4
-                font_size: dp(24)
+                font_size: sp(18)
         
         # Large abort button
         CustomButton:
@@ -735,7 +798,7 @@ KV = '''
             color: 1, 1, 1, 1  # White text
             size_hint_y: None
             height: dp(120)
-            font_size: dp(36)
+            font_size: sp(24)
             bold: True
 
 
@@ -754,9 +817,11 @@ KV = '''
         
         CustomLabel:
             text: 'Error'
-            font_size: dp(48)
+            font_size: sp(32)
             bold: True
             halign: 'center'
+            valign: 'middle'
+            text_size: self.size
             color: 0.96, 0.26, 0.21, 1  # Error color
             size_hint_y: None
             height: dp(80)
@@ -765,9 +830,10 @@ KV = '''
             CustomLabel:
                 text: root.error_message
                 halign: 'center'
-                text_size: self.size
+                valign: 'top'
+                text_size: self.width, None
                 color: 0.13, 0.13, 0.13, 1  # Text primary color
-                font_size: dp(24)
+                font_size: sp(18)
                 size_hint_y: None
                 height: self.texture_size[1] + dp(40)
         
@@ -776,7 +842,7 @@ KV = '''
             on_press: root.dismiss()
             background_color: 0.96, 0.26, 0.21, 1  # Error color
             color: 1, 1, 1, 1  # White text
-            font_size: dp(24)
+            font_size: sp(18)
             size_hint_y: None
             height: dp(80)
 '''
@@ -790,151 +856,6 @@ class JobWell:
     target_weight: float
     current_weight: float = 0.0
     completed: bool = False
-
-class JubileeManager:
-    """Manages the Jubilee machine and related components"""
-    
-    def __init__(self):
-        self.machine: Optional[Machine] = None
-        self.trickler: Optional[Trickler] = None
-        self.connected = False
-        self._last_weight = 0.0
-        self._weight_update_callback = None
-        
-    def connect(self, machine_address: str = "192.168.1.2", scale_port: str = "/dev/ttyUSB0"):
-        """Connect to Jubilee machine and initialize trickler with scale"""
-        try:
-            # Load configuration
-            config = self._load_config()
-            
-            # Connect to machine
-            self.machine = Machine(address=machine_address)
-            self.machine.connect()
-            
-            # Initialize scale (will be passed to trickler)
-            scale = Scale(port=scale_port)
-            scale.connect()
-            
-            # Initialize trickler with the scale
-            trickler_config = config.get("trickler", {})
-            self.trickler = Trickler(
-                index=trickler_config.get("tool_index", 0),
-                name=trickler_config.get("tool_name", "trickler"),
-                config=trickler_config.get("config_file", "trickler_config"),
-                scale=scale
-            )
-            
-            # Set up weight update callback
-            self._setup_weight_monitoring()
-            
-            self.connected = True
-            return True
-            
-        except Exception as e:
-            print(f"Connection error: {e}")
-            self.connected = False
-            return False
-    
-    def _load_config(self) -> dict:
-        """Load configuration from JSON file"""
-        try:
-            with open("jubilee_config.json", "r") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            print("Configuration file not found, using defaults")
-            return {}
-        except json.JSONDecodeError as e:
-            print(f"Configuration file error: {e}")
-            return {}
-    
-    def disconnect(self):
-        """Disconnect from all components"""
-        if self.machine:
-            self.machine.disconnect()
-        if self.trickler and self.trickler.scale:
-            self.trickler.scale.disconnect()
-        self.connected = False
-    
-    def _setup_weight_monitoring(self):
-        """Set up weight monitoring through the trickler's scale"""
-        if self.trickler and self.trickler.scale:
-            # Store reference to scale for monitoring
-            self._scale = self.trickler.scale
-    
-    def get_current_weight(self) -> float:
-        """Get current weight from trickler's scale"""
-        if self.trickler and self.trickler.scale and self.trickler.scale.is_connected:
-            try:
-                weight = self.trickler.scale.get_weight()
-                self._last_weight = weight
-                return weight
-            except Exception as e:
-                print(f"Weight reading error: {e}")
-                return self._last_weight
-        return self._last_weight
-    
-    def set_weight_update_callback(self, callback):
-        """Set callback for weight updates"""
-        self._weight_update_callback = callback
-    
-    def update_weight_from_trickler(self, weight: float):
-        """Update weight when trickler retrieves new weight"""
-        self._last_weight = weight
-        if self._weight_update_callback:
-            self._weight_update_callback(weight)
-    
-    def dispense_to_well(self, well_id: str, target_weight: float) -> bool:
-        """Dispense powder to a specific well using the trickler"""
-        if not self.connected or not self.trickler:
-            return False
-        
-        try:
-            # Create a WeightWell object for the target location
-            # Note: You'll need to define the actual coordinates for each well
-            well_coordinates = self._get_well_coordinates(well_id)
-            target_well = WeightWell(
-                name=well_id,
-                x=well_coordinates[0],
-                y=well_coordinates[1],
-                z=well_coordinates[2],
-                target_weight=target_weight
-            )
-            
-            # Use the trickler to dispense to the well
-            # The trickler will handle scale monitoring internally
-            self.trickler.dispense_to_well(target_well, target_weight)
-            
-            # Update weight display when trickler gets new weight
-            if self.trickler.scale:
-                current_weight = self.trickler.scale.get_weight()
-                self.update_weight_from_trickler(current_weight)
-            
-            return True
-            
-        except Exception as e:
-            print(f"Dispensing error: {e}")
-            return False
-    
-    def _get_well_coordinates(self, well_id: str) -> tuple:
-        """Get coordinates for a specific well"""
-        # Load well coordinates from configuration
-        config = self._load_config()
-        ui_config = config.get("ui", {})
-        well_layout = ui_config.get("well_layout", {})
-        
-        # Default well coordinates (you'll need to adjust these based on your setup)
-        default_positions = {
-            'A1': (50, 50, 0),   'A2': (150, 50, 0),   'A3': (250, 50, 0),   'A4': (350, 50, 0),
-            'B1': (50, 150, 0),  'B2': (150, 150, 0),  'B3': (250, 150, 0),  'B4': (350, 150, 0),
-            'C1': (50, 250, 0),  'C2': (150, 250, 0),  'C3': (250, 250, 0),  'C4': (350, 250, 0),
-            'D1': (50, 350, 0),  'D2': (150, 350, 0),  'D3': (250, 350, 0),  'D4': (350, 350, 0)
-        }
-        
-        # Use custom positions if defined in config
-        custom_positions = well_layout.get("well_positions", {})
-        well_positions = {**default_positions, **custom_positions}
-        
-        return well_positions.get(well_id, (0, 0, 0))
 
 class MainScreen(Screen):
     """Main screen of the Jubilee GUI application"""
@@ -955,10 +876,10 @@ class MainScreen(Screen):
         self.job_wells = []
         self.current_job_thread = None
         
-        # Set up weight update callback
-        self.jubilee_manager.set_weight_update_callback(self._on_weight_update)
+        # Bind to window size changes for responsive layout
+        Window.bind(size=self._on_window_resize)
         
-        # Start weight monitoring (will use trickler's scale)
+        # Start weight monitoring
         Clock.schedule_interval(self.update_weight, 0.5)
         
         # Try to connect
@@ -970,10 +891,16 @@ class MainScreen(Screen):
         # Update all well button texts to show current weights
         Clock.schedule_once(self.update_all_well_texts, 0.1)
     
+    def _on_window_resize(self, instance, value):
+        """Handle window resize events for responsive layout"""
+        # Update all well button texts to ensure proper sizing
+        Clock.schedule_once(lambda dt: self.update_all_well_texts(), 0.1)
+    
     def _init_well_weights(self):
         """Initialize the well weights dictionary with all wells set to 0.0"""
-        well_ids = ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 
-                   'C1', 'C2', 'C3', 'C4', 'D1', 'D2', 'D3', 'D4']
+        well_ids = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7',
+                   'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 
+                   'C1', 'C2', 'C3', 'C4']
         for well_id in well_ids:
             if well_id not in self.well_weights:
                 self.well_weights[well_id] = 0.0
@@ -995,8 +922,8 @@ class MainScreen(Screen):
         success = self.jubilee_manager.connect()
         if success:
             self.status_text = "Connected"
-            # Check if trickler and scale are available
-            if self.jubilee_manager.trickler and self.jubilee_manager.trickler.scale:
+            # Check if scale is available
+            if self.jubilee_manager.scale and self.jubilee_manager.scale.is_connected:
                 self.scale_connected = True
             else:
                 self.scale_connected = False
@@ -1007,12 +934,7 @@ class MainScreen(Screen):
     def update_weight(self, dt):
         """Update current weight display"""
         if self.jubilee_manager.connected:
-            self.current_weight = self.jubilee_manager.get_current_weight()
-    
-    def _on_weight_update(self, weight: float):
-        """Callback for weight updates from trickler"""
-        # Update the UI with new weight (called from main thread)
-        Clock.schedule_once(lambda dt: setattr(self, 'current_weight', weight), 0)
+            self.current_weight = self.jubilee_manager.get_weight_unstable()
     
     def toggle_well(self, well_id: str):
         """Toggle selection of a well"""
@@ -1032,8 +954,9 @@ class MainScreen(Screen):
     
     def select_all_wells(self):
         """Select all wells"""
-        well_ids = ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 
-                   'C1', 'C2', 'C3', 'C4', 'D1', 'D2', 'D3', 'D4']
+        well_ids = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7',
+                   'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 
+                   'C1', 'C2', 'C3', 'C4']
         self.selected_wells = set(well_ids)
         
         # Update all button selected properties
@@ -1058,8 +981,9 @@ class MainScreen(Screen):
     
     def update_all_well_texts(self, dt=None):
         """Update all well button texts to show current weights"""
-        well_ids = ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 
-                   'C1', 'C2', 'C3', 'C4', 'D1', 'D2', 'D3', 'D4']
+        well_ids = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7',
+                   'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 
+                   'C1', 'C2', 'C3', 'C4']
         for well_id in well_ids:
             self.update_well_button_text(well_id)
     
@@ -1176,8 +1100,7 @@ class MainScreen(Screen):
                 # Update progress
                 self.update_job_progress(i, len(self.job_wells), job_well.well_id)
                 
-                # Dispense to well using trickler
-                # The trickler will handle scale monitoring internally
+                # Dispense to well
                 success = self.jubilee_manager.dispense_to_well(job_well.well_id, job_well.target_weight)
                 if not success:
                     self.show_error(f"Failed to dispense to well {job_well.well_id}")
@@ -1394,7 +1317,7 @@ class MainScreen(Screen):
                 time.sleep(1)
             
             # Step 2: Stow tools and return to home position (if connected)
-            if self.jubilee_manager.connected and self.jubilee_manager.machine:
+            if self.jubilee_manager.connected and self.jubilee_manager.machine_read_only:
                 self.status_text = "Stowing tools and returning to home..."
                 self._stow_tools_and_home()
             
@@ -1423,17 +1346,17 @@ class MainScreen(Screen):
     def _stow_tools_and_home(self):
         """Stow tools and return to home position"""
         try:
-            machine = self.jubilee_manager.machine
+            machine = self.jubilee_manager.machine_read_only
+            if not machine:
+                return
             
-            # Stow the trickler tool if it's loaded
-            if self.jubilee_manager.trickler:
-                # Move to a safe position first
-                machine.move_to(x=0, y=0, z=50)
-                time.sleep(0.5)
-                
-                # Stow the tool (assuming tool index 0)
-                machine.stow_tool(0)
-                time.sleep(1)
+            # Move to a safe position first
+            machine.move_to(x=0, y=0, z=50)
+            time.sleep(0.5)
+            
+            # Stow any loaded tools (assuming tool index 0)
+            machine.stow_tool(0)
+            time.sleep(1)
             
             # Return to home position
             machine.home()
@@ -1446,7 +1369,7 @@ class MainScreen(Screen):
     def _disconnect_all(self):
         """Disconnect from all components"""
         try:
-            # Disconnect from Jubilee manager (includes machine, trickler, and scale)
+            # Disconnect from Jubilee manager (includes machine and scale)
             if self.jubilee_manager:
                 self.jubilee_manager.disconnect()
             
@@ -1465,15 +1388,23 @@ class WeightDialog(Popup):
         super().__init__(**kwargs)
         self.selected_wells = selected_wells
         self.current_weights = current_weights
-        self.size_hint = (0.6, 0.4)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.9, max(0.5, 600 / Window.width)), min(0.6, max(0.3, 400 / Window.height)))
         self.title = "Set Target Weight"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.9, max(0.5, 600 / value[0])), min(0.6, max(0.3, 400 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -1486,8 +1417,8 @@ class WeightDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -1497,8 +1428,8 @@ class WeightDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(28),
+            valign='middle',
+            font_size=sp(20),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -1509,7 +1440,7 @@ class WeightDialog(Popup):
             height=dp(80),
             input_filter='float',
             halign='center',
-            font_size=dp(32),
+            font_size=sp(24),
             background_color=THEME['surface'],  # Theme surface color
             foreground_color=THEME['text_primary'],  # Theme text color
             cursor_color=THEME['primary']  # Theme primary color
@@ -1524,7 +1455,7 @@ class WeightDialog(Popup):
             background_color=THEME['error'],  # Theme error color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(cancel_btn)
         
@@ -1533,7 +1464,7 @@ class WeightDialog(Popup):
             background_color=THEME['primary'],  # Theme primary color
             color=THEME['text_white'],  # Theme white text
             on_press=self.apply_weight,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(apply_btn)
         
@@ -1551,8 +1482,8 @@ class WeightDialog(Popup):
             # Update main screen weights for all selected wells
             if hasattr(self.main_screen, 'well_weights'):
                 for well_id in self.selected_wells:
-                   self.main_screen.well_weights[well_id] = weight
-                   self.main_screen.update_well_button_text(well_id)
+                    self.main_screen.well_weights[well_id] = weight
+                    self.main_screen.update_well_button_text(well_id)
                 
                 # Print current weights for debugging
                 print(f"Current well_weights: {self.main_screen.well_weights}")
@@ -1572,14 +1503,22 @@ class ChecklistDialog(Popup):
         self.job_confirmed = False
         
         super().__init__(**kwargs)
-        self.size_hint = (0.8, 0.8)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.95, max(0.7, 700 / Window.width)), min(0.9, max(0.6, 600 / Window.height)))
         self.title = "Pre-Job Confirmation"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_checklist)
         
         self._create_content()
+    
+    def _on_window_resize_checklist(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.95, max(0.7, 700 / value[0])), min(0.9, max(0.6, 600 / value[1])))
     
     def _create_content(self):
         """Create confirmation content"""
@@ -1592,8 +1531,9 @@ class ChecklistDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             color=THEME['text_primary'],
-            font_size=dp(32),
-            halign='center'
+            font_size=sp(20),
+            halign='center',
+            valign='middle'
         )
         layout.add_widget(header_label)
         
@@ -1610,9 +1550,9 @@ class ChecklistDialog(Popup):
                 size_hint_y=None,
                 height=dp(60),
                 color=THEME['text_primary'],
-                font_size=dp(28),
+                font_size=sp(18),
                 halign='left',
-                text_size=(self.width - dp(80), None)
+                valign='middle'
             )
             layout.add_widget(req_label)
         
@@ -1632,7 +1572,7 @@ class ChecklistDialog(Popup):
             on_press=self.dismiss,
             background_color=THEME['error'],
             color=THEME['text_white'],
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(cancel_btn)
         
@@ -1641,7 +1581,7 @@ class ChecklistDialog(Popup):
             on_press=self.confirm_job,
             background_color=THEME['secondary'],
             color=THEME['text_white'],
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(confirm_btn)
         
@@ -1691,12 +1631,13 @@ class ProgressDialog(Popup):
         self.completed_wells = completed_wells
         self.total_wells = total_wells
         self.current_well_text = current_well_text
-        self.size_hint = (1, 1)  # Fullscreen
+        # Fullscreen or large dialog based on screen size
+        self.size_hint = (min(1.0, max(0.9, 800 / Window.width)), min(1.0, max(0.85, 700 / Window.height)))
         self.title = "Job Progress"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
         
         # Update progress
         self.progress_value = (completed_wells / total_wells) * 100 if total_wells > 0 else 0
@@ -1758,11 +1699,11 @@ class ProgressDialog(Popup):
                         if hasattr(child, 'font_size'):
                             # Scale font sizes proportionally
                             if 'Completed' in child.text:
-                                child.font_size = max(dp(16), max_size * 0.08)
+                                child.font_size = max(sp(16), max_size * 0.08)
                             elif '%' in child.text:
-                                child.font_size = max(dp(20), max_size * 0.1)
+                                child.font_size = max(sp(20), max_size * 0.1)
                             else:  # The main count text
-                                child.font_size = max(dp(24), max_size * 0.15)
+                                child.font_size = max(sp(24), max_size * 0.15)
                 
         except Exception as e:
             print(f"Error adjusting progress dialog sizing: {e}")
@@ -1792,10 +1733,10 @@ class ProgressDialog(Popup):
         content.add_widget(Label(
             text='Are you sure you want to cancel the job?',
             halign='center',
-            valign='top',
+            valign='middle',
             size_hint_y=None,
             height=dp(80),
-            font_size=dp(28),
+            font_size=sp(20),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -1806,7 +1747,7 @@ class ProgressDialog(Popup):
             background_color=THEME['primary'],  # Theme primary color
             color=THEME['text_white'],  # Theme white text
             on_press=lambda x: confirm_popup.dismiss(),
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(cancel_btn)
         
@@ -1815,7 +1756,7 @@ class ProgressDialog(Popup):
             background_color=THEME['warning'],  # Theme warning color
             color=THEME['text_white'],  # Theme white text
             on_press=lambda x: self._confirm_cancel(confirm_popup),
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(confirm_btn)
         
@@ -1886,8 +1827,8 @@ class ProgressDialog(Popup):
         # Send M25 command to pause/resume the current job
         try:
             main_screen = App.get_running_app().root.get_screen('main')
-            if main_screen.jubilee_manager.connected and main_screen.jubilee_manager.machine:
-                main_screen.jubilee_manager.machine.gcode("M25")  # Pause/resume command
+            if main_screen.jubilee_manager.connected and main_screen.jubilee_manager.machine_read_only:
+                main_screen.jubilee_manager.machine_read_only.gcode("M25")  # Pause/resume command
                 print("Sent M25 command to pause job")
         except Exception as e:
             print(f"Error sending M25 command: {e}")
@@ -1905,8 +1846,8 @@ class ProgressDialog(Popup):
         # Send M112 command for emergency stop
         try:
             main_screen = App.get_running_app().root.get_screen('main')
-            if main_screen.jubilee_manager.connected and main_screen.jubilee_manager.machine:
-                main_screen.jubilee_manager.machine.gcode("M112")  # Emergency stop command
+            if main_screen.jubilee_manager.connected and main_screen.jubilee_manager.machine_read_only:
+                main_screen.jubilee_manager.machine_read_only.gcode("M112")  # Emergency stop command
                 print("Sent M112 emergency stop command")
         except Exception as e:
             print(f"Error sending M112 command: {e}")
@@ -1916,15 +1857,23 @@ class FinishedDialog(Popup):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.size_hint = (0.6, 0.4)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.8, max(0.5, 500 / Window.width)), min(0.6, max(0.3, 350 / Window.height)))
         self.title = "Job Completed"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_finished)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize_finished(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.8, max(0.5, 500 / value[0])), min(0.6, max(0.3, 350 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -1936,8 +1885,8 @@ class FinishedDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(48),
+            valign='middle',
+            font_size=sp(32),
             color=THEME['secondary'],  # Green color
             bold=True
         ))
@@ -1947,8 +1896,8 @@ class FinishedDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(32),
+            valign='middle',
+            font_size=sp(24),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -1958,7 +1907,7 @@ class FinishedDialog(Popup):
             background_color=THEME['secondary'],  # Theme secondary color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24),
+            font_size=sp(18),
             size_hint_y=None,
             height=dp(80)
         )
@@ -1974,15 +1923,23 @@ class CancelledDialog(Popup):
         self.completed_count = completed_count
         self.total_count = total_count
         super().__init__(**kwargs)
-        self.size_hint = (0.7, 0.5)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.85, max(0.6, 600 / Window.width)), min(0.7, max(0.4, 450 / Window.height)))
         self.title = "Job Cancelled"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_cancelled)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize_cancelled(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.85, max(0.6, 600 / value[0])), min(0.7, max(0.4, 450 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -1994,8 +1951,8 @@ class CancelledDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(48),
+            valign='middle',
+            font_size=sp(32),
             color=THEME['warning'],  # Orange color
             bold=True
         ))
@@ -2006,8 +1963,8 @@ class CancelledDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(28),
+            valign='middle',
+            font_size=sp(20),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -2016,8 +1973,8 @@ class CancelledDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_secondary']  # Theme secondary text color
         ))
         
@@ -2027,7 +1984,7 @@ class CancelledDialog(Popup):
             background_color=THEME['warning'],  # Theme warning color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24),
+            font_size=sp(18),
             size_hint_y=None,
             height=dp(80)
         )
@@ -2043,15 +2000,23 @@ class AbortedDialog(Popup):
         self.completed_count = completed_count
         self.total_count = total_count
         super().__init__(**kwargs)
-        self.size_hint = (0.8, 0.8)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.95, max(0.7, 700 / Window.width)), min(0.9, max(0.7, 650 / Window.height)))
         self.title = "Job Aborted"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_aborted)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize_aborted(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.95, max(0.7, 700 / value[0])), min(0.9, max(0.7, 650 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -2063,8 +2028,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(48),
+            valign='middle',
+            font_size=sp(32),
             color=THEME['error'],  # Red color
             bold=True
         ))
@@ -2075,8 +2040,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(28),
+            valign='middle',
+            font_size=sp(20),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -2085,8 +2050,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_secondary']  # Theme secondary text color
         ))
         
@@ -2102,8 +2067,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(40),
             halign='center',
-            valign='top',
-            font_size=dp(32),
+            valign='middle',
+            font_size=sp(24),
             color=THEME['text_white'],  # White text on red background
             bold=True
         ))
@@ -2113,8 +2078,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_white'],  # White text on red background
         ))
         
@@ -2123,8 +2088,8 @@ class AbortedDialog(Popup):
             size_hint_y=None,
             height=dp(60),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_white'],  # White text on red background
         ))
         
@@ -2136,7 +2101,7 @@ class AbortedDialog(Popup):
             background_color=THEME['error'],  # Theme error color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24),
+            font_size=sp(18),
             size_hint_y=None,
             height=dp(80)
         )
@@ -2150,16 +2115,24 @@ class ShutdownDialog(Popup):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.size_hint = (0.6, 0.4)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.8, max(0.5, 550 / Window.width)), min(0.6, max(0.35, 400 / Window.height)))
         self.title = "Confirm Shutdown"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
         self.confirmed = False
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_shutdown)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize_shutdown(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.8, max(0.5, 550 / value[0])), min(0.6, max(0.35, 400 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -2171,8 +2144,8 @@ class ShutdownDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(48),
+            valign='middle',
+            font_size=sp(32),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -2181,8 +2154,8 @@ class ShutdownDialog(Popup):
             size_hint_y=None,
             height=dp(120),
             halign='center',
-            valign='top',
-            font_size=dp(32),
+            valign='middle',
+            font_size=sp(24),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -2194,7 +2167,7 @@ class ShutdownDialog(Popup):
             background_color=THEME['primary'],  # Theme primary color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(cancel_btn)
         
@@ -2203,7 +2176,7 @@ class ShutdownDialog(Popup):
             background_color=THEME['error'],  # Theme error color
             color=THEME['text_white'],  # Theme white text
             on_press=self.confirm_shutdown,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(shutdown_btn)
         
@@ -2225,27 +2198,43 @@ class ErrorDialog(Popup):
     def __init__(self, error_message: str, **kwargs):
         super().__init__(**kwargs)
         self.error_message = error_message
-        self.size_hint = (0.8, 0.6)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.9, max(0.7, 650 / Window.width)), min(0.75, max(0.5, 500 / Window.height)))
         self.title = "Error"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_error)
+    
+    def _on_window_resize_error(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.9, max(0.7, 650 / value[0])), min(0.75, max(0.5, 500 / value[1])))
 
 class TextInputDialog(Popup):
     """Example dialog with text input that shows virtual keyboard"""
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.size_hint = (0.8, 0.6)
+        # Responsive sizing based on screen size
+        self.size_hint = (min(0.9, max(0.7, 650 / Window.width)), min(0.75, max(0.5, 500 / Window.height)))
         self.title = "Enter Text"
         self.background = ''  # Remove default background
         self.background_color = THEME['background']  # Theme background color
         self.title_color = THEME['text_primary']  # Theme text color
-        self.title_size = dp(18)
+        self.title_size = sp(18)
+        
+        # Bind to window resize
+        Window.bind(size=self._on_window_resize_textinput)
         
         # Create the dialog content
         self._create_content()
+    
+    def _on_window_resize_textinput(self, instance, value):
+        """Handle window resize for responsive sizing"""
+        self.size_hint = (min(0.9, max(0.7, 650 / value[0])), min(0.75, max(0.5, 500 / value[1])))
     
     def _create_content(self):
         """Create the dialog content"""
@@ -2257,8 +2246,8 @@ class TextInputDialog(Popup):
             size_hint_y=None,
             height=dp(80),
             halign='center',
-            valign='top',
-            font_size=dp(24),
+            valign='middle',
+            font_size=sp(18),
             color=THEME['text_primary']  # Theme text color
         ))
         
@@ -2279,7 +2268,7 @@ class TextInputDialog(Popup):
             background_color=THEME['primary'],  # Theme primary color
             color=THEME['text_white'],  # Theme white text
             on_press=self.dismiss,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(cancel_btn)
         
@@ -2288,7 +2277,7 @@ class TextInputDialog(Popup):
             background_color=THEME['secondary'],  # Theme secondary color
             color=THEME['text_white'],  # Theme white text
             on_press=self._on_ok,
-            font_size=dp(24)
+            font_size=sp(18)
         )
         button_layout.add_widget(ok_btn)
         

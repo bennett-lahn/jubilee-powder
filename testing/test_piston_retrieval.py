@@ -16,13 +16,18 @@ The test uses MotionPlatformStateMachine as the top-level module and simulates
 the prerequisite state (carrying a mold) by manually setting the context.
 """
 
+import sys
 from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 from science_jubilee.Machine import Machine
-from MotionPlatformStateMachine import MotionPlatformStateMachine
-from Manipulator import Manipulator
-from MovementExecutor import FeedRate
-from ConfigLoader import config
-from trickler_labware import Mold
+from src.MotionPlatformStateMachine import MotionPlatformStateMachine
+from src.Manipulator import Manipulator
+from jubilee_api_config.constants import FeedRate
+from src.ConfigLoader import config
+from src.trickler_labware import Mold
 
 
 class TestError(Exception):
@@ -96,7 +101,9 @@ def main():
     
     # Configuration
     MACHINE_ADDRESS = config.get_duet_ip()  # Get from config
-    STATE_MACHINE_CONFIG = "./jubilee_api_config/motion_platform_positions.json"
+    # Resolve config path relative to project root
+    project_root = Path(__file__).parent.parent
+    STATE_MACHINE_CONFIG = str(project_root / "jubilee_api_config" / "motion_platform_positions.json")
     
     print("\n" + "="*60)
     print("PISTON RETRIEVAL TEST")
@@ -291,59 +298,106 @@ def main():
         print_success("Initialization complete")
         
         # ====================================================================
-        # STEP 1: MOVE TO DISPENSER 0 READY POSITION
+        # PISTON RETRIEVAL LOOP
         # ====================================================================
-        print_step(1, "Move to dispenser 0 ready position")
+        piston_count = 0
+        continue_retrieval = True
         
-        wait_for_user_confirmation("Move to dispenser 0 ready position")
-        result = state_machine.validated_move_to_dispenser(
-            piston_dispenser=piston_dispenser_0
-        )
-        if not result.valid:
-            raise TestError(f"Failed to move to dispenser 0: {result.reason}")
-        
-        print_success("Moved to dispenser 0 ready position")
-        current_pos = machine.get_position()
-        print(f"Position: X={current_pos['X']}, Y={current_pos['Y']}, "
-              f"Z={current_pos['Z']}, V={current_pos.get('V', 'N/A')}")
-        print(f"Context position: {state_machine.context.position_id}")
+        while continue_retrieval:
+            piston_count += 1
+            
+            # Check if dispenser has pistons available
+            if piston_dispenser_0.num_pistons == 0:
+                print("\n" + "="*60)
+                print("NO MORE PISTONS AVAILABLE")
+                print("="*60)
+                print("Dispenser 0 has no remaining pistons.")
+                print("Returning to global ready and exiting...")
+                break
+            
+            # ====================================================================
+            # STEP 1: MOVE TO DISPENSER 0 READY POSITION
+            # ====================================================================
+            print_step(piston_count, f"Piston {piston_count} - Move to dispenser 0 ready position")
+            
+            wait_for_user_confirmation("Move to dispenser 0 ready position")
+            result = state_machine.validated_move_to_dispenser(
+                piston_dispenser=piston_dispenser_0
+            )
+            if not result.valid:
+                raise TestError(f"Failed to move to dispenser 0: {result.reason}")
+            
+            print_success("Moved to dispenser 0 ready position")
+            current_pos = machine.get_position()
+            print(f"Position: X={current_pos['X']}, Y={current_pos['Y']}, "
+                  f"Z={current_pos['Z']}, V={current_pos.get('V', 'N/A')}")
+            print(f"Context position: {state_machine.context.position_id}")
+            
+            # ====================================================================
+            # STEP 2: RETRIEVE PISTON FROM DISPENSER 0
+            # ====================================================================
+            print_step(piston_count, f"Piston {piston_count} - Retrieve piston from dispenser 0")
+            
+            print(f"Dispenser 0 pistons before retrieval: {piston_dispenser_0.num_pistons}")
+            print(f"Mold has piston before retrieval: {mock_mold.has_top_piston}")
+            
+            wait_for_user_confirmation("Retrieve piston from dispenser 0 (manipulator will move)")
+            result = state_machine.validated_retrieve_piston(
+                piston_dispenser=piston_dispenser_0,
+                manipulator_config=manipulator._get_config_dict()
+            )
+            if not result.valid:
+                raise TestError(f"Failed to retrieve piston: {result.reason}")
+            
+            print_success("Retrieved piston from dispenser 0")
+            
+            # Verify piston was added to mold
+            if state_machine.context.current_well is None:
+                raise TestError("Mold was lost during piston retrieval")
+            
+            if not state_machine.context.current_well.has_top_piston:
+                raise TestError("Piston was not registered as added to mold")
+            
+            print(f"Dispenser 0 pistons after retrieval: {piston_dispenser_0.num_pistons}")
+            print(f"Mold has piston after retrieval: {mock_mold.has_top_piston}")
+            print(f"Current well: {state_machine.context.current_well.name}")
+            print(f"Payload state: {state_machine.context.payload_state}")
+            
+            # ====================================================================
+            # STEP 3: WAIT FOR USER CONFIRMATION
+            # ====================================================================
+            print("\n" + "="*60)
+            print(f"PISTON {piston_count} RETRIEVED")
+            print("="*60)
+            print("\nPlease confirm:")
+            print("  - Piston has been removed from the mold")
+            print("  - Mold has been replaced (new mold without top piston)")
+            print("\nOptions:")
+            print("  - Press Enter to continue with next piston")
+            print("  - Type 'exit' or 'quit' to return to global ready and exit")
+            
+            user_input = input("\nYour choice: ").strip().lower()
+            
+            if user_input in ['exit', 'quit', 'q']:
+                print("\nUser requested to exit. Returning to global ready...")
+                continue_retrieval = False
+            else:
+                # Reset mold state to simulate new mold without piston
+                print("\nResetting mold state for next piston...")
+                mock_mold.has_top_piston = False
+                state_machine.context.current_well = mock_mold
+                state_machine.update_context(
+                    payload_state="mold_without_top_piston"
+                )
+                print_success("Mold state reset - ready for next piston")
+                print(f"  Mold has piston: {mock_mold.has_top_piston}")
+                print(f"  Payload state: {state_machine.context.payload_state}")
         
         # ====================================================================
-        # STEP 2: RETRIEVE PISTON FROM DISPENSER 0
+        # RETURN TO GLOBAL READY
         # ====================================================================
-        print_step(2, "Retrieve piston from dispenser 0")
+        print_step(0, "Return to global ready")
         
-        print(f"Dispenser 0 pistons before retrieval: {piston_dispenser_0.num_pistons}")
-        print(f"Mold has piston before retrieval: {mock_mold.has_top_piston}")
-        
-        wait_for_user_confirmation("Retrieve piston from dispenser 0 (manipulator will move)")
-        result = state_machine.validated_retrieve_piston(
-            piston_dispenser=piston_dispenser_0,
-            manipulator_config=manipulator._get_config_dict()
-        )
-        if not result.valid:
-            raise TestError(f"Failed to retrieve piston: {result.reason}")
-        
-        print_success("Retrieved piston from dispenser 0")
-        
-        # Verify piston was added to mold
-        if state_machine.context.current_well is None:
-            raise TestError("Mold was lost during piston retrieval")
-        
-        if not state_machine.context.current_well.has_top_piston:
-            raise TestError("Piston was not registered as added to mold")
-        
-        print(f"Dispenser 0 pistons after retrieval: {piston_dispenser_0.num_pistons}")
-        print(f"Mold has piston after retrieval: {mock_mold.has_top_piston}")
-        print(f"Current well: {state_machine.context.current_well.name}")
-        print(f"Payload state: {state_machine.context.payload_state}")
-        
-        # ====================================================================
-        # STEP 3: RETURN TO GLOBAL READY
-        # ====================================================================
-        print_step(3, "Return to global ready")
-        
-        wait_for_user_confirmation("Return to global ready")
         valid, reason = move_to_global_ready(state_machine)
         if not valid:
             raise TestError(f"Failed to return to global_ready: {reason}")
@@ -361,10 +415,7 @@ def main():
         print("TEST COMPLETED SUCCESSFULLY")
         print("="*60)
         print("\nSummary:")
-        print(f"  Started at: global_ready")
-        print(f"  Moved to: dispenser_ready_0")
-        print(f"  Retrieved piston: Yes")
-        print(f"  Returned to: global_ready")
+        print(f"  Total pistons retrieved: {piston_count}")
         print(f"  Final position: {state_machine.context.position_id}")
         print(f"  Payload state: {state_machine.context.payload_state}")
         print(f"  Carrying mold: {state_machine.context.current_well.name if state_machine.context.current_well else 'None'}")

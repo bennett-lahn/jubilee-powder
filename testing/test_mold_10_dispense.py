@@ -11,7 +11,7 @@ This test performs:
 2. Pick up mold 10
 3. Move to scale
 4. Place mold on scale
-5. Dispense 0.25 grams of powder
+5. Fill mold with 0.25 grams of powder
 6. Pick up mold from scale
 7. Move to global ready (from scale ready)
 8. Move to dispenser 0 ready position
@@ -24,13 +24,18 @@ The test uses MotionPlatformStateMachine as the top-level module and performs
 all the initialization tasks that JubileeManager typically handles.
 """
 
+import sys
 from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 from science_jubilee.Machine import Machine
-from Scale import Scale
-from MotionPlatformStateMachine import MotionPlatformStateMachine
-from Manipulator import Manipulator
-from MovementExecutor import FeedRate
-from ConfigLoader import config
+from src.Scale import Scale
+from src.MotionPlatformStateMachine import MotionPlatformStateMachine
+from src.Manipulator import Manipulator
+from jubilee_api_config.constants import FeedRate
+from src.ConfigLoader import config
 
 
 class TestError(Exception):
@@ -92,11 +97,11 @@ def wait_for_user_confirmation(action: str):
     """Wait for user to press Enter before proceeding with movement"""
     print(f"\n⚠️  READY TO: {action}")
     print("   Press Enter to proceed or Ctrl+C to abort...")
-    try:
-        input()
-    except KeyboardInterrupt:
-        print("\n\nAborted by user.")
-        raise
+    # try:
+    #     input()
+    # except KeyboardInterrupt:
+    #     print("\n\nAborted by user.")
+    #     raise
 
 
 def main():
@@ -105,7 +110,9 @@ def main():
     # Configuration
     MACHINE_ADDRESS = config.get_duet_ip()  # Get from config
     SCALE_PORT = "/dev/ttyUSB0"  # Adjust as needed for your system
-    STATE_MACHINE_CONFIG = "./jubilee_api_config/motion_platform_positions.json"
+    # Resolve config path relative to project root
+    project_root = Path(__file__).parent.parent
+    STATE_MACHINE_CONFIG = str(project_root / "jubilee_api_config" / "motion_platform_positions.json")
     TARGET_WEIGHT = 0.25  # grams
     MOLD_ID = "10"  # Mold number to work with
     
@@ -164,7 +171,8 @@ def main():
         
         # Initialize deck (required for well operations)
         print("Initializing deck...")
-        state_machine.initialize_deck()
+        deck_config_path = str(project_root / "jubilee_api_config")
+        state_machine.initialize_deck(config_path=deck_config_path)
         print_success("Deck initialized")
         
         # Initialize dispensers (required for piston operations)
@@ -211,7 +219,7 @@ def main():
         print_step(1, f"Move to mold {MOLD_ID} ready point")
         
         wait_for_user_confirmation(f"Move to mold {MOLD_ID} ready point")
-        result = state_machine.validated_move_to_well(well_id=MOLD_ID)
+        result = state_machine.validated_move_to_mold_slot(well_id=MOLD_ID)
         if not result.valid:
             raise TestError(f"Failed to move to mold {MOLD_ID}: {result.reason}")
         
@@ -263,19 +271,19 @@ def main():
             raise TestError("Mold was not registered as placed on scale")
         
         # ====================================================================
-        # STEP 5: DISPENSE 0.25 GRAMS OF POWDER
+        # STEP 5: FILL MOLD WITH 0.25 GRAMS OF POWDER
         # ====================================================================
-        print_step(5, f"Dispense {TARGET_WEIGHT} grams of powder")
+        print_step(5, f"Fill mold with {TARGET_WEIGHT} grams of powder")
 
-        wait_for_user_confirmation(f"Dispense {TARGET_WEIGHT} grams of powder (trickler will move)")
+        wait_for_user_confirmation(f"Fill mold with {TARGET_WEIGHT} grams of powder (trickler will move)")
         initial_weight = scale.get_weight(stable=True)
-        result = state_machine.validated_dispense_powder(target_weight=TARGET_WEIGHT)
+        result = state_machine.validated_fill_powder(target_weight=TARGET_WEIGHT)
         if not result.valid:
-            raise TestError(f"Failed to dispense powder: {result.reason}")
+            raise TestError(f"Failed to fill mold with powder: {result.reason}")
         
         # Read final weight
         final_weight = scale.get_weight(stable=True)
-        print_success("Dispensed powder")
+        print_success("Filled mold with powder")
         print(f"Final weight: {final_weight:.4f} g")
         print(f"Dispensed amount: {final_weight:.4f} g")
         print(f"Target: {TARGET_WEIGHT:.4f} g")
@@ -378,7 +386,7 @@ def main():
         print_step(11, f"Move to mold {MOLD_ID} ready and place mold back")
         
         wait_for_user_confirmation(f"Move to mold {MOLD_ID} ready point")
-        result = state_machine.validated_move_to_well(well_id=MOLD_ID)
+        result = state_machine.validated_move_to_mold_slot(well_id=MOLD_ID)
         if not result.valid:
             raise TestError(f"Failed to move to mold {MOLD_ID}: {result.reason}")
         

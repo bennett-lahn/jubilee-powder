@@ -11,18 +11,11 @@ components, so all movements go through validation.
 import time
 
 from typing import Optional, Union
-from enum import Enum
 from science_jubilee.Machine import Machine
-from Scale import Scale
-from PistonDispenser import PistonDispenser
-from MotionPlatformStateMachine import PositionType
-
-
-class FeedRate(Enum):
-    """Enumeration for feedrate settings."""
-    FAST = "fast"
-    MEDIUM = "medium"
-    SLOW = "slow"
+from src.Scale import Scale
+from src.PistonDispenser import PistonDispenser
+from src.MotionPlatformStateMachine import PositionType
+from jubilee_api_config.constants import FeedRate
 
 
 class MovementExecutor:
@@ -32,11 +25,6 @@ class MovementExecutor:
     This class should not be instantiated directly by user code. Instead, it is
     owned by MotionPlatformStateMachine and accessed through validated methods.
     """
-    
-    # Feedrate constants (in mm/min)
-    FEEDRATE_FAST = 700
-    FEEDRATE_MEDIUM = 700
-    FEEDRATE_SLOW = 700
     
     def __init__(self, machine: Machine, scale: Optional[Scale] = None, feedrate: FeedRate = FeedRate.MEDIUM):
         """
@@ -49,23 +37,7 @@ class MovementExecutor:
         """
         self._machine = machine
         self._scale = scale
-        self._feedrate = feedrate
-    
-    def _get_feedrate(self) -> int:
-        """
-        Get the current feedrate value based on the selected FeedRate enum.
-        
-        Returns:
-            Feedrate value in mm/min
-        """
-        if self._feedrate == FeedRate.FAST:
-            return self.FEEDRATE_FAST
-        elif self._feedrate == FeedRate.MEDIUM:
-            return self.FEEDRATE_MEDIUM
-        elif self._feedrate == FeedRate.SLOW:
-            return self.FEEDRATE_SLOW
-        else:
-            return self.FEEDRATE_MEDIUM  # Default fallback
+        self._feedrate = feedrate.value
     
     @property
     def machine(self) -> Machine:
@@ -128,7 +100,7 @@ class MovementExecutor:
             well_name = well.name if (well and hasattr(well, 'name')) else well_id
             print(f"Picking up mold: {well_name}")
             
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
             self._machine.move_to(z=40, s=feedrate)
             self._machine.move(dy=23, s=feedrate)
@@ -184,7 +156,7 @@ class MovementExecutor:
             well_name = well.name if (well and hasattr(well, 'name')) else well_id
             print(f"Placing mold: {well_name}")
             
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
             self._machine.move(dy=23, s=feedrate)
             self._machine.move_to(z=40, s=feedrate)
@@ -232,7 +204,7 @@ class MovementExecutor:
         try:
             print("Placing mold on scale...")
             self._scale.tare()
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
             self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
             self._machine.gcode("M208 Z38:195")      # Move bed up so well fits under trickler, relax z-limit to do so
@@ -276,7 +248,7 @@ class MovementExecutor:
 
         try:
             print("Picking mold from scale...")
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move(dy=1, s=feedrate)      # Return to model position
             self._machine.move_to(z=38, s=feedrate)  # Pick up well off scale
             self._machine.gcode("M208 Z38:195")      # Revert z-limit
@@ -303,7 +275,7 @@ class MovementExecutor:
         ready_v: float = None
     ) -> bool:
         """
-        # TODO: Do NOT RUN THIS WITH MORE THAN ONE DISPENSER AS IT CURRENTLY USES ABSOLUTE COORDINATES, NOT RELATIVE
+        # TODO: DO NOT RUN THIS WITH MORE THAN ONE DISPENSER AS IT CURRENTLY USES ABSOLUTE COORDINATES, NOT RELATIVE
         Execute movements to place top piston on current mold.
         
         Args:
@@ -322,14 +294,14 @@ class MovementExecutor:
         try:
             print(f"Placing top piston from dispenser {piston_dispenser.index}")
             
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             feedrate_pickup = 2000 # TODO: hardcoded to minimum speed for smooth pickup, for now
             self._machine.move_to(y=177.7, s=feedrate_pickup) # Move into dispenser to dispense piston
             self._machine.gcode("M400") # Wait for previous command to finish
             self._machine.gcode("G4 S2") # Wait for 2 seconds
             self._machine.move_to(v=21, s=feedrate) # Move tool up to pickup piston
             self._machine.move_to(y=140, s=feedrate) # Move away from dispenser
-            self._machine.move_to(v=8, s=feedrate) # Push piston into mold
+            self._machine.move_to(v=8, s=feedrate) # Push piston into mold TODO: Should be more like ~v=6
             self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate) 
             
             return True
@@ -358,7 +330,7 @@ class MovementExecutor:
         try:
             print("Executing tamp")
             
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine._set_absolute_positioning()
             self._machine.move_to(v=38.5, s=feedrate)  # Prepare for tamp
             self._machine.move(dy=scale_y, s=feedrate)  # Move from under trickler
@@ -393,7 +365,7 @@ class MovementExecutor:
         """
         try:
             if speed is None:
-                speed = self._get_feedrate()
+                speed = self._feedrate
             self._machine.move_to(x=x, y=y, z=z, v=v, s=speed)
             return True
         except Exception as e:
@@ -431,7 +403,7 @@ class MovementExecutor:
                 v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
                 
                 if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._get_feedrate()
+                    feedrate = self._feedrate
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
             return True
         except Exception as e:
@@ -487,7 +459,7 @@ class MovementExecutor:
                 v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
                 
                 if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._get_feedrate()
+                    feedrate = self._feedrate
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
             
             return True
@@ -538,7 +510,7 @@ class MovementExecutor:
                 v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
                 
                 if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._get_feedrate()
+                    feedrate = self._feedrate
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
             
             return True
@@ -649,7 +621,7 @@ class MovementExecutor:
                 if not isinstance(resolved_z, (int, float)):
                     raise ValueError(f"Resolved z coordinate is not numeric: {resolved_z} (type: {type(resolved_z).__name__})")
             
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move_to(x=x, y=y, z=resolved_z, v=v, s=feedrate)
             return True
         except Exception as e:
@@ -681,7 +653,7 @@ class MovementExecutor:
             True if successful, False otherwise.
         """
         try:
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
             return True
         except Exception as e:
@@ -722,24 +694,24 @@ class MovementExecutor:
             SCALE_READY position requires z_height_policy: allowed=['dispenser_safe', 'mold_transfer_safe']
         """
         try:
-            feedrate = self._get_feedrate()
+            feedrate = self._feedrate
             self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
             return True
         except Exception as e:
             print(f"Error moving to scale: {e}")
             return False
     
-    def execute_dispense_powder(
+    def execute_fill_powder(
         self,
         target_weight: float
     ) -> bool:
         """
-        Dispense powder to the scale.
+        Fill mold with powder using the trickler.
         
-        Moved from JubileeManager._dispense_powder()
+        Moved from JubileeManager._fill_powder()
         
         Args:
-            target_weight: Target weight to dispense
+            target_weight: Target weight to fill
             
         Returns:
             True if successful, False otherwise
@@ -844,7 +816,7 @@ class MovementExecutor:
             self._machine.gcode("G90")
             return True
         except Exception as e:
-            print(f"Error dispensing powder: {e}")
+            print(f"Error filling mold with powder: {e}")
             # Restore absolute positioning mode on error
             try:
                 self._machine.gcode("G90")

@@ -3,10 +3,17 @@ Basic Jubilee Test Script
 This script homes the Jubilee motion platform and moves it in a circle twice using G28 arc commands.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import math
 import time
 from science_jubilee.Machine import Machine
-from Scale import Scale
+from src.Scale import Scale
 
 def main():
     # Initialize the Machine

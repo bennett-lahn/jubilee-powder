@@ -1,16 +1,32 @@
 from science_jubilee.tools.Tool import (
     Tool,
     ToolConfigurationError,
-    ToolStateError,
+    ToolStateError as _ExternalToolStateError,
 )
-from trickler_labware import Mold
-import PistonDispenser
+from src.trickler_labware import Mold
+from src.PistonDispenser import PistonDispenser
 import time
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
+from pathlib import Path
 import json
 import os
-from ConfigLoader import config
+from src.ConfigLoader import config
 from functools import wraps
+
+# Re-export ToolStateError for documentation purposes
+class ToolStateError(_ExternalToolStateError):
+    """
+    Exception raised when a tool operation is attempted in an invalid state.
+    
+    This error is raised when trying to perform operations that require
+    specific tool or payload states that are not currently met.
+    
+    Examples:
+        - Attempting to pick a mold when already holding one
+        - Trying to place a mold when not holding one
+        - Operating at wrong position for the requested action
+    """
+    pass
 
 def requires_safe_z_manipulator(func):
     """
@@ -160,7 +176,7 @@ class Manipulator(Tool):
         if config_dict:
             self._load_manipulator_config(config_dict)
 
-    def _load_config(self, config_source_param) -> Optional[Dict[str, Any]]:
+    def _load_config(self, config_source_param: Union[str, Dict[str, Any], None]) -> Optional[Dict[str, Any]]:
         """
         Load configuration from either a file path string or a dict.
         
@@ -176,13 +192,15 @@ class Manipulator(Tool):
         elif isinstance(config_source_param, str):
             # Config is a file path - load from JSON
             try:
-                # Try as relative path from jubilee_api_config
-                config_path = os.path.join("jubilee_api_config", f"{config_source_param}.json")
-                if not os.path.exists(config_path):
+                # Get project root (parent of src directory)
+                project_root = Path(__file__).parent.parent
+                # Try as path relative to jubilee_api_config
+                config_path = project_root / "jubilee_api_config" / f"{config_source_param}.json"
+                if not config_path.exists():
                     # Try as absolute or relative path as-is
-                    config_path = config_source_param
-                    if not config_path.endswith('.json'):
-                        config_path = f"{config_path}.json"
+                    config_path = Path(config_source_param)
+                    if not config_path.suffix == '.json':
+                        config_path = Path(f"{config_source_param}.json")
                 
                 with open(config_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
@@ -242,7 +260,7 @@ class Manipulator(Tool):
             return self.state_machine.context.mold_on_scale
         return False
 
-    def home_tamper(self, machine_connection=None):
+    def home_tamper(self, machine_connection: Optional[Any] = None):
         """
         Perform sensorless homing for the tamper axis.
         

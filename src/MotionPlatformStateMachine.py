@@ -9,12 +9,12 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, TYPE_CHECK
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
 from science_jubilee.decks.Deck import Deck
-from PistonDispenser import PistonDispenser
-from Scale import Scale
+from src.PistonDispenser import PistonDispenser
+from src.Scale import Scale
 
 # Import FeedRate for type checking only (avoiding circular import)
 if TYPE_CHECKING:
-    from MovementExecutor import FeedRate
+    from jubilee_api_config.constants import FeedRate
 else:
     # At runtime, import in __init__ where needed
     FeedRate = 'FeedRate'
@@ -415,7 +415,8 @@ class MotionPlatformStateMachine(StateMachine):
 
     def __init__(self, registry: PositionRegistry, machine: Machine, *, context: Optional[MotionContext] = None, scale: Optional[Scale] = None, feedrate: 'FeedRate' = None) -> None:
         # Import MovementExecutor locally to avoid circular import
-        from MovementExecutor import MovementExecutor, FeedRate as FR
+        from src.MovementExecutor import MovementExecutor
+        from jubilee_api_config.constants import FeedRate as FR
         
         # Handle default feedrate
         if feedrate is None:
@@ -478,7 +479,7 @@ class MotionPlatformStateMachine(StateMachine):
     # Platform State Initialization
     # ---------------------------------------------------------------------
     
-    def initialize_deck(self, deck_name: str = "weight_well_deck", config_path: str = "./jubilee_api_config"):
+    def initialize_deck(self, deck_name: str = "weight_well_deck", config_path: Optional[str] = None):
         """
         Initialize the deck with weight wells in each slot.
         
@@ -486,7 +487,7 @@ class MotionPlatformStateMachine(StateMachine):
             deck_name: Name of the deck configuration
             config_path: Path to the deck configuration files
         """
-        from trickler_labware import Mold
+        from src.trickler_labware import Mold
         from science_jubilee.labware.Labware import Labware
         
         try:
@@ -606,7 +607,7 @@ class MotionPlatformStateMachine(StateMachine):
                 
                 # Get the well matching the labware well name
                 if labware_well_name in slot.labware.wells:
-                    from trickler_labware import Mold
+                    from src.trickler_labware import Mold
                     well = slot.labware.wells[labware_well_name]
                     if isinstance(well, Mold):
                         return well
@@ -639,7 +640,7 @@ class MotionPlatformStateMachine(StateMachine):
             well_id: Mold slot identifier (numerical string "0" through "17")
             manipulator_config: Configuration dict for the manipulator
         """
-        from trickler_labware import Mold
+        from src.trickler_labware import Mold
         
         # Domain-specific validation
         if self.context.current_well is not None:
@@ -1789,15 +1790,15 @@ class MotionPlatformStateMachine(StateMachine):
             v=coords.v
         )
     
-    def validated_dispense_powder(
+    def validated_fill_powder(
         self,
         target_weight: float
     ) -> MoveValidationResult:
         """
-        Validate and execute powder dispensing.
+        Validate and execute filling mold with powder.
         
         Args:
-            target_weight: Target weight to dispense
+            target_weight: Target weight to fill
             
         Returns:
             MoveValidationResult with outcome
@@ -1806,19 +1807,19 @@ class MotionPlatformStateMachine(StateMachine):
         if self.context.position_id != "scale_active":
             return MoveValidationResult(
                 valid=False,
-                reason=f"Must be at scale_active position to dispense. Current: {self.context.position_id}"
+                reason=f"Must be at scale_active position to fill powder. Current: {self.context.position_id}"
             )
         
         if not self.context.mold_on_scale:
             return MoveValidationResult(
                 valid=False,
-                reason="Mold must be on scale before dispensing powder"
+                reason="Mold must be on scale before filling with powder"
             )
 
         # Execute through generic validation framework
         return self._validate_and_execute(
-            action_id="trickler_dispense",
-            execution_func=self._executor.execute_dispense_powder,
+            action_id="fill_mold",
+            execution_func=self._executor.execute_fill_powder,
             target_weight=target_weight
         )
     
@@ -2171,7 +2172,7 @@ class MotionPlatformStateMachine(StateMachine):
         if descriptor is None:
             return MoveValidationResult(valid=False, reason=f"Unknown action '{action_id}'.")
 
-        # Check if action requires tool engagement (e.g., trickler_dispense)
+        # Check if action requires tool engagement (e.g., fill_mold)
         if descriptor.requires_tool_engaged and self.current_state != self.tool_engaged:
             return MoveValidationResult(
                 valid=False,

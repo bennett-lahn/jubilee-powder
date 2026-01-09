@@ -3,8 +3,15 @@ Basic Scale Test Script
 This script connects to a scale and measures the weight of an object.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import time
-from Scale import Scale
+from src.Scale import Scale
 import serial
 from science_jubilee.Machine import Machine
 import matplotlib.pyplot as plt

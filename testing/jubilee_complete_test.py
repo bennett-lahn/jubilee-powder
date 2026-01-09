@@ -15,12 +15,20 @@ Each step requires user confirmation before proceeding.
 # figure out scale preset point to get movement under scale working
 # before running script, confirm all functions are implelmented
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import time
-from JubileeManager import JubileeManager
-from MovementExecutor import FeedRate, MovementExecutor
-from Scale import Scale, ScaleException
-from Manipulator import ToolStateError
-from trickler_labware import Mold
+from src.JubileeManager import JubileeManager
+from src.MovementExecutor import MovementExecutor
+from jubilee_api_config.constants import FeedRate
+from src.Scale import Scale, ScaleException
+from src.Manipulator import ToolStateError
+from src.trickler_labware import Mold
 
 
 def wait_for_user(message: str = "Press Enter to continue..."):
@@ -261,7 +269,7 @@ def main():
     SCALE_PORT = "/dev/ttyUSB0"
     TARGET_WEIGHT = 0.5  # grams
     TEST_WELL_ID = "A1"  # Mold slot to pick up mold from (A1 = slot 0)
-    FEEDRATE = FeedRate.MEDIUM  # Movement feedrate (FAST=5000, MEDIUM=1000, SLOW=500 mm/min)
+    FEEDRATE = FeedRate.MEDIUM  # Movement feedrate (FAST, MEDIUM, SLOW)
     
     # Total number of steps
     TOTAL_STEPS = 7
@@ -315,7 +323,7 @@ def main():
             print(f"Invalid feedrate, using default: {FEEDRATE.value}")
     
     # Get feedrate value for display
-    feedrate_value = MovementExecutor.FEEDRATE_FAST if FEEDRATE == FeedRate.FAST else (MovementExecutor.FEEDRATE_MEDIUM if FEEDRATE == FeedRate.MEDIUM else MovementExecutor.FEEDRATE_SLOW)
+    feedrate_value = FEEDRATE.value
     
     print(f"\nConfiguration:")
     print(f"  Jubilee IP: {DUET_IP}")
@@ -347,7 +355,10 @@ def main():
             print("\nPlease fix the errors above before running the test.")
             print("Common fixes:")
             print("  1. Set scale coordinates in JubileeManager.__init__()")
-            print("  2. Ensure deck configuration files are in ./jubilee_api_config/")
+            # Resolve config path relative to project root for display
+            project_root = Path(__file__).parent.parent
+            config_dir = project_root / "jubilee_api_config"
+            print(f"  2. Ensure deck configuration files are in {config_dir}/")
             print("  3. Verify weight_well_labware.json is properly formatted")
             return
         
@@ -407,7 +418,7 @@ def main():
         
         # Move to well location
         print(f"Moving to well {TEST_WELL_ID}...")
-        manager._move_to_well(TEST_WELL_ID)
+        manager._move_to_mold_slot(TEST_WELL_ID)
         print("✓ Positioned over well")
         
         # Pick up mold
@@ -542,7 +553,7 @@ def main():
         
         # Move back to original well location
         print(f"Moving to well {TEST_WELL_ID}...")
-        manager._move_to_well(TEST_WELL_ID)
+        manager._move_to_mold_slot(TEST_WELL_ID)
         print("✓ Positioned over original well")
         
         # Place mold back
@@ -594,7 +605,7 @@ def main():
                     try:
                         if original_mold:
                             print(f"Attempting to return mold to {TEST_WELL_ID}...")
-                            manager._move_to_well(TEST_WELL_ID)
+                            manager._move_to_mold_slot(TEST_WELL_ID)
                             manager.manipulator.place_mold(TEST_WELL_ID)
                             print(f"✓ Mold returned to {TEST_WELL_ID}")
                     except Exception as e:

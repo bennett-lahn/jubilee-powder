@@ -115,7 +115,7 @@
           "mold_on_scale": true
         },
         "allowed_actions": [
-          "trickler_dispense"
+          "fill_mold"
         ]
       }
     },
@@ -668,8 +668,8 @@
   ],
   "actions": [
     {
-      "id": "trickler_dispense",
-      "description": "Dispense from the trickler while holding a mold without its top piston at the scale.",
+      "id": "fill_mold",
+      "description": "Fill mold with powder from the trickler while holding a mold without its top piston at the scale.",
       "requires_tool_engaged": true,
       "required_tool_id": "manipulator",
       "position_scope": [
