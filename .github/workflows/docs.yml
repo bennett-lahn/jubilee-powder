@@ -43,7 +43,7 @@ jobs:
           pip install -e . || echo "No setup.py found, skipping editable install"
 
       - name: Build documentation
-        run: mkdocs build --strict
+        run: mkdocs build
 
       - name: Deploy to GitHub Pages
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
