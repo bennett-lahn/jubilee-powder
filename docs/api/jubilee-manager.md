@@ -4,12 +4,12 @@ The `JubileeManager` class is the primary interface for controlling the Jubilee 
 
 ## Overview
 
-`JubileeManager` is designed to be your main entry point for:
+`JubileeManager` is designed to be the main entry point for:
 
 - Connecting to and managing hardware
 - Performing dispense operations
 - Reading scale weights
-- Coordinating complex multi-step operations
+- Coordinating complex multi-step movements
 
 All movements are validated through an internal `MotionPlatformStateMachine` which cannot be bypassed, ensuring safety and consistency.
 
@@ -88,7 +88,7 @@ for dispenser in manager.piston_dispensers:
     print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
 ```
 
-### Error Handling
+### Function Call Error Handling
 
 ```python
 from src.JubileeManager import JubileeManager
@@ -153,7 +153,7 @@ The following methods are primarily for internal use but are documented for deve
 
 ### Read-Only Machine Access
 
-The `machine_read_only` property provides access to the underlying `Machine` object for read operations only. While it's technically possible to perform write operations through this property, **doing so bypasses safety validation and is strongly discouraged**.
+The `machine_read_only` property provides access to the underlying `Machine` object for read operations only. While it's technically possible to perform movement operations through this property, **this bypasses safety validation without updating the JubileeManager's internal state. Doing so is strongly discouraged**.
 
 Use `machine_read_only` only for:
 - Querying current position

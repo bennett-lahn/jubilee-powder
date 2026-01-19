@@ -209,7 +209,7 @@ gripper_open = gripper_config.get("open_position", 5.0)
 
 ### Providing Defaults
 
-Always provide sensible defaults:
+Always provide sensible defaults. For critical values (mold positions, feedrate, other physical parameters), it is better to throw an error instead of proceeding with a potentially inaccurate default:
 
 ```python
 # GOOD - with default
@@ -258,13 +258,13 @@ def validate_system_config(config):
     if missing:
         raise ValueError(f"Missing required config fields: {missing}")
     
-    print("✅ Configuration validation passed")
+    print("Configuration validation passed")
 
 # Usage
 try:
     validate_system_config(config)
 except ValueError as e:
-    print(f"❌ Configuration error: {e}")
+    print(f"Configuration error: {e}")
 ```
 
 ### Validating Value Ranges
@@ -276,7 +276,7 @@ def validate_safety_limits(config):
     
     max_speed = safety.get("max_speed", 10000)
     if max_speed > 20000:
-        print(f"⚠️  Warning: max_speed ({max_speed}) exceeds recommended limit")
+        print(f"WARNING: max_speed ({max_speed}) exceeds recommended limit")
     
     envelope = safety.get("work_envelope", {})
     for axis in ["x", "y", "z"]:
@@ -286,7 +286,7 @@ def validate_safety_limits(config):
         if min_val >= max_val:
             raise ValueError(f"Invalid work envelope: {axis}_min >= {axis}_max")
     
-    print("✅ Safety limits validation passed")
+    print("Safety limits validation passed")
 ```
 
 ## Configuration Modification
@@ -334,58 +334,6 @@ def update_duet_ip(new_ip):
 update_duet_ip("192.168.1.200")
 ```
 
-## Environment-Specific Configuration
-
-### Multiple Environments
-
-Manage different configurations for different environments:
-
-```python
-import os
-from src.ConfigLoader import ConfigLoader
-
-# Determine environment
-env = os.getenv("JUBILEE_ENV", "production")
-
-# Load environment-specific config
-if env == "development":
-    config = ConfigLoader(config_file="config/dev_system_config.json")
-elif env == "testing":
-    config = ConfigLoader(config_file="config/test_system_config.json")
-else:
-    config = ConfigLoader(config_file="jubilee_api_config/system_config.json")
-
-print(f"Loaded {env} configuration")
-```
-
-### Configuration Profiles
-
-```python
-CONFIGS = {
-    "lab1": {
-        "duet_ip": "192.168.1.100",
-        "scale_port": "/dev/ttyUSB0"
-    },
-    "lab2": {
-        "duet_ip": "192.168.1.200",
-        "scale_port": "/dev/ttyUSB1"
-    }
-}
-
-def load_profile(profile_name):
-    """Load a specific configuration profile."""
-    profile = CONFIGS.get(profile_name)
-    if not profile:
-        raise ValueError(f"Unknown profile: {profile_name}")
-    
-    # Apply profile settings
-    # (This would need to be integrated with ConfigLoader)
-    return profile
-
-# Usage
-profile = load_profile("lab1")
-```
-
 ## Best Practices
 
 ### Use Centralized Config
@@ -398,16 +346,6 @@ ip = config.get_duet_ip()
 
 # BAD - hardcoded values
 ip = "192.168.1.100"
-```
-
-### Provide Defaults
-
-```python
-# GOOD - safe with default
-timeout = config.get_value("system.timeout", default=30)
-
-# BAD - might crash if not set
-timeout = config.get_value("system.timeout")
 ```
 
 ### Validate on Startup

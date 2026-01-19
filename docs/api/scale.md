@@ -151,6 +151,148 @@ else:
 
 ## Configuration
 
+### A&D Scale Setup (FX-120i and FX/FZ Series)
+
+The Jubilee Powder system is designed to work with A&D precision balances, particularly the **FX-120i** model. The FX and FZ series scales from A&D should work without modification using the expected settings.
+
+#### Required Scale Configuration
+
+Configure your A&D FX-120i (or compatible FX/FZ series scale) with the following settings. Consult your scale manual for menu access instructions.
+
+The Scale class is compatible with any desired weighing unit, as long as the maximum weight is set correctly in the `jubilee_api_config` folder.
+
+##### Communication Settings
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| **Baud Rate** | Faster better | Must match `scale_baud_rate` in software config |
+| **Data Bits** | 8 | Standard configuration |
+| **Parity** | None | Must match Scale object parameters |
+| **Stop Bits** | 1 | Standard configuration |
+| **Terminator** | CRLF | Carriage Return + Line Feed (required) |
+
+##### Scale Behavior Settings
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| **Stability Bandwidth** | 1 | Determines when weight is considered stable |
+| **Condition** | 1 (Medium Response) | Controls response speed and stability tradeoff |
+| **Time/Date Output** | No Output | Disables time/date in data stream |
+| **Zero After Output** | 0 (Not Used) | Disables auto-zero after reading |
+| **AK Error Code** | 1 (Output) | Enables error code output and error-correcting communication |
+
+##### Data Format Settings
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| **Data Format** | A&D Standard Format | Required for proper parsing |
+
+#### Configuration Steps
+
+1. **Access Configuration Menu**
+   - Power on the scale
+   - Press and hold the `MODE` button (or appropriate menu button per your manual)
+   - Navigate to communication settings
+
+2. **Set Communication Parameters**
+   ```
+   Baud Rate:    9600
+   Data Bits:    8
+   Parity:       None
+   Stop Bits:    1
+   Terminator:   CRLF
+   ```
+
+3. **Set Response Characteristics**
+   ```
+   Stability Bandwidth:  1
+   Condition:            1 (Medium Response)
+   ```
+   
+   !!! note "Display Refresh Rate"
+       The display refresh rate automatically adjusts based on the Condition setting.
+       Condition 1 (Medium Response) provides a good balance between speed and stability.
+
+4. **Configure Output Settings**
+   ```
+   Data Format:       A&D Standard
+   Time/Date Output:  No Output
+   Zero After Output: 0 (Not Used)
+   AK Error Code:     1 (Output)
+   ```
+
+5. **Save and Exit**
+   - Save the configuration
+   - Exit the menu
+   - Power cycle the scale to ensure settings take effect
+
+#### Verifying Configuration
+
+Test the scale communication before using with the Jubilee system:
+
+```python
+from src.Scale import Scale
+
+# Create scale instance with matching parameters
+scale = Scale(
+    port="/dev/ttyUSB0",  # Your scale's serial port
+    baudrate=9600,        # Must match scale setting
+    timeout=2.0
+)
+
+# Connect and test
+if scale.connect():
+    print("Scale connected successfully")
+    
+    # Test weight reading
+    weight = scale.get_weight(stable=True)
+    print(f"Weight reading: {weight}g")
+    
+    # Test stability detection
+    if weight is not None:
+        print("Scale is communicating properly")
+    
+    scale.disconnect()
+else:
+    print("Connection failed - check settings and port")
+```
+
+#### Troubleshooting A&D Scale Setup
+
+**Scale not responding:**
+- Verify baud rate matches between scale and software (9600)
+- Check that terminator is set to CRLF
+- Ensure cable is properly connected
+- Try power cycling the scale
+
+**Readings always unstable:**
+- Increase Stability Bandwidth (try value 2 or 3)
+- Check for vibrations, air currents, or static. Scale must be grounded for proper use.
+- Ensure scale is on level, stable surface
+- Adjust Condition setting if needed
+
+**Incorrect weight values:**
+- Verify Data Format is set to "A&D Standard"
+- Check that scale is calibrated
+- Ensure no environmental factors affecting readings
+
+**Communication errors:**
+- Check Data Bits (must be 8)
+- Verify Parity is set to None
+- Confirm Stop Bits is 1
+- Check that AK Error Code output is enabled
+
+#### Compatible Models
+
+The following A&D scales should work with these settings:
+
+- **FX Series**: FX-120i, FX-200i, FX-300i (Precision balances)
+- **FZ Series**: FZ-120i, FZ-200i, FZ-300i (Compact balances)
+- Other A&D models with standard format output
+
+!!! tip "Model-Specific Notes"
+    While most FX/FZ series scales use identical settings, always consult your specific model's manual.
+
 ### Serial Port Configuration
 
 The scale port is configured in `system_config.json`:

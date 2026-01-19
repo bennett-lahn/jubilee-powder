@@ -58,7 +58,7 @@ if not connected:
 print("Connected successfully!")
 ```
 
-!!! note
+!!! warning
     The `connect()` method will automatically:
     
     - Connect to the Jubilee machine
@@ -68,15 +68,9 @@ print("Connected successfully!")
     - Pick up the manipulator tool
     - Home the manipulator axis
 
-### Step 4: Read Scale Weight
+    **Your Jubilee will move if this command is run!**
 
-```python
-# Get current weight from scale
-weight = manager.get_weight_stable()
-print(f"Current weight: {weight}g")
-```
-
-### Step 5: Perform Operations
+### Step 4: Perform Operations
 
 ```python
 # Dispense to a well with target weight
@@ -91,7 +85,7 @@ else:
     print("Dispense operation failed!")
 ```
 
-### Step 6: Clean Up
+### Step 5: Clean Up
 
 ```python
 # Always disconnect when done
@@ -128,8 +122,8 @@ def main():
         
         # Dispense operation
         success = manager.dispense_to_well(
-            well_id="A1",
-            target_weight=50.0
+            well_id="7",
+            target_weight=0.5 # in grams
         )
         
         if success:
@@ -153,12 +147,11 @@ When you run this script:
    - Connects to Jubilee controller via network
    - Connects to scale via USB serial
    - Loads configuration from JSON files
-   - Homes all machine axes (X, Y, Z, U)
+   - Homes all machine axes (X, Y, Z, U, V)
    - Picks up the manipulator tool
-   - Homes the manipulator's vertical axis (V)
 
 2. **Operation Phase**:
-   - Moves to the specified well location
+   - Moves to the specified mold location
    - Picks up the mold from the well
    - Moves to the scale
    - Places mold on scale
@@ -187,8 +180,8 @@ If `manager.connect()` returns `False`:
 If homing fails during connection:
 
 - **Check Endstops**: Ensure all endstops are functioning
-- **Check Tool State**: Verify no tool is already picked up
-- **Check Deck Clear**: Ensure the deck is clear of obstructions
+- **Check Tool State**: Verify tool is not already picked up
+- **Check Deck**: Ensure the deck is clear of obstructions
 
 ### Dispense Operation Fails
 
@@ -196,7 +189,7 @@ If `dispense_to_well()` returns `False`:
 
 - **Check Well ID**: Verify the well ID exists in your deck configuration
 - **Check Dispenser**: Ensure the dispenser has available pistons
-- **Check Scale**: Verify the scale is responding
+- **Check Scale**: Verify the scale is responding to commands
 
 ## Next Steps
 
@@ -219,5 +212,5 @@ Now that you have a working script:
     Begin with simple operations like reading the scale before attempting complex multi-step operations.
 
 !!! warning "Hardware Safety"
-    Always monitor the first run of any new script. Be ready to press the emergency stop if needed.
+    Always monitor the first run of any new script. Be ready to press the emergency stop if needed. Use a lower feedrate so collisions can be stopped before they damage the system.
 

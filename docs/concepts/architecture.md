@@ -10,71 +10,100 @@ The Jubilee Powder system uses a layered architecture where each layer provides 
 
 ```mermaid
 graph TB
-    subgraph "User Layer"
+    subgraph "User Interface Layer"
         A[User Scripts]
-        B[GUI Application]
+        B[GUI View]
+    end
+    
+    subgraph "Presentation Layer"
+        C[JubileeViewModel]
     end
     
     subgraph "Coordination Layer"
-        C[JubileeManager]
+        D[JubileeManager]
     end
     
     subgraph "Validation Layer"
-        D[MotionPlatformStateMachine]
-        E[MovementExecutor]
+        E[MotionPlatformStateMachine]
+        F[MovementExecutor]
     end
     
     subgraph "Component Layer"
-        F[Manipulator]
-        G[PistonDispenser]
-        H[Scale]
+        G[Manipulator]
+        H[PistonDispenser]
+        I[Scale]
     end
     
     subgraph "Hardware Layer"
-        I[Jubilee Machine]
-        J[Scale Hardware]
-        K[Deck/Labware]
+        J[Jubilee Machine]
+        K[Scale Hardware]
+        L[Deck/Labware]
     end
     
     subgraph "Configuration"
-        L[ConfigLoader]
-        M[JSON Config Files]
+        M[ConfigLoader]
+        N[JSON Config Files]
     end
     
-    A --> C
+    A --> D
     B --> C
     C --> D
-    C --> F
-    C --> H
     D --> E
-    E --> I
-    F --> D
-    G --> D
-    H --> J
-    D --> K
-    L --> M
-    C --> L
-    D --> L
+    D --> G
+    D --> I
+    E --> F
+    F --> J
+    G --> E
+    H --> E
+    I --> K
+    E --> L
+    M --> N
+    D --> M
+    E --> M
 ```
 
 ## Layer Details
 
-### 1. User Layer
+### 1. User Interface Layer
 
-**Purpose**: Entry point for automation tasks
+**Purpose**: Entry point for automation tasks and user interaction
 
 **Components**:
 
 - **User Scripts**: Python scripts written by users to automate specific tasks
-- **GUI Application**: Browser-based interface for manual control and monitoring
+- **GUI View**: Touchscreen interface for interactive control and monitoring
 
 **Responsibilities**:
 
+- Display system state and progress
+- Accept user input (well selection, weights, configuration)
+- Provide visual feedback
 - Define high-level workflows
-- Handle application-specific logic
-- Interpret results and make decisions
 
-### 2. Coordination Layer
+### 2. Presentation Layer (GUI Only)
+
+**Purpose**: Coordinate GUI with hardware operations
+
+**Components**:
+
+- **JubileeViewModel**: MVVM-inspired coordinator between GUI and JubileeManager
+
+**Responsibilities**:
+
+- Manage hardware configuration before connection
+- Drive JubileeManager to execute operations
+- Execute multi-well dispensing jobs systematically
+- Provide callbacks to update GUI on progress
+- Handle errors with user-friendly messages
+
+**Key Design**:
+
+- GUI (View) → ViewModel (Coordinator) → JubileeManager (Model)
+- ViewModel drives the hardware, not just responds to it
+- All hardware state stored in JubileeManager
+- Callbacks provide real-time updates to GUI
+
+### 3. Coordination Layer
 
 **Purpose**: Coordinate complex multi-component operations
 
@@ -87,6 +116,7 @@ graph TB
 - Connect to and manage all hardware components
 - Provide high-level API for common operations
 - Coordinate multi-step operations (e.g., dispense_to_well)
+- Store all hardware state (dispensers, pistons, positions)
 - Handle errors and provide meaningful feedback
 
 **Key Design Decisions**:
@@ -94,8 +124,9 @@ graph TB
 - Single point of access for most operations
 - Owns the state machine (cannot be bypassed)
 - Provides both convenience methods and component access
+- All hardware state lives here
 
-### 3. Validation Layer
+### 4. Validation Layer
 
 **Purpose**: Ensure all operations are safe and valid
 
@@ -126,7 +157,7 @@ The state machine tracks:
 - Payload state affects which movements are allowed
 - Some operations require specific starting positions
 
-### 4. Component Layer
+### 5. Component Layer
 
 **Purpose**: Represent individual hardware components
 
@@ -143,7 +174,7 @@ The state machine tracks:
 - Maintain component state
 - Interact with validation layer for movements
 
-### 5. Hardware Layer
+### 6. Hardware Layer
 
 **Purpose**: Physical hardware interface
 
@@ -159,7 +190,7 @@ The state machine tracks:
 - Report sensor readings
 - Handle low-level communication protocols
 
-### 6. Configuration
+### 7. Configuration
 
 **Purpose**: Centralize system configuration
 
@@ -177,9 +208,50 @@ The state machine tracks:
 
 ## Data Flow
 
-### Example: Dispense to Well Operation
+### Example: GUI-Driven Multi-Well Job
 
-Let's trace how a `dispense_to_well` operation flows through the system:
+This example traces how a multi-well dispensing job flows through the GUI system:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant GUI as GUI View
+    participant VM as ViewModel
+    participant JM as JubileeManager
+    participant SM as StateMachine
+    participant H as Hardware
+
+    U->>GUI: Select wells A1, A2
+    U->>GUI: Set weights 50g, 45g
+    U->>GUI: Click "Start Job"
+    
+    GUI->>VM: start_job([A1:50g, A2:45g])
+    VM->>VM: Validate pistons available
+    VM->>VM: Start background thread
+    
+    Note over VM: Thread for A1
+    VM->>JM: dispense_to_well("A1", 50.0)
+    JM->>SM: Move, pick, fill, piston
+    SM->>H: Execute operations
+    H-->>VM: Complete
+    VM->>GUI: on_job_progress(0, 2, "A1")
+    GUI->>U: "Processing A1 (1/2)"
+    
+    Note over VM: Thread for A2
+    VM->>JM: dispense_to_well("A2", 45.0)
+    JM->>SM: Move, pick, fill, piston
+    SM->>H: Execute operations
+    H-->>VM: Complete
+    VM->>GUI: on_job_progress(1, 2, "A2")
+    GUI->>U: "Processing A2 (2/2)"
+    
+    VM->>GUI: on_job_completed()
+    GUI->>U: "Job Complete!" dialog
+```
+
+### Example: Direct Script Operation
+
+For comparison, a direct script operation (without GUI):
 
 ```mermaid
 sequenceDiagram

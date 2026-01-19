@@ -52,6 +52,15 @@ A precision balance for weighing objects. Connected via USB serial connection.
 - Unstable weight reading (immediate)
 - High precision measurements
 
+### HardnessTester
+A segment-based LCD display reader that recognizes 7-segment digits without traditional OCR. Useful for reading scale displays, meters, and other LCD equipment.
+
+**Key features**:
+- Segment detection instead of OCR
+- Works with low-contrast displays
+- Calibration system for accurate reading
+- No machine learning dependencies
+
 ## State Machine Concepts
 
 ### State
@@ -190,6 +199,42 @@ A rule that limits when or how a movement can be performed. Examples:
 - "Must have manipulator tool picked up"
 - "Cannot move with mold_with_piston payload"
 - "Must be at global_ready position first"
+
+## LCD Display Reading Terms
+
+### 7-Segment Display
+A type of electronic display that uses seven segments arranged in a figure-eight pattern to display decimal numbers. Each segment can be turned on or off independently.
+
+**Segment layout**:
+- Top, Top-Left, Top-Right, Middle, Bottom-Left, Bottom-Right, Bottom
+
+### Segment Detection
+The process of determining which segments in a 7-segment display are active (lit) by analyzing pixel brightness in predefined regions.
+
+### Calibration
+The process of defining the pixel coordinates (ROI boundaries) for each digit in an LCD display. Required once per display setup.
+
+**Types**:
+- **Manual Calibration**: User provides exact pixel coordinates
+- **Auto-Detection**: System attempts to find digits automatically
+
+### ROI (Region of Interest)
+A rectangular area in an image that contains one digit. Defined by (x1, y1, x2, y2) pixel coordinates.
+
+### Segment Pattern
+A 7-bit tuple representing which segments are active in a digit. Example: `(1, 1, 1, 0, 1, 1, 1)` represents digit "0".
+
+### Lookup Table
+A dictionary mapping segment patterns to digit strings. Used to recognize digits after segment detection.
+
+### LAB Color Space
+A color space used in image processing where the b-channel (blue-yellow axis) provides optimal contrast for LCD segments with greenish or gray backgrounds.
+
+### CLAHE (Contrast Limited Adaptive Histogram Equalization)
+An image enhancement algorithm that improves local contrast by dividing the image into small tiles and applying histogram equalization to each.
+
+### Segment Threshold
+The proportion of pixels that must be active in a segment region for it to be considered "ON". Default: 0.5 (50%)
 
 ## Hardware Terms
 

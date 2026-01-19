@@ -1,12 +1,12 @@
 # Manipulator API Reference
 
-The `Manipulator` class represents the gripper tool with a vertical axis (V-axis) used for picking and placing molds and other objects.
+The `Manipulator` class represents a gripper tool with a vertical axis (V-axis) used for picking and placing molds.
 
 ## Overview
 
 The Manipulator is a custom toolhead that provides:
 
-- **Gripper**: Opens and closes to hold objects
+- **Gripper**: moves up/down to hold objects
 - **V-Axis**: Vertical movement independent of machine Z-axis
 - **State Integration**: Automatically updates state machine context
 
@@ -79,16 +79,6 @@ manipulator.pick_mold_from_scale()
 manipulator.place_mold(well_id="A1")
 ```
 
-### Gripper Control
-
-```python
-# Open gripper
-manipulator.open_gripper()
-
-# Close gripper
-manipulator.close_gripper()
-```
-
 ### V-Axis Movement
 
 ```python
@@ -105,11 +95,13 @@ manipulator.home_v_axis()
 
 The `pick_mold()` operation:
 
+
+
 1. Validates current position (must be at mold slot)
-2. Opens gripper
-3. Moves V-axis down to mold
-4. Closes gripper
-5. Moves V-axis up with mold
+2. Moves V-axis down to mold height
+3. Moves manipulator under mold
+4. Moves V-axis up with mold
+5. Moves back to mold ready position
 6. Updates payload state to `"mold"`
 
 ```python
@@ -131,7 +123,7 @@ The `place_mold()` operation:
 
 1. Validates current position
 2. Moves V-axis down
-3. Opens gripper to release mold
+3. Moves manipulator out from under mold
 4. Moves V-axis up
 5. Updates payload state to `"empty"`
 
@@ -159,10 +151,7 @@ manipulator.place_mold_on_scale()
 manipulator.pick_mold_from_scale()
 ```
 
-These are similar to regular pick/place but:
-- Use scale-specific positions and heights
-- Handle weight measurements properly
-- Update state appropriately
+These are very similar to regular pick/place for scale interaction.
 
 ## State Management
 
@@ -238,23 +227,6 @@ print(config)
 
 ## Error Handling
 
-### ToolStateError
-
-Raised when an operation is attempted in an invalid state:
-
-```python
-from src.Manipulator import ToolStateError
-
-try:
-    manipulator.pick_mold("A1")
-except ToolStateError as e:
-    print(f"Operation failed: {e}")
-    # Common causes:
-    # - Wrong position
-    # - Wrong payload state
-    # - Hardware not connected
-```
-
 ### Common Error Scenarios
 
 **Picking when not empty**:
@@ -281,44 +253,6 @@ manipulator.pick_mold("A1")  # Error: not at mold slot
 
 ## Advanced Usage
 
-### Custom Pick/Place Heights
-
-For special cases, you can modify pickup heights:
-
-```python
-# Get config
-config = manipulator._get_config_dict()
-
-# Modify pickup height temporarily
-original_height = config["mold_heights"]["pickup_height"]
-config["mold_heights"]["pickup_height"] = 20.0
-
-# Perform operation with custom height
-# (Note: this requires modifying internal state - not recommended)
-
-# Restore original
-config["mold_heights"]["pickup_height"] = original_height
-```
-
-!!! warning "Configuration Modification"
-    Modifying configuration at runtime can lead to inconsistent state. Prefer editing configuration files instead.
-
-### Direct V-Axis Control
-
-For specialized operations:
-
-```python
-# Move to specific V position
-manipulator.move_v_axis(position=30.0)
-
-# Home before precise operations
-manipulator.home_v_axis()
-
-# Query current V position
-current_v = manipulator.state_machine.machine.get_position()['v']
-print(f"Current V: {current_v}mm")
-```
-
 ### Integration with State Machine
 
 The Manipulator is tightly integrated with the state machine:
@@ -342,27 +276,6 @@ if not result.valid:
 ```
 
 ## Best Practices
-
-### Always Check State
-
-Before operations, verify the state:
-
-```python
-def safe_pick_mold(manipulator, well_id):
-    """Safely pick a mold with state verification."""
-    payload = manipulator.state_machine.context.payload_state
-    
-    if payload != "empty":
-        print(f"Cannot pick: currently holding {payload}")
-        return False
-    
-    try:
-        manipulator.pick_mold(well_id)
-        return True
-    except ToolStateError as e:
-        print(f"Pick failed: {e}")
-        return False
-```
 
 ### Use Try-Except Blocks
 

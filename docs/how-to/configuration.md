@@ -389,25 +389,25 @@ def validate_config():
     for file in required_files:
         path = config_dir / file
         if not path.exists():
-            print(f"❌ Missing: {file}")
+            print(f"[MISSING] {file}")
             return False
         
         # Validate JSON syntax
         try:
             with open(path) as f:
                 json.load(f)
-            print(f"✅ Valid: {file}")
+            print(f"[VALID] {file}")
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON in {file}: {e}")
+            print(f"[ERROR] Invalid JSON in {file}: {e}")
             return False
     
     return True
 
 if __name__ == "__main__":
     if validate_config():
-        print("\n✅ All configurations valid!")
+        print("\nAll configurations valid!")
     else:
-        print("\n❌ Configuration validation failed!")
+        print("\nConfiguration validation failed!")
 ```
 
 ### 4. Document Custom Values
@@ -447,10 +447,10 @@ from src.JubileeManager import JubileeManager
 
 manager = JubileeManager()
 if manager.connect():
-    print("✅ Connection successful with new config")
+    print("Connection successful with new config")
     manager.disconnect()
 else:
-    print("❌ Connection failed - check configuration")
+    print("Connection failed - check configuration")
 ```
 
 ## Troubleshooting Configuration Issues

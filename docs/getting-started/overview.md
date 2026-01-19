@@ -2,36 +2,47 @@
 
 ## What is Jubilee Powder?
 
-Jubilee Powder is a comprehensive software system for controlling the Jubilee Motion Platform to automate powder dispensing and handling tasks. It provides a Python API for coordinating complex powder dispensing operations involving multiple hardware components.
+Jubilee Powder is a comprehensive software system for controlling the Jubilee Motion Platform to automate powder dispensing and shore hardness testing. It provides a Python API for coordinating operations involving multiple hardware components.
 
 ## Core Components
 
 ### Hardware
 
-The system integrates with several hardware components:
+The system integrates several hardware components:
 
 - **Jubilee Motion Platform**: A tool-changing CNC motion system
-- **Precision Scale**: For weighing materials with high accuracy
-- **Piston Dispensers**: For storing and dispensing cylindrical pistons/tools
-- **Manipulator Tool**: A custom toolhead with gripper and vertical axis
+- **Precision Scale**: For weighing materials with high accuracy (typically A&D FX-120i)
+- **Piston Dispensers**: For storing and dispensing cylindrical pistons, placed in molds after dispensing powder
+- **Manipulator Tool**: A custom toolhead with grabber and vertical axis
 
 ### Software Layers
 
 The software is organized in layers from high-level to low-level:
 
-1. **JubileeManager** (Top Layer)
-   - Highest-level API for common operations
-   - Coordinates multiple components
-   - Error handling and recovery
+1. **GUI Application** (User Interface)
+   - Touchscreen-friendly interface
+   - Visual mold selection and configuration
+   - Real-time progress monitoring
+   - Built-in safety checks
 
-2. **MotionPlatformStateMachine** (Middle Layer)
+2. **JubileeViewModel** (GUI Coordination)
+   - Coordinates GUI with hardware
+   - Manages job execution
+
+3. **JubileeManager** (Core API)
+   - Highest-level programming API
+   - Error handling and recovery
+   - Hardware state management
+
+4. **MotionPlatformStateMachine** (Validation Layer)
    - Validates all movements for safety
    - Manages system state
    - Enforces movement constraints
 
-3. **Hardware Drivers** (Bottom Layer)
+5. **Hardware Drivers** (Bottom Layer)
    - Direct hardware communication
    - Low-level control primitives
+   - Communicates with Duet3D Controller
 
 ## Key Concepts
 
@@ -58,7 +69,7 @@ The system tracks what the manipulator is holding:
 
 - `empty`: No mold held
 - `mold`: Holding a mold
-- `mold_with_piston`: Holding a mold that contains a piston
+- `mold_with_piston`: Holding a mold with top piston
 
 This enables safe movement validation based on current load.
 
@@ -73,21 +84,57 @@ This enables safe movement validation based on current load.
 ### Ease of Use
 
 - High-level API for common operations
-- Sensible defaults
-- Progressive disclosure (simple things simple, complex things possible)
+- Progressive disclosure (simple things easy, complex things possible)
+- GUI for user-modifiable operations
+- Python API
 
 ### Flexibility
 
 - JSON-based configuration
 - Extensible architecture
 - Multiple access levels (high-level to low-level)
+- MVVM architecture for GUI extensibility
+
+## Usage Options
+
+### GUI Interface
+
+For interactive machine operation with visual feedback:
+
+```bash
+python gui/jubilee_gui.py
+```
+
+**Features:**
+- Visual mold selection
+- Real-time weight monitoring
+- Progress tracking
+- Hardware configuration
+- Safety checklist
+
+See [GUI User Guide](../how-to/using-gui.md) for details.
+
+### Python API (Automation)
+
+For scripted tasks and custom workflows:
+
+```python
+from src.JubileeManager import JubileeManager
+
+manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
+manager.connect()
+manager.dispense_to_well("A1", 50.0)
+manager.disconnect()
+```
+
+See [Quick Start Guide](quickstart.md) for details.
 
 ## System Requirements
 
 ### Hardware Requirements
 
 - Jubilee Motion Platform with Duet3D controller
-- USB connection to precision scale
+- USB connection to precision scale (A&D FX-120i preferred, other A&D scales may work)
 - Network connection to Jubilee controller
 - Sufficient workspace for deck layout
 
@@ -119,14 +166,15 @@ pip install -r requirements.txt
 ```
 
 4. Configure your system:
-   - Edit configuration files in `jubilee_api_config/`
+   - Edit configuration files in `jubilee_api_config/`. You may need to edit all homing files, tool pickup/place, and config files to match your unique setup. 
    - Set Jubilee IP address
    - Configure deck layout
    - Set up tool positions
 
 ## Next Steps
 
-- Follow the [Quick Start Guide](quickstart.md) for your first program
+- **For GUI users:** Follow the [GUI User Guide](../how-to/using-gui.md)
+- **For programmers:** Follow the [Quick Start Guide](quickstart.md)
 - Learn about key concepts in the [Architecture Guide](../concepts/architecture.md)
 - Explore [How-To Guides](../how-to/run-new-data.md) for common tasks
 

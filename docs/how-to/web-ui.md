@@ -1,13 +1,13 @@
 # Using the Jubilee Web UI
 
-This guide explains how to use the Jubilee's web interface and the custom GUI application for controlling and monitoring the system.
+This guide explains how to use the Jubilee's web interface
 
 ## Overview
 
 There are two web interfaces available:
 
 1. **Duet Web Control** (DWC): The built-in Jubilee controller interface
-2. **Jubilee GUI**: Custom Python GUI application for high-level operations
+2. **Jubilee GUI**: Custom Python GUI application for high-level operations. See [GUI User Guide](using-gui.md) for more details.
 
 ## Duet Web Control (DWC)
 
@@ -37,7 +37,7 @@ The DWC provides low-level control of the Jubilee:
 4. Click directional buttons to move
 
 !!! warning "Safety"
-    Manual movements in DWC bypass the state machine validation. Be careful not to cause collisions.
+    Manual movements in DWC bypass the state machine validation. Be careful not to cause collisions. Misclicks can be catastrophic. 
 
 #### Homing Axes
 
@@ -83,208 +83,18 @@ The **Status** section shows:
 ### When to Use DWC
 
 Use Duet Web Control for:
-- ✅ Manual troubleshooting
-- ✅ Testing individual movements
-- ✅ Verifying positions
-- ✅ Emergency control
-- ✅ Low-level debugging
 
-**Do not use for**:
-- ❌ Automated operations (use Python API instead)
-- ❌ Complex multi-step procedures (use JubileeManager)
-- ❌ Production workflows (use scripted automation)
+- Manual troubleshooting
+- Testing individual movements
+- Verifying positions
+- Emergency control
+- Low-level debugging
 
-## Jubilee GUI Application
+**Do not use for:**
 
-### Starting the GUI
-
-Option 1: Using the launch script
-```bash
-cd src/
-./start_gui.sh
-```
-
-Option 2: Running directly
-```bash
-cd src/
-python jubilee_gui.py
-```
-
-Option 3: From GUI directory
-```bash
-cd gui/
-python jubilee_gui.py
-```
-
-### GUI Interface Overview
-
-The custom GUI provides high-level control through the JubileeManager API.
-
-#### Main Components
-
-1. **Connection Panel**
-   - IP address input
-   - Scale port selection
-   - Connect/Disconnect button
-   - Connection status indicator
-
-2. **Control Panel**
-   - Quick action buttons
-   - Dispense operation controls
-   - Weight display
-
-3. **Status Display**
-   - Current position
-   - Active tool
-   - Payload state
-   - Scale reading
-
-4. **Log/Console**
-   - Operation feedback
-   - Error messages
-   - Status updates
-
-### Common GUI Tasks
-
-#### Connecting to Hardware
-
-1. Enter Jubilee IP address (e.g., `192.168.1.100`)
-2. Select scale port from dropdown (e.g., `/dev/ttyUSB0`)
-3. Click **Connect** button
-4. Wait for initialization (homing, tool pickup, etc.)
-5. Status indicator turns green when ready
-
-#### Reading Scale Weight
-
-1. Ensure connection is established
-2. The weight display updates automatically
-3. For stable reading, wait for indicator to show stable
-4. Click **Tare** button to zero the scale
-
-#### Dispensing to a Well
-
-1. Select target well from dropdown (e.g., "A1")
-2. Enter target weight in grams
-3. Click **Dispense** button
-4. Monitor progress in status display
-5. Check results when operation completes
-
-#### Manual Positioning
-
-1. Select target position from dropdown
-2. Click **Move To** button
-3. System validates and executes movement
-4. Status updates when movement completes
-
-#### Emergency Stop
-
-1. Click the **E-STOP** button in the GUI, or
-2. Press the physical emergency stop on the Jubilee
-3. System halts all movement immediately
-4. Reconnect and rehome before continuing
-
-### GUI Configuration
-
-The GUI reads settings from the same configuration files as the Python API:
-
-- `jubilee_api_config/system_config.json`
-- `jubilee_api_config/motion_platform_positions.json`
-- `jubilee_api_config/mold_labware.json`
-
-To customize the GUI:
-
-1. Edit configuration files as needed
-2. Restart the GUI application
-3. Changes take effect on next connection
-
-## Web UI Best Practices
-
-### Safety
-
-!!! danger "Always Monitor First Run"
-    Watch the Jubilee physically during the first run of any operation. Keep your hand near the emergency stop.
-
-### DWC Best Practices
-
-1. **Use relative movements** when testing: `G91` then `G1 X10` to move 10mm in X
-2. **Start with small movements**: Test with 1mm increments before larger moves
-3. **Check current position** before moving: `M114` shows current coordinates
-4. **Home after errors**: If something goes wrong, home all axes before continuing
-
-### GUI Best Practices
-
-1. **Test connectivity** before starting operations
-2. **Verify well positions** using manual positioning first
-3. **Start with small batches**: Test 1-2 wells before running large batches
-4. **Monitor logs**: Watch the log panel for errors or warnings
-5. **Save configurations**: Export successful configurations for backup
-
-## Troubleshooting
-
-### Cannot Access DWC
-
-**Symptoms**:
-- Browser shows "Cannot connect" or timeout
-- Address not reachable
-
-**Solutions**:
-1. Verify Jubilee is powered on
-2. Check network connection
-3. Ping the IP address: `ping 192.168.1.100`
-4. Try accessing from different computer
-5. Check firewall settings
-6. Verify IP address is correct (check `system_config.json`)
-
-### GUI Won't Start
-
-**Symptoms**:
-- Error when running `jubilee_gui.py`
-- Import errors or missing modules
-
-**Solutions**:
-1. Ensure virtual environment is activated
-2. Install dependencies: `pip install -r requirements.txt`
-3. For GUI-specific deps: `pip install -r gui/requirements.txt`
-4. Check Python version (3.8+ required)
-
-### Connection Fails in GUI
-
-**Symptoms**:
-- "Failed to connect" message
-- Connection button stays red
-
-**Solutions**:
-1. Verify IP address is correct
-2. Check scale is connected (try `ls /dev/ttyUSB*`)
-3. Ensure no other program is using the scale port
-4. Check that Jubilee is responsive in DWC
-5. Review error messages in log panel
-
-### Movement Commands Don't Work
-
-**Symptoms**:
-- Buttons don't respond
-- "Movement failed" errors
-
-**Solutions**:
-1. Ensure system is connected
-2. Check that homing completed successfully
-3. Verify tool is picked up if required
-4. Check logs for validation errors
-5. Ensure target positions are defined in config
-
-### Scale Not Updating
-
-**Symptoms**:
-- Weight display shows zero or stale value
-- "Scale not connected" warning
-
-**Solutions**:
-1. Check USB connection to scale
-2. Verify correct port selected
-3. Try different USB port
-4. Check scale has power
-5. Test scale connection manually: `python -c "from src.Scale import Scale; s = Scale(); s.connect(); print(s.get_weight())"`
+- Automated operations (use Python API instead)
+- Complex multi-step procedures (use JubileeManager)
+- Production workflows (use custom scripts)
 
 ## Advanced Features
 
@@ -321,7 +131,7 @@ You can access DWC from multiple browsers simultaneously:
 
 ### Integrating with External Tools
 
-The GUI and API can be controlled programmatically:
+The API can be controlled programmatically:
 
 ```python
 # External control example
