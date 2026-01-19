@@ -1,374 +1,630 @@
 import cv2
-import tesserocr
-from tesserocr import PyTessBaseAPI
-from PIL import Image
 
-# Try to import PARSeq/TrOCR dependencies
+# Try to import Picamera2 for Raspberry Pi
 try:
-    import torch
-    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-    TROCR_AVAILABLE = True
+    from picamera2 import Picamera2
+    PICAMERA2_AVAILABLE = True
 except ImportError:
-    TROCR_AVAILABLE = False
-    print("⚠️  TrOCR not available. Install with: pip install torch transformers")
-
-# Try to import EasyOCR as alternative
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError:
-    EASYOCR_AVAILABLE = False
-    print("⚠️  EasyOCR not available. Install with: pip install easyocr")
-
-# TODO: Set up raspberry pi VNC to use raspberry pi easily
-# Would be even awesome to add a camera looking at the jubilee so you could do remove dev
+    PICAMERA2_AVAILABLE = False
+    print("⚠️  Picamera2 not available. Will use cv2.VideoCapture instead.")
 
 """
-OCR PREPROCESSING FOR 7-SEGMENT DISPLAYS (Black text on dark grey background)
+SEGMENT-BASED LCD READING FOR 7-SEGMENT DISPLAYS
 
 INSTALLATION:
 Required:
-    pip install opencv-python tesserocr pillow numpy
+    pip install opencv-python
+    
+Optional (Raspberry Pi):
+    pip install picamera2  # For Raspberry Pi camera with better control
 
-Optional (for additional OCR engines):
-    pip install torch transformers  # For TrOCR (transformer-based OCR)
-    pip install easyocr            # For EasyOCR (deep learning OCR)
+METHODOLOGY:
+This approach reads 7-segment LCD displays by detecting which segments are active,
+rather than using traditional OCR. This is much more reliable for LCD displays.
 
-OCR ENGINES AVAILABLE:
-1. Tesseract OCR - Traditional OCR engine (always available)
-2. TrOCR - Microsoft's transformer-based OCR (PARSeq-style architecture)
-3. EasyOCR - Deep learning-based OCR with pretrained models
-
-PREPROCESSING PIPELINE:
-1. Upscale 3x (INTER_CUBIC interpolation)
-2. Aggressive global contrast stretching + gamma correction
-3. CLAHE with clipLimit=8.0, tileGridSize=(2,2)
-4. Very strong Gaussian blur (15x15)
-5. Extremely sensitive Otsu threshold (50% of calculated threshold)
-6. NO inversion (keeps original polarity)
-7. Morphological closing
-8. Median blur denoising
-
-TESTING:
-Run main() to test all available OCR engines in parallel and compare results.
+PIPELINE:
+Phase 1: Image Acquisition & Advanced Preprocessing
+    - Direct camera control with locked exposure and gain
+    - LAB color space conversion (b-channel for best LCD contrast)
+    - CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    
+Phase 2: Segment Analysis Logic
+    - Extract individual digit ROIs
+    - Map 7 segments per digit (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
+    - Count active pixels in each segment
+    
+Phase 3: Recognition via Lookup Table
+    - Map segment patterns to digits using predefined lookup table
+    
+ADVANTAGES OVER OCR:
+- More reliable for low-contrast LCD displays
+- Not affected by font variations
+- Works with partial/damaged displays
+- No training data required
 """
 
-# You may need to point to the tessdata path if it cannot be detected automatically. This can be done by setting the TESSDATA_PREFIX environment variable or by passing the path to PyTessBaseAPI (e.g.: PyTessBaseAPI(path='/usr/share/tessdata')). The path should contain .traineddata files which can be found at https://github.com/tesseract-ocr/tessdata.
-# Make sure you have the correct version of traineddata for your tesseract --version.
-# You can list the current supported languages on your system using the get_languages function:
-
-# from tesserocr import get_languages
-# print(get_languages('/usr/share/tessdata'))  # or any other path that applies to your system
-
 class HardnessTester:
+    """
+    LCD 7-Segment Display Reader using segment detection instead of OCR.
+    """
+    
+    # Segment order: (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
+    DIGITS_LOOKUP = {
+        (1, 1, 1, 0, 1, 1, 1): '0',
+        (0, 0, 1, 0, 0, 1, 0): '1',
+        (1, 0, 1, 1, 1, 0, 1): '2',
+        (1, 0, 1, 1, 0, 1, 1): '3',
+        (0, 1, 1, 1, 0, 1, 0): '4',
+        (1, 1, 0, 1, 0, 1, 1): '5',
+        (1, 1, 0, 1, 1, 1, 1): '6',
+        (1, 0, 1, 0, 0, 1, 0): '7',
+        (1, 1, 1, 1, 1, 1, 1): '8',
+        (1, 1, 1, 1, 0, 1, 1): '9',
+    }
 
-    def __init__(self):
-        # Initialize Tesseract
-        self.api = PyTessBaseAPI(path='./tessdata')
-        self.api.SetVariable("tessedit_char_whitelist", ".0123456789") # Set OCR to only look for digits, period
-        self.api.SetVariable("load_system_dawg", "0")
-        self.api.SetVariable("load_freq_dawg", "0")
-        self.api.SetVariable("tessedit_write_images", "1")
-        self.api.SetPageSegMode(tesserocr.PSM.SINGLE_LINE) # Set OCR segmentation to single line instead of page by default
-        
-        # Additional settings for better digit recognition
-        self.api.SetVariable("classify_bln_numeric_mode", "1")  # Assume numeric content
-        self.api.SetVariable("tessedit_pageseg_mode", "7")  # Treat image as single line of text
-        
-        # Initialize TrOCR (PARSeq-style transformer model)
-        self.trocr_processor = None
-        self.trocr_model = None
-        self.trocr_available = False
-        if TROCR_AVAILABLE:
-            try:
-                print("🤖 Loading TrOCR model (Microsoft's transformer-based OCR)...")
-                # Using printed text model - better for displays
-                self.trocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
-                self.trocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
-                self.trocr_model.eval()
-                if torch.cuda.is_available():
-                    self.trocr_model = self.trocr_model.cuda()
-                    print("✓ TrOCR model loaded successfully (GPU)")
-                else:
-                    print("✓ TrOCR model loaded successfully (CPU)")
-                self.trocr_available = True
-            except Exception as e:
-                print(f"⚠️  Failed to load TrOCR: {e}")
-        
-        # Initialize EasyOCR
-        self.easyocr_reader = None
-        self.easyocr_available = False
-        if EASYOCR_AVAILABLE:
-            try:
-                print("🤖 Loading EasyOCR model...")
-                gpu_enabled = torch.cuda.is_available() if TROCR_AVAILABLE else False
-                self.easyocr_reader = easyocr.Reader(['en'], gpu=gpu_enabled)
-                print(f"✓ EasyOCR model loaded successfully ({'GPU' if gpu_enabled else 'CPU'})")
-                self.easyocr_available = True
-            except Exception as e:
-                print(f"⚠️  Failed to load EasyOCR: {e}")
-
-    def capture_image(self, save=False, cam_id=0):
-        pil_img = None
-        ret, frame = cv2.VideoCapture(0).read()
-        if ret:
-            # Convert cv2 image to pil_img
-            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            if save:
-                cv2.imwrite('ocr.jpg', frame)
-        return pil_img
-
-    def process_image(self, image_path="test.png"):
+    def __init__(self, num_digits=4, cam_id=0, exposure_time=None, gain=None):
         """
-        Process image with black text on dark grey background (7-segment display)
-        Uses extremely sensitive Otsu thresholding with no inversion
+        Initialize the LCD reader.
         
         Args:
-            image_path: Path to the image file
+            num_digits: Number of digits in the display (default: 4)
+            cam_id: Camera device ID (default: 0)
+            exposure_time: Fixed exposure time in microseconds (None = auto)
+            gain: Fixed gain value (None = auto)
+        """
+        self.num_digits = num_digits
+        self.cam_id = cam_id
+        self.exposure_time = exposure_time
+        self.gain = gain
+        
+        # Camera objects
+        self.picamera = None
+        self.cv2_camera = None
+        
+        # Digit ROI boundaries (will be set via calibration or manually)
+        # Format: [(x1, y1, x2, y2), ...] for each digit
+        self.digit_rois = None
+        
+        # Segment ROI boundaries relative to digit ROI
+        # Format: {segment_name: (x1, y1, x2, y2), ...}
+        # These are proportions (0.0 to 1.0) of the digit ROI
+        self.segment_rois = self._default_segment_rois()
+        
+        # Threshold for segment detection (proportion of pixels that must be active)
+        self.segment_threshold = 0.5
+        
+        # Initialize camera
+        self._init_camera()
+
+    def _default_segment_rois(self):
+        """
+        Define default segment ROI positions as proportions of digit ROI.
+        These are typical for 7-segment displays but may need calibration.
+        
+        Returns:
+            Dictionary mapping segment names to (x1, y1, x2, y2) proportions
+        """
+        return {
+            'top':          (0.2, 0.0, 0.8, 0.2),
+            'top_left':     (0.0, 0.0, 0.3, 0.5),
+            'top_right':    (0.7, 0.0, 1.0, 0.5),
+            'middle':       (0.2, 0.4, 0.8, 0.6),
+            'bottom_left':  (0.0, 0.5, 0.3, 1.0),
+            'bottom_right': (0.7, 0.5, 1.0, 1.0),
+            'bottom':       (0.2, 0.8, 0.8, 1.0),
+        }
+    
+    def _init_camera(self):
+        """Initialize camera with locked exposure and gain if available."""
+        if PICAMERA2_AVAILABLE:
+            try:
+                print("🎥 Initializing Picamera2...")
+                self.picamera = Picamera2()
+                config = self.picamera.create_still_configuration()
+                self.picamera.configure(config)
+                
+                # Lock exposure and gain if specified
+                if self.exposure_time is not None:
+                    self.picamera.set_controls({"ExposureTime": self.exposure_time})
+                if self.gain is not None:
+                    self.picamera.set_controls({"AnalogueGain": self.gain})
+                
+                self.picamera.start()
+                print("✓ Picamera2 initialized successfully")
+            except (RuntimeError, ValueError) as e:
+                print(f"⚠️  Failed to initialize Picamera2: {e}")
+                print("   Falling back to cv2.VideoCapture...")
+                self.picamera = None
+                self._init_cv2_camera()
+        else:
+            self._init_cv2_camera()
+    
+    def _init_cv2_camera(self):
+        """Initialize OpenCV camera with manual settings."""
+        print(f"🎥 Initializing cv2.VideoCapture (camera {self.cam_id})...")
+        self.cv2_camera = cv2.VideoCapture(self.cam_id)
+        
+        if not self.cv2_camera.isOpened():
+            raise RuntimeError(f"Failed to open camera {self.cam_id}")
+        
+        # Try to disable auto-exposure and set manual values
+        # Note: These settings may not work on all cameras
+        if self.exposure_time is not None:
+            self.cv2_camera.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Manual mode
+            self.cv2_camera.set(cv2.CAP_PROP_EXPOSURE, self.exposure_time)
+        
+        if self.gain is not None:
+            self.cv2_camera.set(cv2.CAP_PROP_GAIN, self.gain)
+        
+        print("✓ cv2.VideoCapture initialized successfully")
+    
+    def capture_image(self, save=False, output_path='lcd_capture.jpg'):
+        """
+        Capture an image from the camera.
+        
+        Args:
+            save: Whether to save the captured image
+            output_path: Path to save the image
             
         Returns:
-            PIL Image ready for Tesseract OCR
+            numpy array (BGR format) or None if capture failed
         """
-        # Generate output filename based on input
-        import os
-        base_name = os.path.splitext(os.path.basename(image_path))[0]
-        output_name = f"bw_{base_name}_otsu.png"
+        frame = None
         
-        return self._process_image_advanced_otsu(image_path, output_name)
-    
-    def _process_image_advanced_otsu(self, image_path, output_name="bw.png"):
-        """
-        Advanced preprocessing with EXTREMELY SENSITIVE Otsu (50% threshold)
-        NO INVERSION - keeps original polarity
-        Should eliminate hollow text issue
-        """
-        import os
-        import numpy as np
-        # Generate debug filename prefix
-        base_name = os.path.splitext(os.path.basename(image_path))[0]
-        debug_prefix = f"debug_{base_name}_otsu"
+        if self.picamera is not None:
+            try:
+                frame = self.picamera.capture_array()
+                # Convert RGB to BGR for OpenCV compatibility
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            except (RuntimeError, ValueError) as e:
+                print(f"⚠️Picamera2 capture failed: {e}")
+        elif self.cv2_camera is not None:
+            ret, frame = self.cv2_camera.read()
+            if not ret:
+                print("⚠️  cv2.VideoCapture read failed")
+                frame = None
         
-        # Read image in grayscale
-        g = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        cv2.imwrite(f"{debug_prefix}_step1_original_grayscale.png", g)
+        if frame is not None and save:
+            cv2.imwrite(output_path, frame)
+            print(f"✓ Image saved to {output_path}")
         
-        # Step 1: Upscale image
-        scale_factor = 3
-        height, width = g.shape
-        g_upscaled = cv2.resize(g, (width * scale_factor, height * scale_factor), 
-                                interpolation=cv2.INTER_CUBIC)
-        cv2.imwrite(f"{debug_prefix}_step2_upscaled.png", g_upscaled)
-        
-        # Step 2a: AGGRESSIVE Global contrast stretching with gamma correction
-        stretched = cv2.normalize(g_upscaled, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-        stretched = cv2.convertScaleAbs(stretched, alpha=1.3, beta=10)
-        cv2.imwrite(f"{debug_prefix}_step3a_contrast_stretched.png", stretched)
-        
-        # Step 2b: EXTREMELY AGGRESSIVE CLAHE
-        # Increased clipLimit to 8.0 (was 5.0) for maximum contrast enhancement
-        clahe = cv2.createCLAHE(clipLimit=8.0, tileGridSize=(2, 2))
-        enhanced = clahe.apply(stretched)
-        cv2.imwrite(f"{debug_prefix}_step3b_clahe_enhanced.png", enhanced)
-        
-        # Step 3: Apply EXTREMELY STRONG Gaussian blur
-        # Increased to 15x15 (was 11x11) for much stronger smoothing
-        blurred = cv2.GaussianBlur(enhanced, (15, 15), 0)
-        cv2.imwrite(f"{debug_prefix}_step4_gaussian_blurred.png", blurred)
-        
-        # Step 4: Use EXTREMELY SENSITIVE Otsu threshold
-        # First get Otsu threshold value, then reduce it significantly to capture darker text
-        otsu_thresh, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # Make threshold EXTREMELY sensitive by reducing it to 50% (was 65%)
-        sensitive_thresh = int(otsu_thresh * 0.50)
-        _, binary = cv2.threshold(blurred, sensitive_thresh, 255, cv2.THRESH_BINARY)
-        cv2.imwrite(f"{debug_prefix}_step5_otsu_threshold_sensitive.png", binary)
-        print(f"  Otsu: {otsu_thresh:.1f} → Extremely Sensitive: {sensitive_thresh} (50%)")
-        
-        # Step 5: DO NOT INVERT - keep as is (dark text on light background after processing)
-        # Skip inversion step
-        cv2.imwrite(f"{debug_prefix}_step6_no_inversion.png", binary)
-        
-        # Step 6: Morphological operations
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        morphed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        cv2.imwrite(f"{debug_prefix}_step7_morphological_close.png", morphed)
-        
-        # Step 7: Denoising
-        denoised = cv2.medianBlur(morphed, 3)
-        cv2.imwrite(f"{debug_prefix}_step8_median_blur.png", denoised)
-        
-        # Save final result
-        cv2.imwrite(output_name, denoised)
-        
-        return Image.fromarray(denoised)
+        return frame
 
-    def process_image_custom(self, image_path, scale=3, clahe_clip=3.0, 
-                             clahe_tile=(4, 4), invert=True, morph_size=(2, 2),
-                             output_name=None):
+    def preprocess_frame(self, frame, debug=False, debug_prefix="debug"):
         """
-        Custom preprocessing with adjustable parameters
-        Use this to fine-tune for your specific display
+        Phase 1: Image Acquisition & Advanced Preprocessing
+        
+        Converts frame to LAB color space, extracts b-channel, and applies CLAHE
+        to enhance LCD segment contrast.
         
         Args:
-            image_path: Path to image
-            scale: Upscale factor (2-4 recommended)
-            clahe_clip: CLAHE clip limit (1.0-5.0)
-            clahe_tile: CLAHE tile grid size
-            invert: Whether to invert the image
-            morph_size: Morphological kernel size
-            output_name: Output filename (auto-generated if None)
+            frame: Input BGR frame from camera
+            debug: Whether to save debug images
+            debug_prefix: Prefix for debug image filenames
+            
+        Returns:
+            Binary image with enhanced LCD segments
         """
-        g = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if frame is None:
+            raise ValueError("Input frame is None")
         
-        # Upscale
-        height, width = g.shape
-        g_upscaled = cv2.resize(g, (width * scale, height * scale), 
-                                interpolation=cv2.INTER_CUBIC)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step1_original.png", frame)
         
-        # Optional inversion (do this FIRST for dark text on dark background)
-        if invert:
-            g_upscaled = cv2.bitwise_not(g_upscaled)
+        # Step 1: Convert BGR to LAB color space
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step2_lab.png", lab)
         
-        # CLAHE
-        clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=clahe_tile)
-        enhanced = clahe.apply(g_upscaled)
+        # Step 2: Extract b-channel (blue-yellow axis)
+        # This provides best contrast for LCD segments
+        _l_channel, _a_channel, b_channel = cv2.split(lab)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step3_b_channel.png", b_channel)
         
-        # Threshold
+        # Step 3: Apply CLAHE to enhance local contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(b_channel)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step4_clahe.png", enhanced)
+        
+        # Step 4: Threshold to create binary image
+        # Use Otsu's method to automatically determine threshold
         _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step5_binary.png", binary)
         
-        # Morphology
-        if morph_size[0] > 0:
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, morph_size)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Step 5: Morphological operations to clean up noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        if debug:
+            cv2.imwrite(f"{debug_prefix}_step6_cleaned.png", cleaned)
         
-        # Generate output filename if not provided
-        if output_name is None:
-            import os
-            base_name = os.path.splitext(os.path.basename(image_path))[0]
-            output_name = f"bw_{base_name}_custom.png"
-        
-        cv2.imwrite(output_name, binary)
-        return Image.fromarray(binary)
+        return cleaned
 
-    def convert_image_tesseract(self, image, output_name="thresholded.png"):
-        """Run Tesseract OCR"""
-        self.api.SetImage(image)
-        self.api.Recognize()
-        thresholded = self.api.GetThresholdedImage()
-        thresholded.save(output_name)
-        text = self.api.GetUTF8Text().strip()
-        confidence = self.api.AllWordConfidences()
-        return text, confidence
-    
-    def convert_image_trocr(self, image):
-        """Run TrOCR (transformer-based OCR)"""
-        if not self.trocr_available or self.trocr_model is None:
-            return "N/A (TrOCR not available)", []
+    def set_digit_rois(self, rois):
+        """
+        Set the ROI boundaries for each digit.
         
-        try:
-            # Convert PIL image to RGB if needed
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Process image
-            pixel_values = self.trocr_processor(images=image, return_tensors="pt").pixel_values
-            if torch.cuda.is_available():
-                pixel_values = pixel_values.cuda()
-            
-            # Generate text
-            with torch.no_grad():
-                generated_ids = self.trocr_model.generate(pixel_values)
-            text = self.trocr_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-            
-            # Filter to only digits and period (like Tesseract whitelist)
-            filtered_text = ''.join(c for c in text if c in '.0123456789')
-            
-            return filtered_text, []  # TrOCR doesn't provide confidence scores easily
-        except Exception as e:
-            return f"Error: {e}", []
+        Args:
+            rois: List of tuples [(x1, y1, x2, y2), ...] for each digit
+        """
+        if len(rois) != self.num_digits:
+            raise ValueError(f"Expected {self.num_digits} ROIs, got {len(rois)}")
+        self.digit_rois = rois
     
-    def convert_image_easyocr(self, image):
-        """Run EasyOCR"""
-        if not self.easyocr_available or self.easyocr_reader is None:
-            return "N/A (EasyOCR not available)", []
+    def auto_detect_digit_rois(self, binary_frame):
+        """
+        Attempt to automatically detect digit ROIs using contour detection.
         
-        try:
-            # Convert PIL to numpy array
-            import numpy as np
-            img_array = np.array(image)
+        Args:
+            binary_frame: Preprocessed binary image
             
-            # Run EasyOCR with allowlist for digits
-            results = self.easyocr_reader.readtext(img_array, allowlist='0123456789.', detail=1)
+        Returns:
+            List of digit ROIs [(x1, y1, x2, y2), ...]
+        """
+        # Find contours
+        contours, _ = cv2.findContours(binary_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Filter contours by size and aspect ratio
+        digit_contours = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = h / w if w > 0 else 0
+            area = w * h
             
-            if results:
-                # Combine all detected text and confidences
-                text = ' '.join([result[1] for result in results])
-                confidences = [int(result[2] * 100) for result in results]
-                return text, confidences
-            else:
-                return "", []
-        except Exception as e:
-            return f"Error: {e}", []
+            # Typical 7-segment digit has aspect ratio between 1.5 and 2.5
+            if 1.2 < aspect_ratio < 3.0 and area > 100:
+                digit_contours.append((x, y, x + w, y + h))
+        
+        # Sort by x-coordinate (left to right)
+        digit_contours.sort(key=lambda roi: roi[0])
+        
+        # Take the first num_digits contours
+        if len(digit_contours) >= self.num_digits:
+            return digit_contours[:self.num_digits]
+        else:
+            print(f"⚠️  Found {len(digit_contours)} digit contours, expected {self.num_digits}")
+            return digit_contours if digit_contours else None
     
-    def convert_image(self, image, output_name="thresholded.png"):
-        """Legacy method for compatibility - uses Tesseract"""
-        text, conf = self.convert_image_tesseract(image, output_name)
-        print(text)
-        print(conf)
+    def extract_digit_roi(self, binary_frame, digit_idx):
+        """
+        Extract a single digit ROI from the binary frame.
+        
+        Args:
+            binary_frame: Preprocessed binary image
+            digit_idx: Index of the digit to extract
+            digit
+        Returns:
+            Cropped digit image or None
+        """
+        if self.digit_rois is None or digit_idx >= len(self.digit_rois):
+            return None
+        
+        x1, y1, x2, y2 = self.digit_rois[digit_idx]
+        return binary_frame[y1:y2, x1:x2]
+    
+    def analyze_segment(self, digit_roi, segment_name):
+        """
+        Phase 3: Segment Analysis Logic
+        
+        Analyzes a single segment within a digit ROI to determine if it's active.
+        
+        Args:
+            digit_roi: Binary image of a single digit
+            segment_name: Name of the segment ('top', 'middle', etc.)
+            
+        Returns:
+            1 if segment is active (ON), 0 if inactive (OFF)
+        """
+        if digit_roi is None or segment_name not in self.segment_rois:
+            return 0
+        
+        h, w = digit_roi.shape[:2]
+        x1_prop, y1_prop, x2_prop, y2_prop = self.segment_rois[segment_name]
+        
+        # Convert proportions to pixel coordinates
+        x1 = int(x1_prop * w)
+        y1 = int(y1_prop * h)
+        x2 = int(x2_prop * w)
+        y2 = int(y2_prop * h)
+        
+        # Extract segment ROI
+        segment = digit_roi[y1:y2, x1:x2]
+        
+        if segment.size == 0:
+            return 0
+        
+        # Count active (white) pixels
+        active_pixels = cv2.countNonZero(segment)
+        total_pixels = segment.size
+        
+        # Return 1 if more than threshold percentage are active
+        return 1 if (active_pixels / total_pixels) > self.segment_threshold else 0
+    
+    def recognize_digit(self, digit_roi, debug=False):
+        """
+        Phase 4: Recognition via Lookup Table
+        
+        Recognizes a single digit by analyzing all 7 segments.
+        
+        Args:
+            digit_roi: Binary image of a single digit
+            debug: Whether to print debug information
+            
+        Returns:
+            Recognized digit as string or '?' if not recognized
+        """
+        if digit_roi is None:
+            return '?'
+        
+        # Analyze all 7 segments in order
+        segments = (
+            self.analyze_segment(digit_roi, 'top'),
+            self.analyze_segment(digit_roi, 'top_left'),
+            self.analyze_segment(digit_roi, 'top_right'),
+            self.analyze_segment(digit_roi, 'middle'),
+            self.analyze_segment(digit_roi, 'bottom_left'),
+            self.analyze_segment(digit_roi, 'bottom_right'),
+            self.analyze_segment(digit_roi, 'bottom'),
+        )
+        
+        if debug:
+            print(f"  Segment pattern: {segments}")
+        
+        # Look up digit in lookup table
+        return self.DIGITS_LOOKUP.get(segments, '?')
+    
+    def read_display(self, frame=None, debug=False, debug_prefix="debug"):
+        """
+        Complete pipeline: Read all digits from LCD display.
+        
+        Args:
+            frame: Input BGR frame (if None, captures from camera)
+            debug: Whether to save debug images
+            debug_prefix: Prefix for debug image filenames
+            
+        Returns:
+            String with recognized digits or None if reading failed
+        """
+        # Capture frame if not provided
+        if frame is None:
+            frame = self.capture_image()
+            if frame is None:
+                print("❌ Failed to capture image")
+                return None
+        
+        # Preprocess frame
+        binary = self.preprocess_frame(frame, debug=debug, debug_prefix=debug_prefix)
+        
+        # Auto-detect digit ROIs if not set
+        if self.digit_rois is None:
+            print("📍 Auto-detecting digit ROIs...")
+            self.digit_rois = self.auto_detect_digit_rois(binary)
+            if self.digit_rois is None:
+                print("❌ Failed to detect digit ROIs")
+                return None
+            print(f"✓ Detected {len(self.digit_rois)} digit ROIs")
+        
+        # Read each digit
+        result = []
+        for i in range(self.num_digits):
+            digit_roi = self.extract_digit_roi(binary, i)
+            digit = self.recognize_digit(digit_roi, debug=debug)
+            result.append(digit)
+            if debug:
+                print(f"  Digit {i}: {digit}")
+        
+        return ''.join(result)
+    
+    def calibrate(self, frame=None, save_calibration=True):
+        """
+        Interactive calibration to manually set digit ROIs.
+        
+        Args:
+            frame: Input BGR frame (if None, captures from camera)
+            save_calibration: Whether to save calibration to file
+            
+        Returns:
+            True if calibration successful
+        """
+        if frame is None:
+            frame = self.capture_image()
+            if frame is None:
+                print("❌ Failed to capture image for calibration")
+                return False
+        
+        # Preprocess
+        binary = self.preprocess_frame(frame, debug=True, debug_prefix="calibration")
+        
+        print("\n" + "=" * 60)
+        print("CALIBRATION MODE")
+        print("=" * 60)
+        print("Please check the debug images:")
+        print("  - calibration_step6_cleaned.png (final binary image)")
+        print("\nYou need to manually determine digit ROI boundaries.")
+        print("Use an image viewer to find pixel coordinates.\n")
+        
+        rois = []
+        for i in range(self.num_digits):
+            print(f"Digit {i}:")
+            x1 = int(input("  x1 (left): "))
+            y1 = int(input("  y1 (top): "))
+            x2 = int(input("  x2 (right): "))
+            y2 = int(input("  y2 (bottom): "))
+            rois.append((x1, y1, x2, y2))
+        
+        self.set_digit_rois(rois)
+        
+        if save_calibration:
+            import json
+            with open('lcd_calibration.json', 'w', encoding='utf-8') as f:
+                json.dump({'digit_rois': rois}, f, indent=2)
+            print("\n✓ Calibration saved to lcd_calibration.json")
+        
+        # Test the calibration
+        print("\n" + "=" * 60)
+        print("TESTING CALIBRATION")
+        print("=" * 60)
+        result = self.read_display(frame, debug=True, debug_prefix="test")
+        print(f"\nRead: {result}")
+        
+        return True
+    
+    def load_calibration(self, filepath='lcd_calibration.json'):
+        """
+        Load calibration from file.
+        
+        Args:
+            filepath: Path to calibration JSON file
+            
+        Returns:
+            True if loaded successfully
+        """
+        try:
+            import json
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.digit_rois = [tuple(roi) for roi in data['digit_rois']]
+            print(f"✓ Calibration loaded from {filepath}")
+            return True
+        except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+            print(f"⚠️  Failed to load calibration: {e}")
+            return False
+    
+    def __del__(self):
+        """Clean up camera resources."""
+        if self.picamera is not None:
+            try:
+                self.picamera.stop()
+            except (RuntimeError, AttributeError):
+                pass
+        if self.cv2_camera is not None:
+            try:
+                self.cv2_camera.release()
+            except (RuntimeError, AttributeError):
+                pass
 
 
 def main():
+    """
+    Test the segment-based LCD reader.
+    """
     import os
-    test = HardnessTester()
-    
-    # Test images
-    test_images = ["test.png", "test2.png", "test3.png", "test4.png"]
     
     print("\n" + "=" * 80)
-    print("🔍 EXTREMELY SENSITIVE OTSU (50% threshold, CLAHE 8.0, 15x15 blur, NO INVERT)")
+    print("📺 SEGMENT-BASED LCD READER TEST")
     print("=" * 80)
     
-    for img_path in test_images:
-        print(f"\n📸 Processing {img_path}...")
-        try:
-            base_name = os.path.splitext(os.path.basename(img_path))[0]
-            image = test.process_image(image_path=img_path)
-            print(f"✓ Debug images: debug_{base_name}_otsu_step*.png")
+    # Initialize reader
+    print("\n🔧 Initializing LCD reader...")
+    reader = HardnessTester(num_digits=4, cam_id=0)
+    
+    # Try to load existing calibration
+    if os.path.exists('lcd_calibration.json'):
+        print("\n📁 Loading existing calibration...")
+        reader.load_calibration()
+    
+    # Option 1: Test with captured image
+    print("\n📷 Capturing image from camera...")
+    frame = reader.capture_image(save=True, output_path='lcd_test_capture.jpg')
+    
+    if frame is not None:
+        print("✓ Image captured successfully")
+        
+        # If no calibration exists, run calibration
+        if reader.digit_rois is None:
+            print("\n⚠️  No calibration found. Starting calibration process...")
+            reader.calibrate(frame=frame)
+        else:
+            # Read display
+            print("\n🔍 Reading LCD display...")
+            result = reader.read_display(frame=frame, debug=True, debug_prefix="lcd_read")
             
-            # Test all three OCR engines
-            print("\n" + "-" * 80)
-            print("OCR RESULTS:")
-            print("-" * 80)
+            print("\n" + "=" * 80)
+            print(f"📊 RESULT: {result}")
+            print("=" * 80)
             
-            # Tesseract
-            print("🔤 Tesseract OCR:")
-            text_tess, conf_tess = test.convert_image_tesseract(
-                image, output_name=f"thresholded_{base_name}_otsu.png"
-            )
-            print(f"   Text: '{text_tess}'")
-            print(f"   Confidence: {conf_tess}")
+            # Show segment patterns for debugging
+            print("\nSegment patterns detected:")
+            binary = reader.preprocess_frame(frame)
+            for i in range(reader.num_digits):
+                digit_roi = reader.extract_digit_roi(binary, i)
+                if digit_roi is not None:
+                    segments = (
+                        reader.analyze_segment(digit_roi, 'top'),
+                        reader.analyze_segment(digit_roi, 'top_left'),
+                        reader.analyze_segment(digit_roi, 'top_right'),
+                        reader.analyze_segment(digit_roi, 'middle'),
+                        reader.analyze_segment(digit_roi, 'bottom_left'),
+                        reader.analyze_segment(digit_roi, 'bottom_right'),
+                        reader.analyze_segment(digit_roi, 'bottom'),
+                    )
+                    print(f"  Digit {i}: {segments} → {result[i] if i < len(result) else '?'}")
+    else:
+        print("❌ Failed to capture image")
+    
+    # Option 2: Test with static image file
+    print("\n" + "=" * 80)
+    print("📁 Testing with static image file...")
+    print("=" * 80)
+    
+    test_image = "test.png"
+    if os.path.exists(test_image):
+        print(f"\n📸 Loading {test_image}...")
+        static_frame = cv2.imread(test_image)
+        
+        if static_frame is not None:
+            # Try auto-detection
+            print("\n🔍 Attempting auto-detection of digit ROIs...")
+            binary = reader.preprocess_frame(static_frame, debug=True, debug_prefix="static")
+            detected_rois = reader.auto_detect_digit_rois(binary)
             
-            # TrOCR (PARSeq-style transformer)
-            if test.trocr_available:
-                print("\n🤖 TrOCR (Transformer OCR - PARSeq-style):")
-                text_trocr, conf_trocr = test.convert_image_trocr(image)
-                print(f"   Text: '{text_trocr}'")
-                if conf_trocr:
-                    print(f"   Confidence: {conf_trocr}")
-            
-            # EasyOCR
-            if test.easyocr_available:
-                print("\n🔍 EasyOCR:")
-                text_easy, conf_easy = test.convert_image_easyocr(image)
-                print(f"   Text: '{text_easy}'")
-                print(f"   Confidence: {conf_easy}")
-            
-            print("-" * 80)
-            
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            import traceback
-            traceback.print_exc()
+            if detected_rois:
+                print(f"✓ Detected {len(detected_rois)} digit ROIs:")
+                for i, roi in enumerate(detected_rois):
+                    print(f"  Digit {i}: {roi}")
+                
+                reader.set_digit_rois(detected_rois)
+                result = reader.read_display(frame=static_frame, debug=True, debug_prefix="static_read")
+                print(f"\n📊 RESULT: {result}")
+            else:
+                print("⚠️  Auto-detection failed. Manual calibration required.")
+    else:
+        print(f"⚠️  Test image '{test_image}' not found")
+    
+    print("\n" + "=" * 80)
+    print("✓ Test complete")
+    print("=" * 80)
+
+
+def test_with_image(image_path, calibration_file='lcd_calibration.json'):
+    """
+    Simple test function to read LCD from a single image.
+    
+    Args:
+        image_path: Path to LCD image
+        calibration_file: Path to calibration file (optional)
+    """
+    import os
+    
+    reader = HardnessTester(num_digits=4)
+    
+    # Load calibration if available
+    if os.path.exists(calibration_file):
+        reader.load_calibration(calibration_file)
+    
+    # Read image
+    frame = cv2.imread(image_path)
+    if frame is None:
+        print(f"❌ Failed to load image: {image_path}")
+        return None
+    
+    # Read display
+    result = reader.read_display(frame=frame, debug=True, debug_prefix="test")
+    print(f"\n📊 Result: {result}")
+    return result
+
 
 if __name__ == "__main__":
     main()

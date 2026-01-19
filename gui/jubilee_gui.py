@@ -1,3 +1,38 @@
+"""
+Jubilee Powder Dispensing GUI Application.
+
+This module provides a touchscreen-friendly GUI for the Jubilee powder dispensing
+system. Built with Kivy, it follows an MVVM architecture where this module serves
+as the View layer.
+
+The GUI provides:
+    - Visual well selection (3x3 grid)
+    - Target weight configuration
+    - Real-time progress monitoring
+    - Hardware configuration interface
+    - Safety checklist before jobs
+    - Live scale weight display
+
+Architecture:
+    The GUI communicates with hardware through JubileeViewModel, which coordinates
+    operations with JubileeManager. This ensures clean separation between UI,
+    coordination logic, and hardware operations.
+
+Usage:
+    Run the GUI application::
+    
+        python gui/jubilee_gui.py
+
+Components:
+    - MainScreen: Primary screen with well grid and controls
+    - HardwareConfigDialog: Configure dispensers and pistons
+    - WeightDialog: Set target weights for selected wells
+    - ChecklistDialog: Pre-job safety checklist
+    - ProgressDialog: Real-time job progress display
+    - FinishedDialog: Job completion notification
+    - ErrorDialog: Error message display
+"""
+
 import kivy
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -22,7 +57,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 # Import Jubilee components
-from jubilee_manager import JubileeManager
+from jubilee_view_model import JubileeViewModel, DispensingJob
 
 # Configure Kivy for touch interface
 Window.softinput_mode = 'below_target'
@@ -210,6 +245,11 @@ KV = '''
                     text: 'Controls'
                     halign: 'center'
                     bold: True
+                
+                CustomButton:
+                    text: 'Hardware Config'
+                    on_press: root.show_hardware_config_dialog()
+                    disabled: root.scale_connected
                 
                 CustomButton:
                     text: 'Set Weights'
@@ -408,17 +448,82 @@ KV = '''
             text: 'OK'
             on_press: root.dismiss()
             background_color: utils.get_color_from_hex('#F44336')
+
+<HardwareConfigDialog>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: dp(20)
+        spacing: dp(10)
+        
+        CustomLabel:
+            text: 'Hardware Configuration'
+            font_size: dp(20)
+            bold: True
+            halign: 'center'
+        
+        CustomLabel:
+            text: 'Configure hardware before connecting'
+            halign: 'center'
+            font_size: dp(14)
+        
+        GridLayout:
+            cols: 2
+            spacing: dp(10)
+            size_hint_y: None
+            height: dp(200)
+            
+            CustomLabel:
+                text: 'Number of Dispensers:'
+                halign: 'right'
+            
+            TextInput:
+                id: num_dispensers_input
+                text: str(root.num_dispensers)
+                multiline: False
+                input_filter: 'int'
+                size_hint_y: None
+                height: dp(40)
+            
+            CustomLabel:
+                text: 'Pistons per Dispenser:'
+                halign: 'right'
+            
+            TextInput:
+                id: pistons_per_dispenser_input
+                text: str(root.pistons_per_dispenser)
+                multiline: False
+                input_filter: 'int'
+                size_hint_y: None
+                height: dp(40)
+            
+            CustomLabel:
+                text: 'Total Pistons:'
+                halign: 'right'
+                bold: True
+            
+            CustomLabel:
+                text: str(root.total_pistons)
+                halign: 'left'
+                bold: True
+                color: utils.get_color_from_hex('#4CAF50')
+        
+        BoxLayout:
+            size_hint_y: None
+            height: dp(60)
+            spacing: dp(10)
+            
+            CustomButton:
+                text: 'Cancel'
+                on_press: root.dismiss()
+                background_color: utils.get_color_from_hex('#F44336')
+            
+            CustomButton:
+                text: 'Apply'
+                on_press: root.apply_config()
 '''
 
 Builder.load_string(KV)
 
-@dataclass
-class JobWell:
-    """Represents a well in a dispensing job"""
-    well_id: str
-    target_weight: float
-    current_weight: float = 0.0
-    completed: bool = False
 
 
 
@@ -433,14 +538,20 @@ class MainScreen(Screen):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.jubilee_manager = JubileeManager()
+        
+        # Create ViewModel with callbacks
+        self.view_model = JubileeViewModel(
+            on_connection_changed=self._on_connection_changed,
+            on_weight_changed=self._on_weight_changed,
+            on_status_changed=self._on_status_changed,
+            on_job_progress=self._on_job_progress,
+            on_job_completed=self._on_job_completed,
+            on_error=self._on_error
+        )
+        
         self.selected_wells = set()
         self.well_weights = {}  # well_id -> target_weight
-        self.job_wells = []
-        self.current_job_thread = None
-        
-        # Start weight monitoring
-        Clock.schedule_interval(self.update_weight, 0.5)
+        self.current_progress_dialog = None
         
         # Try to connect
         self.connect_to_system()
@@ -452,18 +563,54 @@ class MainScreen(Screen):
     
     def _connect_thread(self):
         """Connection thread to avoid blocking UI"""
-        success = self.jubilee_manager.connect()
-        if success:
-            self.status_text = "Connected"
-            self.scale_connected = True
-        else:
-            self.status_text = "Connection failed"
-            self.scale_connected = False
+        success = self.view_model.connect()
+        # Callbacks will update UI state
     
-    def update_weight(self, dt):
-        """Update current weight display"""
-        if self.jubilee_manager.connected:
-            self.current_weight = self.jubilee_manager.get_current_weight()
+    # ViewModel callback methods
+    def _on_connection_changed(self, connected: bool):
+        """Called when connection state changes"""
+        def update(dt):
+            self.scale_connected = connected
+        Clock.schedule_once(update, 0)
+    
+    def _on_weight_changed(self, weight: float):
+        """Called when weight changes"""
+        def update(dt):
+            self.current_weight = weight
+        Clock.schedule_once(update, 0)
+    
+    def _on_status_changed(self, status: str):
+        """Called when status message changes"""
+        def update(dt):
+            self.status_text = status
+        Clock.schedule_once(update, 0)
+    
+    def _on_job_progress(self, completed: int, total: int, current_well: str):
+        """Called when job progress updates"""
+        def update(dt):
+            # Update progress dialog if open
+            if self.current_progress_dialog:
+                self.current_progress_dialog.completed_wells = completed
+                self.current_progress_dialog.total_wells = total
+                self.current_progress_dialog.current_well_text = f"Processing {current_well}"
+                self.current_progress_dialog.progress_value = (completed / total * 100) if total > 0 else 0
+        Clock.schedule_once(update, 0)
+    
+    def _on_job_completed(self):
+        """Called when job completes successfully"""
+        def update(dt):
+            self.job_running = False
+            if self.current_progress_dialog:
+                self.current_progress_dialog.dismiss()
+                self.current_progress_dialog = None
+            self.show_finished_dialog()
+        Clock.schedule_once(update, 0)
+    
+    def _on_error(self, error_message: str):
+        """Called when an error occurs"""
+        def update(dt):
+            self.show_error(error_message)
+        Clock.schedule_once(update, 0)
     
     def toggle_well(self, well_id: str):
         """Toggle selection of a well"""
@@ -479,6 +626,15 @@ class MainScreen(Screen):
     def can_start_job(self) -> bool:
         """Check if job can be started"""
         return len(self.selected_wells) > 0 and not self.job_running
+    
+    def show_hardware_config_dialog(self):
+        """Show hardware configuration dialog"""
+        if self.view_model.connected:
+            self.show_error("Cannot change hardware config while connected. Disconnect first.")
+            return
+        
+        dialog = HardwareConfigDialog(self.view_model)
+        dialog.open()
     
     def show_weight_dialog(self):
         """Show weight setting dialog"""
@@ -507,63 +663,26 @@ class MainScreen(Screen):
     def _start_job_execution(self):
         """Start the actual job execution"""
         self.job_running = True
-        self.status_text = "Job running..."
         
-        # Create job wells list
-        self.job_wells = [
-            JobWell(well_id=well_id, target_weight=self.well_weights.get(well_id, 0.0))
-            for well_id in self.selected_wells
+        # Create job list from selected wells
+        jobs = [
+            DispensingJob(well_id=well_id, target_weight=self.well_weights.get(well_id, 0.0))
+            for well_id in sorted(self.selected_wells)
         ]
         
-        # Start job in background thread
-        self.current_job_thread = threading.Thread(target=self._job_thread, daemon=True)
-        self.current_job_thread.start()
+        # Start job through ViewModel
+        success = self.view_model.start_job(jobs)
         
-        # Show progress dialog
-        self.show_progress_dialog()
-    
-    def _job_thread(self):
-        """Background thread for job execution"""
-        try:
-            for i, job_well in enumerate(self.job_wells):
-                if not self.job_running:
-                    break
-                
-                # Update progress
-                self.update_job_progress(i, len(self.job_wells), job_well.well_id)
-                
-                # Dispense to well
-                success = self.jubilee_manager.dispense_to_well(job_well.well_id, job_well.target_weight)
-                if not success:
-                    self.show_error(f"Failed to dispense to well {job_well.well_id}")
-                    return
-                
-                job_well.completed = True
-            
-            # Job completed
-            Clock.schedule_once(lambda dt: self._job_completed(), 0)
-            
-        except Exception as e:
-            Clock.schedule_once(lambda dt: self.show_error(f"Job error: {str(e)}"), 0)
-        finally:
-            Clock.schedule_once(lambda dt: setattr(self, 'job_running', False), 0)
-    
-    def update_job_progress(self, completed: int, total: int, current_well: str):
-        """Update job progress (called from background thread)"""
-        def update(dt):
-            self.status_text = f"Processing {current_well} ({completed + 1}/{total})"
-        Clock.schedule_once(update, 0)
-    
-    def _job_completed(self):
-        """Handle job completion"""
-        self.job_running = False
-        self.status_text = "Job completed"
-        self.show_finished_dialog()
+        if success:
+            # Show progress dialog
+            self.show_progress_dialog()
+        else:
+            self.job_running = False
     
     def stop_job(self):
         """Stop the current job"""
+        self.view_model.stop_job()
         self.job_running = False
-        self.status_text = "Job stopped"
     
     def show_error(self, message: str):
         """Show error dialog"""
@@ -572,17 +691,20 @@ class MainScreen(Screen):
     
     def show_progress_dialog(self):
         """Show progress dialog"""
-        dialog = ProgressDialog(
+        num_wells = len(self.selected_wells)
+        self.current_progress_dialog = ProgressDialog(
             completed_wells=0,
-            total_wells=len(self.job_wells),
-            current_well_text="Starting..."
+            total_wells=num_wells,
+            current_well_text="Starting...",
+            view_model=self.view_model
         )
-        dialog.bind(on_dismiss=self._on_progress_dismiss)
-        dialog.open()
+        self.current_progress_dialog.bind(on_dismiss=self._on_progress_dismiss)
+        self.current_progress_dialog.open()
     
     def _on_progress_dismiss(self, instance):
         """Handle progress dialog dismissal"""
         self.stop_job()
+        self.current_progress_dialog = None
     
     def show_finished_dialog(self):
         """Show job finished dialog"""
@@ -704,11 +826,12 @@ class ProgressDialog(Popup):
     progress_value = NumericProperty(0)
     current_well_text = StringProperty("")
     
-    def __init__(self, completed_wells: int, total_wells: int, current_well_text: str, **kwargs):
+    def __init__(self, completed_wells: int, total_wells: int, current_well_text: str, view_model: JubileeViewModel, **kwargs):
         super().__init__(**kwargs)
         self.completed_wells = completed_wells
         self.total_wells = total_wells
         self.current_well_text = current_well_text
+        self.view_model = view_model
         self.size_hint = (0.8, 0.6)
         self.title = "Job Progress"
         
@@ -717,7 +840,7 @@ class ProgressDialog(Popup):
     
     def stop_job(self):
         """Stop the current job"""
-        # This would need to communicate with the main screen
+        self.view_model.stop_job()
         self.dismiss()
 
 class FinishedDialog(Popup):
@@ -727,6 +850,59 @@ class FinishedDialog(Popup):
         super().__init__(**kwargs)
         self.size_hint = (0.6, 0.4)
         self.title = "Job Completed"
+
+class HardwareConfigDialog(Popup):
+    """Hardware configuration dialog"""
+    
+    num_dispensers = NumericProperty(2)
+    pistons_per_dispenser = NumericProperty(10)
+    total_pistons = NumericProperty(20)
+    
+    def __init__(self, view_model: JubileeViewModel, **kwargs):
+        super().__init__(**kwargs)
+        self.view_model = view_model
+        self.num_dispensers = view_model.num_dispensers
+        self.pistons_per_dispenser = view_model.pistons_per_dispenser
+        self.total_pistons = self.num_dispensers * self.pistons_per_dispenser
+        self.size_hint = (0.7, 0.6)
+        self.title = "Hardware Configuration"
+        
+        # Bind to update total when inputs change
+        Clock.schedule_once(self._setup_bindings, 0.1)
+    
+    def _setup_bindings(self, dt):
+        """Setup input field bindings"""
+        if hasattr(self.ids, 'num_dispensers_input'):
+            self.ids.num_dispensers_input.bind(text=self._update_total)
+        if hasattr(self.ids, 'pistons_per_dispenser_input'):
+            self.ids.pistons_per_dispenser_input.bind(text=self._update_total)
+    
+    def _update_total(self, instance, value):
+        """Update total pistons calculation"""
+        try:
+            num_disp = int(self.ids.num_dispensers_input.text or 0)
+            pistons_per = int(self.ids.pistons_per_dispenser_input.text or 0)
+            self.total_pistons = num_disp * pistons_per
+        except (ValueError, AttributeError):
+            self.total_pistons = 0
+    
+    def apply_config(self):
+        """Apply hardware configuration"""
+        try:
+            num_disp = int(self.ids.num_dispensers_input.text)
+            pistons_per = int(self.ids.pistons_per_dispenser_input.text)
+            
+            if num_disp <= 0 or pistons_per <= 0:
+                # Show error
+                return
+            
+            # Update ViewModel configuration
+            self.view_model.set_hardware_config(num_disp, pistons_per)
+            self.dismiss()
+            
+        except ValueError:
+            # Show error for invalid input
+            pass
 
 class ErrorDialog(Popup):
     """Error dialog"""
@@ -753,8 +929,8 @@ class JubileeGUIApp(App):
         """Clean up when app stops"""
         # Disconnect from Jubilee system
         main_screen = self.root.get_screen('main')
-        if hasattr(main_screen, 'jubilee_manager'):
-            main_screen.jubilee_manager.disconnect()
+        if hasattr(main_screen, 'view_model'):
+            main_screen.view_model.disconnect()
 
 if __name__ == '__main__':
     JubileeGUIApp().run() 
