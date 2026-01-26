@@ -3,6 +3,7 @@
 ; called after firmware thinks Tool0 is selected
 ; Note: tool offsets are applied at this point!
 ; Note that commands preempted with G53 will NOT apply the tool offset.
+; TODO: 1/24/26 Are tool offsets still being applied? Don't think so.
 
 ; M116 P1                  ; Wait for set temperatures to be reached
 ; M302 P1                  ; Prevent Cold Extrudes, just in case temp setpoints are at 0

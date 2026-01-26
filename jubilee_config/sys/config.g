@@ -54,7 +54,6 @@ M569 P0.1 S0               ; Drive 1 | U Tool Changer Lock  670mA
 M906 U670 I60              ; 100% of 670mA RMS. idle 60%
                            ; Note that the idle will be shared for all drivers
 
-;M569 P1.2 S3 D2 V100       ; Drive 0 | Manipulator axis | Turn on stealthChop for sensorless homing, stall detection
 M569 P1.2 S0
 M569 P0.2 S0               ; Drive 2 | Front Left Z
 M569 P0.3 S0               ; Drive 3 | Front Right Z
@@ -140,13 +139,9 @@ G31 K0 X0 Y0 Z-2         ; Set the limit switch as the "Control Point"
 ; Set axis software limits and min/max switch-triggering positions.
 ; Adjusted such that (0,0) lies at the lower left corner of a 300x300mm square 
 ; in the 305mmx305mm build plate.
-M208 X-13.75:313.75 Y-44:341 Z0:150 V0:67
+M208 X-13.75:313.75 Y-45:341 Z0:150 V0:67
 M208 U0:200            ; Set Elastic Lock (U axis) max rotation angle
 M208 W-5000000:5000000 ; Set scale rotational axis to be arbitrarily large. 
-
-; Manipulator stall detection
-; V = axis, S3 = threshold, F1 = filtered, H200 = min speed, R2 = create event
-; M915 V S3 F1 H200 R2
 
 ; Heaters and temperature sensors
 ;-------------------------------------------------------------------------------
@@ -201,9 +196,6 @@ M98 P"/sys/manipulator.g" ; syringe extruder is tool 0
 ; ============================================================================
 ; MACRO CONFIGURATION
 ; ============================================================================
-
-; Enable rehome.g macro for sensorless homing
-; This macro will be called when G28 Z is executed
 
 ; ============================================================================
 ; EVENT HANDLING

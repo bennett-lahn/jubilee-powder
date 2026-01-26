@@ -9,6 +9,10 @@
         "tamper_travel_position": 30
     },
     "manipulator": {
-        "tamper_axis": "V"
+        "tamper_axis": "V",
+        "tamp_depth_min": 10.0,
+        "tamp_depth_max": 60.0,
+        "tamp_speed_min": 500,
+        "tamp_speed_max": 5000
     }
 }

@@ -46,15 +46,15 @@ class ConfigLoader:
     
     def get_safe_z(self) -> float:
         """Get safe Z height"""
-        return self.get("safety.safe_z", 195)
+        return self.get("safety.safe_z", None)
     
     def get_safe_z_offset(self) -> float:
         """Get safe Z offset"""
-        return self.get("safety.safe_z_offset", 20)
+        return self.get("safety.safe_z_offset", None)
     
     def get_max_weight_per_well(self) -> float:
         """Get maximum weight per well"""
-        return self.get("safety.max_weight_per_well", 10.0)
+        return self.get("safety.max_weight_per_well", 1.0)
     
     def get_weight_tolerance(self) -> float:
         """Get weight tolerance"""
@@ -63,6 +63,22 @@ class ConfigLoader:
     def get_duet_ip(self) -> str:
         """Get DUET IP address"""
         return self.get("machine.duet_ip", "192.168.1.2")
+    
+    def get_tamp_depth_min(self) -> float:
+        """Get minimum tamp depth in mm"""
+        return self.get("manipulator.tamp_depth_min", None)
+    
+    def get_tamp_depth_max(self) -> float:
+        """Get maximum tamp depth in mm"""
+        return self.get("manipulator.tamp_depth_max", None)
+    
+    def get_tamp_speed_min(self) -> int:
+        """Get minimum tamp speed in mm/min"""
+        return self.get("manipulator.tamp_speed_min", None)
+    
+    def get_tamp_speed_max(self) -> int:
+        """Get maximum tamp speed in mm/min"""
+        return self.get("manipulator.tamp_speed_max", None)
 
 # Global config instance
 config = ConfigLoader()

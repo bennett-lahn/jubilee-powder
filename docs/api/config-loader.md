@@ -65,6 +65,13 @@ Main system configuration file:
     "scale_baud_rate": 9600,
     "default_feedrate": "MEDIUM"
   },
+  "manipulator": {
+    "tamper_axis": "V",
+    "tamp_depth_min": 10.0,
+    "tamp_depth_max": 60.0,
+    "tamp_speed_min": 500,
+    "tamp_speed_max": 5000
+  },
   "tools": {
     "manipulator": {
       "index": 0,
@@ -105,7 +112,7 @@ State machine positions and transitions:
   },
   "transitions": {
     "global_ready": {
-      "to": ["scale_ready", "mold_slot_A1"]
+      "to": ["scale_ready", "mold_ready_0"]
     }
   }
 }
@@ -128,9 +135,9 @@ Deck layout and labware definitions:
         "columns": 6,
         "origin": {"x": 50, "y": 50, "z": 10},
         "wells": {
-          "A1": {
+          "0": {
             "position": {"x": 50, "y": 50, "z": 10},
-            "ready_pos": "mold_slot_A1",
+            "ready_pos": "mold_ready_0",
             "capacity_ml": 10.0
           }
         }
@@ -173,6 +180,37 @@ if manipulator_config:
     print(f"Manipulator index: {index}")
     print(f"Park position: {park_pos}")
     print(f"Gripper open: {gripper['open_position']}mm")
+```
+
+### Tamping Configuration
+
+```python
+from src.ConfigLoader import config
+
+# Get tamping parameter bounds
+tamp_depth_min = config.get_tamp_depth_min()  # Default: 10.0 mm
+tamp_depth_max = config.get_tamp_depth_max()  # Default: 60.0 mm
+tamp_speed_min = config.get_tamp_speed_min()  # Default: 500 mm/min
+tamp_speed_max = config.get_tamp_speed_max()  # Default: 5000 mm/min
+
+print(f"Tamp depth range: {tamp_depth_min}-{tamp_depth_max} mm")
+print(f"Tamp speed range: {tamp_speed_min}-{tamp_speed_max} mm/min")
+
+# These bounds are enforced by the state machine during tamping operations
+```
+
+Configuration in `system_config.json`:
+
+```json
+{
+  "manipulator": {
+    "tamper_axis": "V",
+    "tamp_depth_min": 10.0,
+    "tamp_depth_max": 60.0,
+    "tamp_speed_min": 500,
+    "tamp_speed_max": 5000
+  }
+}
 ```
 
 ### Safety Parameters

@@ -2,8 +2,8 @@
 ; Runs at the start of a toolchange if the current tool is tool-0.
 ; Note: tool offsets are applied at this point unless we preempt commands with G53!
 
-G1 Z90                       ; Move Z so tool leadscrew is clear of molds. 120 is enough.
-G1 X40.0 F500               ; Move to the pickup position with tool-0. Follow dog-leg pattern to avoid trickler.
+G1 Z90                       ; Move Z so tool leadscrew is clear of molds. 90 is enough.
+G1 X40.0 F500                ; Move to the pickup position with tool-0. Follow dog-leg pattern to avoid trickler.
 G1 Y260.0 F500
 
 ; G53 G0 X40.0 Y260.0 F300   ; Ready point, kept for reference
@@ -16,5 +16,5 @@ G1 Y260.0 F300               ; Retract the pin.
 G1 V30                       ; Return tool to 30 position so that it will not try to re-home next time with
                              ; the limit switch already engaged. This position should only occur when tamping,
                              ; but better to be safe.
-G1 Y80.0 F500               ; Return to global ready
+G1 Y80.0 F500                ; Return to global ready
 G1 X150.0 F500           
