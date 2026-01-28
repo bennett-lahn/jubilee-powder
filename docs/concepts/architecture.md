@@ -221,29 +221,29 @@ sequenceDiagram
     participant SM as StateMachine
     participant H as Hardware
 
-    U->>GUI: Select wells A1, A2
+    U->>GUI: Select molds 0, 1
     U->>GUI: Set weights 50g, 45g
     U->>GUI: Click "Start Job"
     
-    GUI->>VM: start_job([A1:50g, A2:45g])
+    GUI->>VM: start_job([0:50g, 1:45g])
     VM->>VM: Validate pistons available
     VM->>VM: Start background thread
     
-    Note over VM: Thread for A1
-    VM->>JM: dispense_to_well("A1", 50.0)
+    Note over VM: Thread for mold 0
+    VM->>JM: dispense_to_well("0", 50.0)
     JM->>SM: Move, pick, fill, piston
     SM->>H: Execute operations
     H-->>VM: Complete
-    VM->>GUI: on_job_progress(0, 2, "A1")
-    GUI->>U: "Processing A1 (1/2)"
+    VM->>GUI: on_job_progress(0, 2, "0")
+    GUI->>U: "Processing 0 (1/2)"
     
-    Note over VM: Thread for A2
-    VM->>JM: dispense_to_well("A2", 45.0)
+    Note over VM: Thread for mold 1
+    VM->>JM: dispense_to_well("1", 45.0)
     JM->>SM: Move, pick, fill, piston
     SM->>H: Execute operations
     H-->>VM: Complete
-    VM->>GUI: on_job_progress(1, 2, "A2")
-    GUI->>U: "Processing A2 (2/2)"
+    VM->>GUI: on_job_progress(1, 2, "1")
+    GUI->>U: "Processing 1 (2/2)"
     
     VM->>GUI: on_job_completed()
     GUI->>U: "Job Complete!" dialog
@@ -262,15 +262,15 @@ sequenceDiagram
     participant S as Scale
     participant H as Hardware
 
-    U->>JM: dispense_to_well("A1", 50.0)
-    JM->>SM: validated_move_to_mold_slot("A1")
+    U->>JM: dispense_to_well("0", 50.0)
+    JM->>SM: validated_move_to_mold_slot("0")
     SM->>SM: Check current state
     SM->>SM: Validate movement
     SM->>H: Execute movement
     H-->>SM: Movement complete
     SM-->>JM: Success
     
-    JM->>M: pick_mold("A1")
+    JM->>M: pick_mold("0")
     M->>SM: Update payload state
     M->>H: Execute gripper
     
@@ -290,8 +290,8 @@ sequenceDiagram
     JM->>M: pick_mold_from_scale()
     JM->>SM: validated_move_to_dispenser(0)
     JM->>SM: validated_retrieve_piston(0)
-    JM->>SM: validated_move_to_mold_slot("A1")
-    JM->>M: place_mold("A1")
+    JM->>SM: validated_move_to_mold_slot("0")
+    JM->>M: place_mold("0")
     
     JM-->>U: True (success)
 ```

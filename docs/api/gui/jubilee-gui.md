@@ -33,7 +33,7 @@ Hardware
 
 The primary screen containing:
 
-- **Well Grid**: 3x3 grid of wells (A1-C3) for selection
+- **Well Grid**: Grid of mold slots (0-17) for selection
 - **Scale Display**: Live weight readings from the scale
 - **Control Buttons**: Hardware config, set weights, start/stop job
 - **Status Bar**: Current operation status

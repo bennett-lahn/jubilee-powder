@@ -108,7 +108,7 @@ if manager.connect(
     
     # Perform a dispense operation
     success = manager.dispense_to_well(
-        well_id="A1",
+        well_id="0",
         target_weight=50.0  # grams
     )
     

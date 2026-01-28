@@ -109,7 +109,7 @@ A progress dialog displays:
 
 The status bar shows detailed operation status:
 
-- "Processing well A1 (1/5)"
+- "Processing mold 0 (1/18)"
 - "Moving to scale"
 - "Filling to target weight"
 - etc.
@@ -157,18 +157,18 @@ If you manually reload a dispenser with more pistons:
 ### Main Screen Layout
 
 ```
-┌────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────┐
 │           Jubilee Powder Dispensing System          │
 ├──────────────┬─────────────────────┬────────────────┤
 │   Scale      │   Jubilee Platform  │    Controls    │
 │              │                     │                │
-│ Connected    │    [A1] [A2] [A3]   │ Hardware Config│
-│ 0.000g       │    [B1] [B2] [B3]   │ Set Weights    │
-│              │    [C1] [C2] [C3]   │ Start Job      │
+│ Connected    │    [0] [1] [2]      │ Hardware Config│
+│ 0.000g       │    [3] [4] [5]      │ Set Weights    │
+│              │    [6] [7] [8]      │ Start Job      │
 │              │                     │ Stop Job       │
 └──────────────┴─────────────────────┴────────────────┘
-│ Status: Ready                                        │
-└──────────────────────────────────────────────────────┘
+│ Status: Ready                                       │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Color Coding

@@ -33,7 +33,7 @@ Before configuring anything, plan your physical deck layout:
    - Tool approach angles
 
 3. **Assign identifiers** to each well/position:
-   - Use clear naming (e.g., "A1", "B2", "row1_col1")
+   - Use numerical indexing (e.g., "0", "1", "2")
    - Be consistent with naming conventions
 
 ## Step 2: Configure Deck Layout
@@ -59,14 +59,14 @@ Edit `jubilee_api_config/mold_labware.json` to define your labware:
           "z": 10.0
         },
         "wells": {
-          "A1": {
+          "0": {
             "position": {"x": 50.0, "y": 50.0, "z": 10.0},
-            "ready_pos": "mold_slot_A1",
+            "ready_pos": "mold_ready_0",
             "capacity_ml": 10.0
           },
-          "A2": {
+          "1": {
             "position": {"x": 70.0, "y": 50.0, "z": 10.0},
-            "ready_pos": "mold_slot_A2",
+            "ready_pos": "mold_ready_1",
             "capacity_ml": 10.0
           }
         }
@@ -89,37 +89,37 @@ Edit `jubilee_api_config/motion_platform_positions.json` to add your new positio
 ```json
 {
   "positions": {
-    "mold_slot_A1": {
+    "mold_ready_0": {
       "coordinates": {
         "x": 50.0,
         "y": 50.0,
         "z": 100.0,
         "safe_z": 150.0
       },
-      "description": "Ready position for well A1",
+      "description": "Ready position for mold 0",
       "requires_tool": "manipulator",
       "allowed_payloads": ["empty", "mold", "mold_with_piston"]
     },
-    "mold_slot_A2": {
+    "mold_ready_1": {
       "coordinates": {
         "x": 70.0,
         "y": 50.0,
         "z": 100.0,
         "safe_z": 150.0
       },
-      "description": "Ready position for well A2",
+      "description": "Ready position for mold 1",
       "requires_tool": "manipulator",
       "allowed_payloads": ["empty", "mold", "mold_with_piston"]
     }
   },
   "transitions": {
     "global_ready": {
-      "to": ["mold_slot_A1", "mold_slot_A2", "scale_ready"]
+      "to": ["mold_ready_0", "mold_ready_1", "scale_ready"]
     },
-    "mold_slot_A1": {
+    "mold_ready_0": {
       "to": ["global_ready", "scale_ready"]
     },
-    "mold_slot_A2": {
+    "mold_ready_1": {
       "to": ["global_ready", "scale_ready"]
     }
   }
@@ -156,13 +156,14 @@ def load_target_weights(data_file):
     with open(data_file, 'r') as f:
         return json.load(f)
 
-def process_wells(manager, target_weights):
+def process_wells(manager, target_weights, use_tamping=False):
     """
     Process all wells with their target weights.
     
     Args:
         manager: Connected JubileeManager instance
         target_weights: Dict of {well_id: target_weight}
+        use_tamping: Whether to tamp powder before inserting top piston
         
     Returns:
         Dictionary with results for each well
@@ -174,7 +175,8 @@ def process_wells(manager, target_weights):
         
         success = manager.dispense_to_well(
             well_id=well_id,
-            target_weight=target_weight
+            target_weight=target_weight,
+            use_tamping=use_tamping  # Enable tamping if desired
         )
         
         # Get final weight for verification
@@ -188,7 +190,8 @@ def process_wells(manager, target_weights):
             "success": success,
             "target_weight": target_weight,
             "final_weight": final_weight,
-            "error": None if success else "Dispense failed"
+            "error": None if success else "Dispense failed",
+            "tamped": use_tamping
         }
         
         print(f"  Result: {'SUCCESS' if success else 'FAILED'}")
@@ -223,7 +226,8 @@ def main():
     
     try:
         # Process all wells
-        results = process_wells(manager, target_weights)
+        # Set use_tamping=True to compress powder before inserting piston
+        results = process_wells(manager, target_weights, use_tamping=True)
         
         # Save results
         save_results(results, OUTPUT_FILE)
@@ -248,19 +252,19 @@ Create a JSON file with your target weights (`my_target_weights.json`):
 
 ```json
 {
-  "A1": 50.5,
-  "A2": 45.0,
-  "A3": 52.3,
-  "B1": 48.7,
-  "B2": 51.2
+  "0": 50.5,
+  "1": 45.0,
+  "2": 52.3,
+  "3": 48.7,
+  "4": 51.2
 }
 ```
 
 ## Step 6: Run Your Script
 
-1. **Test with one well first**:
+1. **Test with one mold first**:
 ```python
-target_weights = {"A1": 50.0}  # Start with just one
+target_weights = {"0": 50.0}  # Start with just one
 ```
 
 2. **Monitor the first run**:
@@ -279,13 +283,13 @@ Check the output file (`processing_results.json`):
 
 ```json
 {
-  "A1": {
+  "0": {
     "success": true,
     "target_weight": 50.5,
     "final_weight": 50.48,
     "error": null
   },
-  "A2": {
+  "1": {
     "success": true,
     "target_weight": 45.0,
     "final_weight": 45.02,
@@ -299,11 +303,11 @@ Check the output file (`processing_results.json`):
 During a successful run, you should see:
 
 ```
-Loaded 5 wells to process
+Loaded 5 molds to process
 Connected successfully!
-Processing A1 with target weight 50.5g...
+Processing 0 with target weight 50.5g...
   Result: SUCCESS
-Processing A2 with target weight 45.0g...
+Processing 1 with target weight 45.0g...
   Result: SUCCESS
 ...
 Results saved to processing_results.json
@@ -353,6 +357,66 @@ Disconnected from hardware
 - Verify scale is connected and responding
 - Ensure trickler/powder source is configured
 - Check logs for specific error messages
+
+## Advanced Features
+
+### Using Tamping
+
+Tamping compresses the powder in a mold before inserting the top piston. This is useful for:
+
+1. **Ensuring safe top piston placement** when powder volume is high
+2. **Reducing airborne powder** when inserting the piston
+
+To enable tamping in your workflow:
+
+```python
+# Enable tamping for all wells
+results = process_wells(manager, target_weights, use_tamping=True)
+```
+
+Or, for finer control with the low-level API:
+
+```python
+# Manual control over tamping
+manager.pick_mold_from_scale()  # After filling with powder
+
+# Tamp the powder
+manager.manipulator.tamp(
+    tamp_depth=40.0,    # Depth in mm (valid range from system_config.json)
+    tamp_speed=2000     # Speed in mm/min (valid range from system_config.json)
+)
+
+# Continue with piston insertion
+manager.move_to_dispenser(dispenser_index=0)
+manager.manipulator.place_top_piston(manager.piston_dispensers[0])
+```
+
+**When to use tamping**:
+
+- High powder volumes that might prevent piston insertion
+- Fine powders that easily become airborne
+- When consistent compression is required for your application
+
+**Parameter Bounds**:
+
+Parameter bounds are configured in `system_config.json` under the `manipulator` section and can be customized for your application:
+
+```json
+{
+  "manipulator": {
+    "tamp_depth_min": 10.0,   // mm - minimum depth to ensure meaningful compression
+    "tamp_depth_max": 60.0,   // mm - maximum depth to prevent damage
+    "tamp_speed_min": 500,    // mm/min - minimum speed for controlled movement
+    "tamp_speed_max": 5000    // mm/min - maximum speed to prevent impact damage
+  }
+}
+```
+
+Default bounds:
+- **Tamp Depth**: 10-60 mm (default value: 40 mm)
+- **Tamp Speed**: 500-5000 mm/min (default value: 2000 mm/min)
+
+**Note**: After tamping, the V axis is automatically re-homed to ensure axis accuracy. The homing process uses the mold itself as a reference (starting at v=2 with tamper inserted, ending at v=-7 with tamper touching the mold bottom). This is safe because the mold does not have a top piston during tamping. Parameter bounds are enforced by the state machine to ensure safe operation.
 
 ## Tips
 

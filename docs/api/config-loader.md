@@ -67,8 +67,8 @@ Main system configuration file:
   },
   "manipulator": {
     "tamper_axis": "V",
-    "tamp_depth_min": 10.0,
-    "tamp_depth_max": 60.0,
+    "tamp_depth_min": 0.0,
+    "tamp_depth_max": 9.0,
     "tamp_speed_min": 500,
     "tamp_speed_max": 5000
   },
@@ -205,8 +205,8 @@ Configuration in `system_config.json`:
 {
   "manipulator": {
     "tamper_axis": "V",
-    "tamp_depth_min": 10.0,
-    "tamp_depth_max": 60.0,
+    "tamp_depth_min": 0.0,
+    "tamp_depth_max": 9.0,
     "tamp_speed_min": 500,
     "tamp_speed_max": 5000
   }

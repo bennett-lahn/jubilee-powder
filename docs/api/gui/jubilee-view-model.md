@@ -96,9 +96,9 @@ else:
 ```python
 # Define wells to fill
 jobs = [
-    DispensingJob(well_id="A1", target_weight=50.0),
-    DispensingJob(well_id="A2", target_weight=45.0),
-    DispensingJob(well_id="B1", target_weight=52.0),
+    DispensingJob(well_id="0", target_weight=50.0),
+    DispensingJob(well_id="1", target_weight=45.0),
+    DispensingJob(well_id="2", target_weight=52.0),
 ]
 
 # Start job (runs in background thread)

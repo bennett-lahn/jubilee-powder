@@ -123,7 +123,7 @@ from src.JubileeManager import JubileeManager
 
 manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
 manager.connect()
-manager.dispense_to_well("A1", 50.0)
+manager.dispense_to_well("0", 50.0)
 manager.disconnect()
 ```
 

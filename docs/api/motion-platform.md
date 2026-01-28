@@ -52,7 +52,7 @@ Named positions are defined in `motion_platform_positions.json`:
 
 - `global_ready`: Safe position away from all labware
 - `scale_ready`: Position to access the scale
-- `mold_slot_*`: Positions for specific wells (e.g., `mold_slot_A1`)
+- `mold_slot_*`: Positions for specific wells (e.g., `mold_ready_0`, `mold_ready_1`)
 - `dispenser_*_ready`: Positions for piston dispensers
 
 ## Validation Results
@@ -121,8 +121,11 @@ if not result.valid:
 ```
 
 **Requirements**:
-- Must be at appropriate position for tool pickup/parking
-- Payload must be compatible
+- Must be at `global_ready` position
+- Payload must be `empty`
+- No tool already picked up (for pickup)
+- Manipulator tool must be active (for parking)
+- Z-height must be at `mold_transfer_safe`
 
 ### Position Movements
 
@@ -131,7 +134,7 @@ if not result.valid:
 result = state_machine.validated_move_to_scale()
 
 # Move to mold slot
-result = state_machine.validated_move_to_mold_slot(well_id="A1")
+result = state_machine.validated_move_to_mold_slot(well_id="0")
 
 # Move to dispenser
 from src.PistonDispenser import PistonDispenser

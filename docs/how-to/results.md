@@ -26,7 +26,7 @@ When you run a dispense operation, typical result data looks like:
 
 ```json
 {
-  "well_id": "A1",
+  "well_id": "0",
   "success": true,
   "target_weight": 50.0,
   "final_weight": 50.02,
@@ -322,7 +322,7 @@ plot_weight_errors("processing_results.json")
 
 **Symptom**: Failures or errors clustered in specific wells
 
-**Example**: Wells A1-A3 always fail, others succeed
+**Example**: Molds 0-2 always fail, others succeed
 
 **Causes**:
 - Incorrect well position configuration

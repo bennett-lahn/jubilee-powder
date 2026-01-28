@@ -60,7 +60,7 @@ if manager.connect(machine_address="192.168.1.100"):
 ```python
 # After connecting...
 success = manager.dispense_to_well(
-    well_id="A1",
+    well_id="0",
     target_weight=50.0
 )
 
@@ -100,7 +100,7 @@ try:
         raise ConnectionError("Failed to connect to Jubilee")
     
     # Perform operations
-    success = manager.dispense_to_well("A1", 50.0)
+    success = manager.dispense_to_well("0", 50.0)
     if not success:
         print("Operation failed but system is still connected")
     

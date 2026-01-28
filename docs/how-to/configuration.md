@@ -164,11 +164,11 @@ Defines deck layout, labware positions, and well configurations.
         "well_spacing_y": 20.0,
         "origin": {"x": 50, "y": 50, "z": 10},
         "wells": {
-          "A1": {
+          "0": {
             "position": {"x": 50, "y": 50, "z": 10},
-            "ready_pos": "mold_slot_A1",
+            "ready_pos": "mold_ready_0",
             "capacity_ml": 10.0,
-            "description": "Top-left well"
+            "description": "Mold slot 0"
           }
         }
       }
@@ -196,13 +196,13 @@ Defines well-specific weight parameters and tolerances.
 ```json
 {
   "weight_config": {
-    "A1": {
+    "0": {
       "tare_weight": 5.2,
       "target_tolerance": 0.1,
       "max_fill_time": 120,
       "trickler_speed": "medium"
     },
-    "A2": {
+    "1": {
       "tare_weight": 5.3,
       "target_tolerance": 0.05,
       "max_fill_time": 180,

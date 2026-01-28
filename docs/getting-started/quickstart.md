@@ -75,7 +75,7 @@ print("Connected successfully!")
 ```python
 # Dispense to a well with target weight
 success = manager.dispense_to_well(
-    well_id="A1",           # Well identifier from your deck config
+    well_id="0",            # Well identifier (numerical index 0-17)
     target_weight=50.0      # Target weight in grams
 )
 
@@ -157,8 +157,11 @@ When you run this script:
    - Places mold on scale
    - Fills powder to target weight
    - Picks up mold from scale
+   - (Optional) Tamps powder to compress it (V-axis is re-homed after tamping)
    - Gets a piston from dispenser
    - Returns mold to well
+   
+   **Note**: The V-axis can be homed while holding a mold without a top piston. During homing, the tamper moves from v=2 (inserted into mold) to v=-7 (touching mold bottom), using the mold itself as a positioning reference.
 
 3. **Cleanup Phase**:
    - Disconnects from all hardware
@@ -190,6 +193,23 @@ If `dispense_to_well()` returns `False`:
 - **Check Well ID**: Verify the well ID exists in your deck configuration
 - **Check Dispenser**: Ensure the dispenser has available pistons
 - **Check Scale**: Verify the scale is responding to commands
+
+## Advanced Features
+
+### Using Tamping
+
+For more control over powder compression, you can enable tamping before piston insertion:
+
+```python
+# Enable tamping in dispense operation
+success = manager.dispense_to_well(
+    well_id="0",
+    target_weight=50.0,
+    use_tamping=True  # Compresses powder before inserting piston
+)
+```
+
+See the [Manipulator API](../api/manipulator.md#tamping-operations) for more details on tamping.
 
 ## Next Steps
 

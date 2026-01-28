@@ -84,7 +84,7 @@ A predefined location on the deck with a specific name (e.g., "global_ready", "s
 **Examples**:
 - `global_ready`: Safe position away from all labware
 - `scale_ready`: Position to access the scale
-- `mold_slot_A1`: Position to access well A1
+- `mold_ready_0`: Position to access mold 0
 
 ### Transition
 A validated movement from one named position to another. The state machine defines which transitions are allowed.
@@ -128,7 +128,11 @@ The process of moving axes to their reference positions (endstops) to establish 
 
 **Types**:
 - **Home All**: Homes X, Y, Z, and U axes
-- **Home Manipulator**: Homes the manipulator's V axis
+- **Home Manipulator** (V-axis): Homes the manipulator's V axis
+  - Can be performed while holding a mold without a top piston
+  - Starts at v=2 (tamper inserted into mold)
+  - Ends at v=-7 (tamper touching bottom of mold)
+  - Uses the mold itself as a reference for accurate positioning
 - **Rehome**: Re-establishes reference after an error
 
 ### Feed Rate
@@ -173,11 +177,19 @@ A complete workflow that:
 4. Retrieves a piston from a dispenser
 5. Returns the mold to the well
 
+### Tamping
+The process of compressing powder in a mold held by the manipulator before inserting the top piston. Tamping serves two purposes:
+
+1. **Volume reduction**: Compresses powder to allow the top piston to fit when powder volume would otherwise prevent insertion
+2. **Airborne particulate reduction**: Reduces the amount of powder that becomes airborne when the piston is inserted
+
+After tamping, the V axis is automatically re-homed to ensure axis accuracy. Typically performed at the `scale_ready` position after filling the mold.
+
 ### Trickler
 A powder dispensing mechanism used to add material to a mold on the scale. Controlled to achieve precise target weights.
 
 ### Well ID
-A unique identifier for a position in a well plate (e.g., "A1", "B2"). Used to reference specific locations in the deck layout.
+A unique identifier for a mold position using numerical indexing (e.g., "0", "1", "2"). Used to reference specific locations in the deck layout.
 
 ### Target Weight
 The desired weight of material to dispense into a mold, measured in grams.
