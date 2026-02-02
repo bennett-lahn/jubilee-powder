@@ -515,8 +515,8 @@ class MotionPlatformStateMachine(StateMachine):
                             continue
                         
                         # Extract numerical ID from mold slot name (e.g., "A0" -> "0", "A17" -> "17")
-                        # This allows external API to use numerical IDs while labware uses letter+number format
-                        # since labware internally uses A1, B1, B2... format
+                        # The external API uses numerical IDs (0, 1, 2...) for all mold references.
+                        # Internally, labware uses A0, A1, A2... format per labware library requirements.
                         if well_name.startswith('A'):
                             numerical_id = well_name[1:]  # Strip the 'A' prefix
                         else:
@@ -547,7 +547,7 @@ class MotionPlatformStateMachine(StateMachine):
                         )
                         
                         # Replace the regular well with our Mold
-                        # Keep the labware well name format for internal consistency
+                        # Keep the labware well name format (A0-A17) for internal consistency
                         labware.wells[well_name] = mold
                 except Exception as e:
                     print(f"Error loading labware for slot {i}: {e}")
@@ -603,6 +603,7 @@ class MotionPlatformStateMachine(StateMachine):
             slot = self.context.deck.slots[str(slot_index)]
             if slot.has_labware and hasattr(slot.labware, 'wells'):
                 # Convert numerical ID to labware well name format (e.g., "0" -> "A0")
+                # Labware internally uses A0, A1, A2... format per library requirements
                 labware_well_name = f"A{well_id}"
                 
                 # Get the well matching the labware well name
@@ -1233,27 +1234,52 @@ class MotionPlatformStateMachine(StateMachine):
     
     def validated_tamp(
         self,
-        manipulator_config: Dict[str, object]
+        manipulator_config: Dict[str, object],
+        tamp_depth: float = 40.0,
+        tamp_speed: int = 2000
     ) -> MoveValidationResult:
-        """Validate and execute tamping action."""
-        # TODO: This function is incomplete and shouldn't be used, scale.y is defunct.
-        # Domain-specific validation
-        if self.context.scale is None:
+        """
+        Validate and execute tamping action.
+        
+        Tamping compresses powder in a mold held by the manipulator to reduce volume.
+        This is typically done at the scale_ready position before inserting the top piston.
+        
+        Parameter bounds are loaded from system_config.json and can be customized.
+        
+        Args:
+            manipulator_config: Configuration dict for the manipulator
+            tamp_depth: Target depth for tamping movement in mm (default 40.0)
+            tamp_speed: Speed for tamping movement in mm/min (default 2000)
+            
+        Returns:
+            MoveValidationResult with outcome
+        """
+        from src.ConfigLoader import config
+        
+        # Load tamping parameter bounds from configuration
+        MIN_TAMP_DEPTH = config.get_tamp_depth_min()
+        MAX_TAMP_DEPTH = config.get_tamp_depth_max()
+        MIN_TAMP_SPEED = config.get_tamp_speed_min()
+        MAX_TAMP_SPEED = config.get_tamp_speed_max()
+        
+        # Validate tamping parameters
+        if not (MIN_TAMP_DEPTH <= tamp_depth <= MAX_TAMP_DEPTH):
             return MoveValidationResult(
                 valid=False,
-                reason="Scale not configured"
+                reason=f"Tamp depth {tamp_depth}mm is out of bounds. Must be between {MIN_TAMP_DEPTH} and {MAX_TAMP_DEPTH} mm."
             )
         
+        if not (MIN_TAMP_SPEED <= tamp_speed <= MAX_TAMP_SPEED):
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Tamp speed {tamp_speed}mm/min is out of bounds. Must be between {MIN_TAMP_SPEED} and {MAX_TAMP_SPEED} mm/min."
+            )
+        
+        # Domain-specific validation
         if self.context.current_well is None:
             return MoveValidationResult(
                 valid=False,
                 reason="Not carrying a mold"
-            )
-        
-        if not self.context.mold_on_scale:
-            return MoveValidationResult(
-                valid=False,
-                reason="Mold must be on scale to tamp"
             )
         
         mold = self.context.current_well
@@ -1263,10 +1289,12 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Cannot tamp mold that has a top piston"
             )
         
-        if not hasattr(self.context.scale, 'y') or self.context.scale.y is None:
+        # Verify we're at scale_ready position (typical) or a mold_ready position
+        valid_positions = ['scale_ready'] + [f'mold_ready_{i}' for i in range(16)]
+        if self.context.position_id not in valid_positions:
             return MoveValidationResult(
                 valid=False,
-                reason="Scale Y coordinate not configured"
+                reason=f"Tamping should be performed at scale_ready or mold_ready position. Current: {self.context.position_id}"
             )
         
         # Execute through generic validation framework
@@ -1274,7 +1302,8 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="tamp_mold",
             execution_func=self._executor.execute_tamp,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            scale_y=self.context.scale.y
+            tamp_depth=tamp_depth,
+            tamp_speed=tamp_speed
         )
     
     # ---------------------------------------------------------------------
@@ -1466,6 +1495,9 @@ class MotionPlatformStateMachine(StateMachine):
                         reason="Execution returned False"
                     )
                 
+                # Wait for all buffered moves to complete before returning
+                self._executor.wait_for_moves_to_finish()
+                
                 return MoveValidationResult(valid=True)
                 
             except Exception as e:
@@ -1546,14 +1578,17 @@ class MotionPlatformStateMachine(StateMachine):
                     )
                 )
         
-        # Step 6: Validate machine is at expected current position
-        current_pos = self._executor.get_machine_position()
-        machine_validation = self.validate_machine_state(
-            machine_x=float(current_pos.get('X', 0)),
-            machine_y=float(current_pos.get('Y', 0)),
-            machine_z=float(current_pos.get('Z', 0)),
-            machine_v=float(current_pos.get('V', 0))
-        )
+        # Step 6: Validate machine is at expected current position unless this is a homing action
+        if not (action_id and action_id.startswith("home_")):
+            current_pos = self._executor.get_machine_position()
+            machine_validation = self.validate_machine_state(
+                machine_x=float(current_pos.get('X', 0)),
+                machine_y=float(current_pos.get('Y', 0)),
+                machine_z=float(current_pos.get('Z', 0)),
+                machine_v=float(current_pos.get('V', 0))
+            )
+        else:
+            machine_validation = MoveValidationResult(valid=True)
         if not machine_validation.valid:
             return machine_validation
         
@@ -1586,6 +1621,9 @@ class MotionPlatformStateMachine(StateMachine):
                         valid=False,
                         reason="Execution returned False"
                     )
+                
+                # Wait for all buffered moves to complete before returning
+                self._executor.wait_for_moves_to_finish()
                 
                 return MoveValidationResult(valid=True)
                 
@@ -1830,6 +1868,13 @@ class MotionPlatformStateMachine(StateMachine):
         """
         Validate and execute tamper homing (uses home_manipulator action).
         
+        Can be performed while holding a mold without a top piston. The homing process
+        uses the mold itself as a reference:
+        - Start position: v=2 (tamper inserted into mold)
+        - End position: v=-7 (tamper touching bottom of mold)
+        
+        This establishes accurate positioning by using the mold bottom as a reference point.
+        
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
             
@@ -1924,7 +1969,7 @@ class MotionPlatformStateMachine(StateMachine):
         """
         Validate and execute picking up a tool.
         
-        Valid from mold_ready or global_ready positions. Requires no tool already
+        Valid only from global_ready position. Requires no tool already
         picked up and mold_transfer_safe z_height. Returns to global_ready position.
         Only manipulator tool is currently supported.
         

@@ -138,10 +138,6 @@ class Manipulator(Tool):
     - Tamping: Only allowed when carrying a mold without a top piston
     - Top piston placement: Only allowed when carrying a mold without a top piston
     - Mold handling: Pick up and place Mold objects
-
-    Tamping is primarily controlled using sensorless homing/stall detection, which is configured
-    using the M915 command in config.g and homet.g, not this file. driver-stall.g is used to 
-    control tamping after contact with the material.
     """
 
     # ============================================================================
@@ -159,10 +155,6 @@ class Manipulator(Tool):
         
         # Tamper axis configuration (loaded from system_config.json)
         self.tamper_axis = 'V'  # Default axis for tamper movement
-        
-        # Status flags
-        self.stall_detection_configured = False
-        self.sensorless_homing_configured = False
         
         # TODO: tamper_speed should be derived from state machine feedrate default
         # For now, removed as it was only used in get_status() for reporting
@@ -262,12 +254,22 @@ class Manipulator(Tool):
 
     def home_tamper(self, machine_connection: Optional[Any] = None):
         """
-        Perform sensorless homing for the tamper axis.
+        Perform homing for the tamper axis (V-axis).
+        
+        Can be performed while holding a mold WITHOUT a top piston. The homing 
+        process uses the mold itself as a reference:
+        - Start position: v=2 (tamper inserted into mold)
+        - End position: v=-7 (tamper touching bottom of mold)
+        
+        This allows accurate positioning establishment using the mold as a reference.
         
         Validates and executes through MotionPlatformStateMachine.
         
         Args:
             machine_connection: Deprecated parameter (for backward compatibility)
+            
+        Note:
+            Do not home when the mold has a top piston inserted.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -280,25 +282,43 @@ class Manipulator(Tool):
         if not result.valid:
             raise RuntimeError(f"Tamper homing failed: {result.reason}")
 
-    # TODO: Figure out how to merge stall detection with this function so that we can handle stall detection gracefully
-    @requires_carrying_mold
-    @requires_mold_without_piston
-    def tamp(self, target_depth: float = None):
+    def tamp(self, tamp_depth: float = 40.0, tamp_speed: int = 2000):
         """
-        Perform tamping action. Only allowed if carrying a mold without a top piston.
+        Perform tamping action to compress powder in the held mold.
+        
+        Tamping reduces powder volume for two purposes:
+        1. Allowing the top piston to fit in the mold if it otherwise wouldn't
+        2. Reducing the amount of powder that becomes airborne when the top piston is inserted
+        
+        Only allowed if carrying a mold without a top piston. Typically performed at
+        the scale_ready position after filling the mold with powder.
+        
+        After tamping, the V axis is automatically re-homed to ensure axis accuracy.
         
         Args:
-            target_depth: Target depth to tamp to (mm). If None, uses default depth.
+            tamp_depth: Target depth for tamping movement in mm (default 40.0)
+            tamp_speed: Speed for tamping movement in mm/min (default 2000)
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            RuntimeError: If state machine not configured
+            ToolStateError: If tamping is not allowed in current state or parameters out of bounds
+            
+        Note:
+            Valid parameter ranges are defined in system_config.json under manipulator settings:
+            - tamp_depth_min/tamp_depth_max (default: 10-60 mm)
+            - tamp_speed_min/tamp_speed_max (default: 500-5000 mm/min)
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         
-        if not self.placed_mold_on_scale:
-            raise ToolStateError("Cannot tamp, no mold on scale.")
-        
         # Call state machine method which validates and executes
         result = self.state_machine.validated_tamp(
-            manipulator_config=self._get_config_dict()
+            manipulator_config=self._get_config_dict(),
+            tamp_depth=tamp_depth,
+            tamp_speed=tamp_speed
         )
         
         if not result.valid:
@@ -319,8 +339,6 @@ class Manipulator(Tool):
         """
         status = {
             'has_mold': self.current_well is not None,
-            'stall_detection_configured': self.stall_detection_configured,
-            'sensorless_homing_configured': self.sensorless_homing_configured,
             'tamper_axis': self.tamper_axis,
         }
         
@@ -384,7 +402,7 @@ class Manipulator(Tool):
         Validates move through state machine before execution.
         
         Args:
-            well_id: Mold slot identifier (e.g., "A1")
+            well_id: Mold slot identifier using numerical indexing (e.g., "0", "1", "2")
         
         Returns:
             The Mold object that was placed, or None if no mold was being carried

@@ -90,8 +90,8 @@
       "allows_tool_engagement": true,
       "coordinates": {
         "x": 150.0,
-        "y": 143.0,
-        "z": 28.0,
+        "y": 145.0,
+        "z": 27.0,
         "v": 67.0
       },
       "allowed_origins": [
@@ -980,7 +980,7 @@
       "description": "Pick up the manipulator tool and return to global_ready position. Valid only from global_ready position. Requires no tool already picked up and mold_transfer_safe z_height.",
       "blocked_when_engaged": true,
       "position_scope": [
-        "GLOBAL_READY"
+        "global_ready"
       ],
       "requirements": {
         "payload_state": "empty",

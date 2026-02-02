@@ -21,8 +21,8 @@ Example:
         
         # Connect to hardware
         if manager.connect(machine_address="192.168.1.100"):
-            # Dispense powder to well
-            success = manager.dispense_to_well("A1", target_weight=50.0)
+            # Dispense powder to well 0
+            success = manager.dispense_to_well("0", target_weight=50.0)
             
             # Clean up
             manager.disconnect()
@@ -67,7 +67,7 @@ class JubileeManager:
             try:
                 if manager.connect():
                     weight = manager.get_weight_stable()
-                    manager.dispense_to_well("A1", 50.0)
+                    manager.dispense_to_well("0", 50.0)
             finally:
                 manager.disconnect()
     
@@ -78,6 +78,8 @@ class JubileeManager:
     """
     
     # TODO: make dispensers configurable from UI
+    # TODO: make position checks case insensitive, e.g. ("GLOBAL_READY" and "global_ready" should be the same)
+    # TODO: Improve soft fail for scale tare, add functionality for if a communication failure occurs when mold is on scale it is automatically returned
     def __init__(
         self, 
         num_piston_dispensers: int = 0, 
@@ -298,17 +300,18 @@ class JubileeManager:
             self.scale = Scale(port=scale_port)
             self.scale.connect()
             
+            # Get project root for config paths
+            project_root = Path(__file__).parent.parent
+            
             # Initialize the state machine with the real machine and scale
             # The state machine owns the machine and controls all access to it
             if state_machine_config is None:
                 # Default to project root / jubilee_api_config / motion_platform_positions.json
-                project_root = Path(__file__).parent.parent
                 config_path = project_root / "jubilee_api_config" / "motion_platform_positions.json"
             else:
                 config_path = Path(state_machine_config)
                 # If relative path, resolve relative to project root
                 if not config_path.is_absolute():
-                    project_root = Path(__file__).parent.parent
                     config_path = project_root / config_path
             if not config_path.exists():
                 raise FileNotFoundError(f"State machine config not found: {config_path}")
@@ -321,7 +324,9 @@ class JubileeManager:
             )
             
             # Initialize deck and dispensers in state machine
-            self.state_machine.initialize_deck()
+            # Deck config files are in jubilee_api_config directory
+            deck_config_path = project_root / "jubilee_api_config"
+            self.state_machine.initialize_deck(config_path=str(deck_config_path))
             self.state_machine.initialize_dispensers(
                 num_piston_dispensers=self._num_piston_dispensers,
                 num_pistons_per_dispenser=self._num_pistons_per_dispenser
@@ -336,14 +341,16 @@ class JubileeManager:
             )
 
             # Ensure state machine context is set correctly for homing
+            # Set z_height_id to mold_transfer_safe which is the default height after homing
             self.state_machine.update_context(
                 active_tool_id=None,
-                payload_state="empty"
+                payload_state="empty",
+                z_height_id="mold_transfer_safe"
             )
             
             # Home all axes (X, Y, Z, U) through state machine
             # This requires no tool picked up and no mold
-            # Returns to global_ready position
+            # Returns to global_ready position at mold_transfer_safe z-height
             result = self.state_machine.validated_home_all()
             if not result.valid:
                 raise RuntimeError(f"Failed to home all axes: {result.reason}")
@@ -501,8 +508,8 @@ class JubileeManager:
         10. Place mold (now with powder and piston) back in slot
         
         Args:
-            well_id: Identifier for the target well/mold slot. Must match an entry
-                in the deck configuration (e.g., "A1", "B2", "C3").
+            well_id: Identifier for the target well/mold slot using numerical indexing.
+                Must match an entry in the deck configuration (e.g., "0", "1", "2").
             target_weight: Target weight of powder to dispense, in grams. The system
                 will fill until this weight is reached (within tolerance).
         
@@ -520,8 +527,8 @@ class JubileeManager:
             manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
             
             if manager.connect():
-                # Dispense 50g of powder to well A1
-                success = manager.dispense_to_well("A1", target_weight=50.0)
+                # Dispense 50g of powder to mold 0
+                success = manager.dispense_to_well("0", target_weight=50.0)
                 
                 if success:
                     print("Dispense completed successfully!")
@@ -563,6 +570,7 @@ class JubileeManager:
             self.manipulator.place_mold_on_scale()
             self._fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
+            self.manipulator.tamp(tamp_depth=3.0, tamp_speed=500)
             dispenser_index = -1
             for dispenser in self.piston_dispensers:
                 if dispenser.num_pistons > 0:
@@ -702,8 +710,8 @@ class JubileeManager:
         determined by the well's configuration in the deck layout.
         
         Args:
-            well_id: Identifier for the target well (e.g., "A1", "B2"). Must exist
-                in the deck configuration's labware definition.
+            well_id: Identifier for the target well using numerical indexing (e.g., "0", "1", "2").
+                Must exist in the deck configuration's labware definition.
         
         Returns:
             True if movement succeeded.

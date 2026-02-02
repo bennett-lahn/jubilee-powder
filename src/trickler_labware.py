@@ -17,13 +17,13 @@ class Mold(Well):
     current_weight: float = 0.0  # Current weight in grams
     target_weight: float = 0.0   # Target weight in grams
     max_weight: float = None     # Maximum weight capacity in grams
-    ready_pos: str = None        # State machine position name (e.g., "mold_ready_A1")
+    ready_pos: str = None        # State machine position name (e.g., "mold_ready_0")
     
     @property
     def well_id(self) -> str:
         """Extract well_id from ready_pos by removing 'mold_ready_' prefix.
         
-        Returns the identifier part (e.g., 'A1' from 'mold_ready_A1').
+        Returns the identifier part (e.g., '0' from 'mold_ready_0').
         If ready_pos is not set, returns the mold name.
         """
         if self.ready_pos:

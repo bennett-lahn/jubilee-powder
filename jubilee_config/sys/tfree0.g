@@ -8,7 +8,7 @@ G1 Y260.0 F500
 
 ; G53 G0 X40.0 Y260.0 F300   ; Ready point, kept for reference
 
-G1 Y311.5 F200               ; Controlled move to the park position with tool-1. (park_x, park_y)
+G1 Y309.5 F200               ; Controlled move to the park position with tool-1. (park_x, park_y)
                              ; This y position is different from picking up the tool because the tool typically
                              ; does not sit as deep when being replaced
 M98 P"/macros/tool_unlock.g" ; Unlock the tool

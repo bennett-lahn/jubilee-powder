@@ -207,11 +207,11 @@ class MovementExecutor:
             feedrate = self._feedrate
             self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
             self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
-            self._machine.gcode("M208 Z38:195")      # Move bed up so well fits under trickler, relax z-limit to do so
-            self._machine.move_to(z=38, s=feedrate)
-            self._machine.move(dy=26, s=feedrate)    # Move mold under trickler    
-            self._machine.gcode("M208 Z28:195")      # Move bed up so well is resting on scale, relax z-limit to do so
-            self._machine.move_to(z=28, s=feedrate)
+            self._machine.gcode("M208 Z34.5:195")      # Move bed up so well fits under trickler, relax z-limit to do so
+            self._machine.move_to(z=34.5, s=feedrate)
+            self._machine.move(dy=28, s=feedrate)    # Move mold under trickler    
+            self._machine.gcode("M208 Z27:195")      # Move bed up so well is resting on scale, relax z-limit to do so
+            self._machine.move_to(z=27, s=feedrate)
             self._machine.move(dy=-1, s= feedrate)   # Back off mold so tool isn't touching
             return True
         except Exception as e:
@@ -249,14 +249,15 @@ class MovementExecutor:
         try:
             print("Picking mold from scale...")
             feedrate = self._feedrate
-            self._machine.move(dy=1, s=feedrate)      # Return to model position
-            self._machine.move_to(z=38, s=feedrate)  # Pick up well off scale
-            self._machine.gcode("M208 Z38:195")      # Revert z-limit
-            self._machine.move(dy=-26, s=feedrate)    # Move well from under trickler
+            self._machine.move(dy=1, s=feedrate)          # Return to model position
+            self._machine.move_to(z=34.5, s=feedrate)     # Pick up well off scale
+            self._machine.gcode("M208 Z38:195")           # Revert z-limit
+            self._machine.move(dy=-28, s=feedrate)        # Move well from under trickler
+            self._machine.move_to(z=34.5, s=feedrate)     # Move within z-limits
+            self._machine.gcode("M208 Z34.5:195")         # Restore z-limit to protect tool
             self._machine.move_to(z=ready_z, s=feedrate)  # Move mold out from trickler
-            self._machine.gcode("M208 Z38:195")      # Restore z-limit to protect tool
-            self._machine.move_to(v=30, s=feedrate)  # Move tool to travel position
-            self._machine.move(dy=-38, s=feedrate)    # Restore y position to position before well was placed
+            self._machine.move_to(v=30, s=feedrate)       # Move tool to travel position
+            self._machine.move(dy=-38, s=feedrate)        # Restore y position to position before well was placed
             return True
         except Exception as e:
             print(f"Error picking mold from scale: {e}")
@@ -311,30 +312,57 @@ class MovementExecutor:
     
     def execute_tamp(
         self,
-        tamper_axis: str = 'V',
-        scale_y: float = None
+        tamper_axis: str,
+        tamp_depth: float,
+        tamp_speed: int
     ) -> bool:
         """
-        Execute tamping movements.
+        Execute tamping movements at the scale_ready position.
+        
+        Tamping compresses powder in a mold held by the manipulator to:
+        1. Reduce powder volume so the top piston can fit
+        2. Minimize airborne powder when inserting the top piston
+        
+        After tamping, the V axis is homed to ensure axis accuracy.
         
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
-            scale_y: Y coordinate of the physical scale location (required for moving bed)
+            tamp_depth: How deep to tamp within mold (mm)
+            tamp_speed: Speed for tamper movement in mm/min
         
         Returns:
             True if successful, False otherwise.
-        """
-        if scale_y is None:
-            raise RuntimeError("Scale Y coordinate must be provided for tamping")
-        
-        try:
-            print("Executing tamp")
             
-            feedrate = self._feedrate
-            self._machine._set_absolute_positioning()
-            self._machine.move_to(v=38.5, s=feedrate)  # Prepare for tamp
-            self._machine.move(dy=scale_y, s=feedrate)  # Move from under trickler
-            self._machine.move_to(v=0, s=feedrate)  # Move until stall detection stops movement
+        Note:
+            Parameter bounds are validated by the state machine before this method is called.
+            Valid ranges are configured in system_config.json (manipulator.tamp_depth_min/max, 
+            manipulator.tamp_speed_min/max).
+        """
+        try:
+            print("Executing tamp at scale_ready position...")
+            
+            feedrate = tamp_speed
+
+            # Save current v value to return to after tamping
+            current_position = self._machine.get_position()
+            saved_v = current_position.get('V', None)
+            
+            # Move tamper until it is just outside mold
+            self._machine.move_to(v=2, s=feedrate)
+            
+            # Move by requested tamp depth
+            self._machine.move_to(v=tamp_depth, s=feedrate)
+            self._machine.gcode("M400")
+            
+            # Return tamper to safe position
+            self._machine.move_to(v=30, s=feedrate)
+            
+            # Home V axis after tamping to ensure axis accuracy
+            print("Homing V axis after tamp to ensure accuracy...")
+            self.execute_home_tamper(tamper_axis)
+            self._machine.move_to(v=saved_v, s=feedrate)
+            
+            print("Tamping complete")
             return True
         except Exception as e:
             print(f"Error during tamp: {e}")
@@ -668,6 +696,17 @@ class MovementExecutor:
         """Get list of which axes are homed."""
         return getattr(self._machine, 'axes_homed', [False, False, False, False])
     
+    def wait_for_moves_to_finish(self) -> None:
+        """
+        Wait for all buffered moves to complete execution.
+        
+        Executes the M400 G-code command, which blocks until all previously
+        buffered moves in the machine's internal buffer have been executed.
+        This ensures the Python program does not advance past the physical
+        state of the Jubilee.
+        """
+        self._machine.gcode("M400")
+    
     def execute_move_to_scale_location(
         self,
         ready_x: float,
@@ -829,7 +868,14 @@ class MovementExecutor:
         tamper_axis: str = 'V'
     ) -> None:
         """
-        Perform sensorless homing for the tamper axis.
+        Perform homing for the tamper axis (V-axis).
+        
+        This homing process can be performed while holding a mold without a top piston.
+        The homing uses the mold itself as a reference:
+        - Start position: v=2 (tamper inserted into mold)
+        - End position: v=-7 (tamper touching bottom of mold)
+        
+        This establishes accurate positioning by using the mold bottom as a reference point.
         
         Moved from Manipulator.home_tamper()
         
@@ -852,7 +898,7 @@ class MovementExecutor:
             )
         
         # Perform homing for tamper axis
-        self._machine.send_command(f'M98 P"home{tamper_axis.lower()}.g"')
+        self._machine.gcode(f'M98 P"home{tamper_axis.lower()}.g"')
         
         print(f"Homing complete. {tamper_axis} axis position reset to 0.0mm")
     
@@ -871,7 +917,7 @@ class MovementExecutor:
         """
         try:
             # Perform homing for manipulator axis
-            self._machine.send_command(f'M98 P"home{manipulator_axis.lower()}.g"')
+            self._machine.gcode(f'M98 P"home{manipulator_axis.lower()}.g"')
             print(f"Manipulator ({manipulator_axis}) homing complete. Position reset to 0.0mm")
             return True
         except Exception as e:
@@ -893,7 +939,7 @@ class MovementExecutor:
         """
         try:
             # Trickler can be homed at any time, no prerequisites
-            self._machine.send_command(f'M98 P"home{trickler_axis.lower()}.g"')
+            self._machine.gcode(f'M98 P"home{trickler_axis.lower()}.g"')
             print(f"Trickler ({trickler_axis}) homing complete. Position reset to 0.0mm")
             return True
         except Exception as e:
