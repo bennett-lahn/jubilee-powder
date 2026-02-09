@@ -1,0 +1,181 @@
+#:import dp kivy.metrics.dp
+
+<SettingsScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+        padding: dp(16)
+
+        MDScrollView:
+            MDBoxLayout:
+                orientation: "vertical"
+                spacing: dp(16)
+                size_hint_y: None
+                height: self.minimum_height
+
+                MDCard:
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: dp(120)
+                    padding: dp(16)
+                    spacing: dp(8)
+                    elevation: 2
+                    radius: [dp(8)]
+
+                    MDLabel:
+                        text: "System Settings"
+                        font_style: "Title"
+                        role: "large"
+                        size_hint_y: None
+                        height: dp(40)
+
+                    MDLabel:
+                        text: "🟢 Connected - Settings are locked" if root.is_connected else "⚫ Not Connected - Settings can be modified"
+                        theme_text_color: "Secondary"
+                        size_hint_y: None
+                        height: dp(30)
+
+                    MDLabel:
+                        text: "Settings are locked when connected to Jubilee"
+                        theme_text_color: "Hint"
+                        font_style: "Label"
+                        role: "small"
+                        size_hint_y: None
+                        height: dp(20)
+
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    elevation: 4
+                    radius: [dp(12)]
+                    size_hint_y: None
+                    height: self.minimum_height
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(16)
+                        size_hint_y: None
+                        height: self.minimum_height
+
+                        MDLabel:
+                            text: "Hardware Configuration"
+                            font_style: "Title"
+                            role: "medium"
+                            size_hint_y: None
+                            height: dp(40)
+
+                        MDLabel:
+                            text: "Number of Powder Dispensers"
+                            font_style: "Label"
+                            role: "small"
+                            theme_text_color: "Secondary"
+                            size_hint_y: None
+                            height: dp(20)
+
+                        MDTextField:
+                            id: num_dispensers
+                            hint_text: "Enter number of dispensers (e.g., 2)"
+                            text: "2"
+                            mode: "outlined"
+                            input_filter: "int"
+                            size_hint_y: None
+                            height: dp(56)
+                            disabled: root.is_connected
+                            on_text: root.update_total_pistons(); root.update_validation()
+
+                        MDLabel:
+                            text: "Pistons per Dispenser"
+                            font_style: "Label"
+                            role: "small"
+                            theme_text_color: "Secondary"
+                            size_hint_y: None
+                            height: dp(20)
+
+                        MDTextField:
+                            id: pistons_per_dispenser
+                            hint_text: "Enter pistons per dispenser (e.g., 10)"
+                            text: "10"
+                            mode: "outlined"
+                            input_filter: "int"
+                            size_hint_y: None
+                            height: dp(56)
+                            disabled: root.is_connected
+                            on_text: root.update_total_pistons(); root.update_validation()
+
+                        MDLabel:
+                            text: root.total_pistons_text
+                            theme_text_color: "Secondary"
+                            size_hint_y: None
+                            height: dp(30)
+
+                        MDLabel:
+                            text: "Network Configuration"
+                            font_style: "Title"
+                            role: "medium"
+                            size_hint_y: None
+                            height: dp(40)
+
+                        MDLabel:
+                            text: "Jubilee IP Address"
+                            font_style: "Label"
+                            role: "small"
+                            theme_text_color: "Secondary"
+                            size_hint_y: None
+                            height: dp(20)
+
+                        MDTextField:
+                            id: jubilee_ip
+                            hint_text: "Enter Jubilee IP or hostname"
+                            text: "jubilee.local"
+                            mode: "outlined"
+                            size_hint_y: None
+                            height: dp(56)
+                            disabled: root.is_connected
+
+                        MDLabel:
+                            text: "Dispensing Parameters"
+                            font_style: "Title"
+                            role: "medium"
+                            size_hint_y: None
+                            height: dp(40)
+
+                        MDLabel:
+                            text: "Trickling Profile"
+                            font_style: "Label"
+                            role: "small"
+                            theme_text_color: "Secondary"
+                            size_hint_y: None
+                            height: dp(20)
+
+                        MDTextField:
+                            id: trickling_profile
+                            hint_text: "Select trickling profile (e.g., default, fine, coarse)"
+                            text: "default"
+                            mode: "outlined"
+                            size_hint_y: None
+                            height: dp(56)
+                            disabled: root.is_connected
+
+                MDCard:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(80)
+                    padding: dp(16)
+                    spacing: dp(16)
+                    elevation: 2
+                    radius: [dp(8)]
+
+                    MDButton:
+                        style: "filled"
+                        on_release: root.connect_to_jubilee()
+                        size_hint_x: 0.5
+                        disabled: root.is_connected or not root.valid_inputs
+                        MDButtonText:
+                            text: "Connect to Jubilee"
+
+                    MDButton:
+                        style: "filled"
+                        on_release: root.disconnect_from_jubilee()
+                        size_hint_x: 0.5
+                        disabled: not root.is_connected
+                        MDButtonText:
+                            text: "Disconnect"

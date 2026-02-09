@@ -1,0 +1,29 @@
+#:import dp kivy.metrics.dp
+
+<HardnessTestingScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+        padding: dp(32)
+        spacing: dp(16)
+
+        MDCard:
+            orientation: "vertical"
+            padding: dp(32)
+            spacing: dp(16)
+            elevation: 4
+            radius: [dp(12)]
+
+            MDLabel:
+                text: "Hardness Testing"
+                font_style: "Headline"
+                role: "medium"
+                halign: "center"
+                size_hint_y: None
+                height: dp(60)
+
+            MDLabel:
+                text: "This screen will be used to configure and run hardness testing operations.\n\nSimilar to powder dispensing, it will feature:\n• Visual bed layout with sample positions\n• Test parameter configuration\n• Real-time test progress\n• Results display and export\n\nImplementation details to be determined based on specific hardness testing requirements."
+                halign: "center"
+                theme_text_color: "Secondary"
+                size_hint_y: None
+                height: dp(300)

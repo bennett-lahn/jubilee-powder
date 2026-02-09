@@ -1,0 +1,92 @@
+#:import dp kivy.metrics.dp
+
+
+<MainRoot@MDBoxLayout>:
+    orientation: "horizontal"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        size_hint_x: None
+        width: dp(72)
+        padding: dp(8), dp(16)
+        spacing: dp(8)
+
+        MDBoxLayout:
+            size_hint_y: None
+            height: dp(8)
+
+        MDIconButton:
+            icon: "beaker"
+            on_release: app.switch_screen("powder_dispensing", "Powder Dispensing")
+            theme_icon_color: "Custom"
+            icon_color: app.nav_icon_color("powder_dispensing")
+
+        MDIconButton:
+            icon: "hammer"
+            on_release: app.switch_screen("hardness_testing", "Hardness Testing")
+            theme_icon_color: "Custom"
+            icon_color: app.nav_icon_color("hardness_testing")
+
+        MDIconButton:
+            icon: "chart-box"
+            on_release: app.switch_screen("data", "Data")
+            theme_icon_color: "Custom"
+            icon_color: app.nav_icon_color("data")
+
+        MDIconButton:
+            icon: "hand-back-right"
+            on_release: app.switch_screen("manual_control", "Manual Control")
+            theme_icon_color: "Custom"
+            icon_color: app.nav_icon_color("manual_control")
+
+        MDIconButton:
+            icon: "cog"
+            on_release: app.switch_screen("settings", "Settings")
+            theme_icon_color: "Custom"
+            icon_color: app.nav_icon_color("settings")
+
+        Widget:
+
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            elevation: 2
+            theme_bg_color: "Custom"
+            md_bg_color: app.theme_cls.primaryColor
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: "Powder Dispensing"
+
+        MDScreenManager:
+            id: screen_manager
+
+            PowderDispensingScreen:
+                name: "powder_dispensing"
+                view_model: app.view_model
+                app: app
+
+            HardnessTestingScreen:
+                name: "hardness_testing"
+                view_model: app.view_model
+                app: app
+
+            DataScreen:
+                name: "data"
+                app: app
+
+            ManualControlScreen:
+                name: "manual_control"
+                view_model: app.view_model
+                app: app
+
+            SettingsScreen:
+                name: "settings"
+                view_model: app.view_model
+                app: app
+
+        BottomStatusBar:
+            id: bottom_bar
+            app: app
+
+MainRoot:

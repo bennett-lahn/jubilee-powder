@@ -9,7 +9,7 @@ The architecture follows:
     - View: jubilee_gui.py (UI and user interaction)
     - ViewModel: This module (coordination and business logic)
 
-The ViewModel drives the JubileeManager to execute operations systematically,
+The ViewModel drives the JubileeManager to execute operations while
 providing callbacks to update the GUI on progress and state changes.
 
 Example:
@@ -28,10 +28,12 @@ Example:
         view_model.connect()
         
         # Execute job
-        jobs = [DispensingJob("A1", 50.0), DispensingJob("A2", 45.0)]
+        jobs = [DispensingJob("0", 50.0), DispensingJob("1", 45.0)]
         view_model.start_job(jobs)
 """
-
+# TODO: Update error messages displayed on UI to be more explanatory
+# TODO: Queue system for scale message requests? (Implement only if message confliction is common)
+#       Maybe a lock to prevent contention when other long-term blocking actions like taring are occurring?
 import threading
 import time
 from typing import Callable, Optional, List, Dict
@@ -87,8 +89,8 @@ class JubileeViewModel:
         if view_model.connect():
             # Start a job
             jobs = [
-                DispensingJob("A1", 50.0),
-                DispensingJob("A2", 45.0)
+                DispensingJob("0", 50.0),
+                DispensingJob("1", 45.0)
             ]
             view_model.start_job(jobs)
         ```
@@ -489,6 +491,7 @@ class JubileeViewModel:
         
         return status
     
+    # TODO: Does this method work as desired, are objects in Python mutable by reference like this?
     def update_dispenser_pistons(self, dispenser_index: int, num_pistons: int) -> bool:
         """
         Update the number of pistons in a specific dispenser.
