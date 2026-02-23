@@ -41,6 +41,8 @@ ADVANTAGES OVER OCR:
 - Not affected by font variations
 - Works with partial/damaged displays
 - No training data required
+
+https://github.com/jiweibo/SSOCR
 """
 
 class HardnessTester:
@@ -62,7 +64,7 @@ class HardnessTester:
         (1, 1, 1, 1, 0, 1, 1): '9',
     }
 
-    def __init__(self, num_digits=4, cam_id=0, exposure_time=None, gain=None):
+    def __init__(self, num_digits=4, cam_id=0, exposure_time=None, gain=None, use_camera=True):
         """
         Initialize the LCD reader.
         
@@ -71,11 +73,13 @@ class HardnessTester:
             cam_id: Camera device ID (default: 0)
             exposure_time: Fixed exposure time in microseconds (None = auto)
             gain: Fixed gain value (None = auto)
+            use_camera: Whether to initialize and use a camera device
         """
         self.num_digits = num_digits
         self.cam_id = cam_id
         self.exposure_time = exposure_time
         self.gain = gain
+        self.use_camera = use_camera
         
         # Camera objects
         self.picamera = None
@@ -93,8 +97,9 @@ class HardnessTester:
         # Threshold for segment detection (proportion of pixels that must be active)
         self.segment_threshold = 0.5
         
-        # Initialize camera
-        self._init_camera()
+        # Initialize camera only when requested
+        if self.use_camera:
+            self._init_camera()
 
     def _default_segment_rois(self):
         """
@@ -170,6 +175,10 @@ class HardnessTester:
             numpy array (BGR format) or None if capture failed
         """
         frame = None
+
+        if not self.use_camera:
+            print("⚠️  Camera capture requested but camera mode is disabled")
+            return None
         
         if self.picamera is not None:
             try:
@@ -510,88 +519,84 @@ def main():
     """
     Test the segment-based LCD reader.
     """
+    import argparse
     import os
+
+    parser = argparse.ArgumentParser(description="Segment-based LCD reader for hardness tester")
+    parser.add_argument(
+        "--image",
+        type=str,
+        default=None,
+        help="Path to an existing image file to read instead of capturing from camera",
+    )
+    parser.add_argument(
+        "--calibration",
+        type=str,
+        default="lcd_calibration.json",
+        help="Path to calibration JSON file",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug image output",
+    )
+    parser.add_argument(
+        "--debug-prefix",
+        type=str,
+        default="lcd_read",
+        help="Prefix for debug images",
+    )
+    args = parser.parse_args()
     
     print("\n" + "=" * 80)
     print("📺 SEGMENT-BASED LCD READER TEST")
     print("=" * 80)
     
-    # Initialize reader
+    # Initialize reader (camera is optional in image mode)
     print("\n🔧 Initializing LCD reader...")
-    reader = HardnessTester(num_digits=4, cam_id=0)
+    reader = HardnessTester(num_digits=4, cam_id=0, use_camera=(args.image is None))
     
     # Try to load existing calibration
-    if os.path.exists('lcd_calibration.json'):
+    if os.path.exists(args.calibration):
         print("\n📁 Loading existing calibration...")
-        reader.load_calibration()
+        reader.load_calibration(args.calibration)
     
-    # Option 1: Test with captured image
-    print("\n📷 Capturing image from camera...")
-    frame = reader.capture_image(save=True, output_path='lcd_test_capture.jpg')
-    
-    if frame is not None:
+    if args.image:
+        print(f"\n📁 Loading image from CLI: {args.image}")
+        frame = cv2.imread(args.image)
+        if frame is None:
+            print(f"❌ Failed to load image: {args.image}")
+            return
+    else:
+        print("\n📷 Capturing image from camera...")
+        frame = reader.capture_image(save=True, output_path='lcd_test_capture.jpg')
+        if frame is None:
+            print("❌ Failed to capture image")
+            return
         print("✓ Image captured successfully")
-        
-        # If no calibration exists, run calibration
-        if reader.digit_rois is None:
-            print("\n⚠️  No calibration found. Starting calibration process...")
-            reader.calibrate(frame=frame)
+
+    if reader.digit_rois is None:
+        print("\n🔍 Attempting auto-detection of digit ROIs...")
+        binary = reader.preprocess_frame(frame, debug=args.debug, debug_prefix=args.debug_prefix)
+        detected_rois = reader.auto_detect_digit_rois(binary)
+        if detected_rois and len(detected_rois) >= reader.num_digits:
+            reader.set_digit_rois(detected_rois[:reader.num_digits])
+            print(f"✓ Auto-detected {reader.num_digits} digit ROIs")
+        elif args.image:
+            print("⚠️  Auto-detection failed in image mode and no calibration was loaded.")
+            print("   Provide a calibration file or run camera mode once to calibrate.")
+            return
         else:
-            # Read display
-            print("\n🔍 Reading LCD display...")
-            result = reader.read_display(frame=frame, debug=True, debug_prefix="lcd_read")
-            
-            print("\n" + "=" * 80)
-            print(f"📊 RESULT: {result}")
-            print("=" * 80)
-            
-            # Show segment patterns for debugging
-            print("\nSegment patterns detected:")
-            binary = reader.preprocess_frame(frame)
-            for i in range(reader.num_digits):
-                digit_roi = reader.extract_digit_roi(binary, i)
-                if digit_roi is not None:
-                    segments = (
-                        reader.analyze_segment(digit_roi, 'top'),
-                        reader.analyze_segment(digit_roi, 'top_left'),
-                        reader.analyze_segment(digit_roi, 'top_right'),
-                        reader.analyze_segment(digit_roi, 'middle'),
-                        reader.analyze_segment(digit_roi, 'bottom_left'),
-                        reader.analyze_segment(digit_roi, 'bottom_right'),
-                        reader.analyze_segment(digit_roi, 'bottom'),
-                    )
-                    print(f"  Digit {i}: {segments} → {result[i] if i < len(result) else '?'}")
-    else:
-        print("❌ Failed to capture image")
-    
-    # Option 2: Test with static image file
+            print("\n⚠️  No calibration found. Starting calibration process...")
+            reader.calibrate(frame=frame, save_calibration=True)
+
+    # Read display
+    print("\n🔍 Reading LCD display...")
+    result = reader.read_display(frame=frame, debug=args.debug, debug_prefix=args.debug_prefix)
+
     print("\n" + "=" * 80)
-    print("📁 Testing with static image file...")
+    print(f"📊 RESULT: {result}")
     print("=" * 80)
-    
-    test_image = "test.png"
-    if os.path.exists(test_image):
-        print(f"\n📸 Loading {test_image}...")
-        static_frame = cv2.imread(test_image)
-        
-        if static_frame is not None:
-            # Try auto-detection
-            print("\n🔍 Attempting auto-detection of digit ROIs...")
-            binary = reader.preprocess_frame(static_frame, debug=True, debug_prefix="static")
-            detected_rois = reader.auto_detect_digit_rois(binary)
-            
-            if detected_rois:
-                print(f"✓ Detected {len(detected_rois)} digit ROIs:")
-                for i, roi in enumerate(detected_rois):
-                    print(f"  Digit {i}: {roi}")
-                
-                reader.set_digit_rois(detected_rois)
-                result = reader.read_display(frame=static_frame, debug=True, debug_prefix="static_read")
-                print(f"\n📊 RESULT: {result}")
-            else:
-                print("⚠️  Auto-detection failed. Manual calibration required.")
-    else:
-        print(f"⚠️  Test image '{test_image}' not found")
     
     print("\n" + "=" * 80)
     print("✓ Test complete")
@@ -608,7 +613,7 @@ def test_with_image(image_path, calibration_file='lcd_calibration.json'):
     """
     import os
     
-    reader = HardnessTester(num_digits=4)
+    reader = HardnessTester(num_digits=4, use_camera=False)
     
     # Load calibration if available
     if os.path.exists(calibration_file):
