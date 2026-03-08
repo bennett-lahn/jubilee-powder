@@ -42,7 +42,7 @@ class BottomStatusBar(MDBoxLayout):
         
         # Connection status section
         self.connection_label = MDLabel(
-            text="⚫ Disconnected",
+            text="Disconnected",
             size_hint_x = 0.3,
             theme_text_color="Secondary",
             font_style="Label",
@@ -112,15 +112,13 @@ class BottomStatusBar(MDBoxLayout):
     def update_connection(self, *args):
         """Update connection status display."""
         if self.app and self.app.connected:
-            icon = "🟢"
             status = "Connected"
             color = [0.2, 0.7, 0.2, 1]
         else:
-            icon = "⚫"
             status = "Disconnected"
             color = [0.5, 0.5, 0.5, 1]
         
-        self.connection_label.text = f"{icon} {status}"
+        self.connection_label.text = status
         self.connection_label.text_color = color
     
     def update_job_visibility(self, *args):

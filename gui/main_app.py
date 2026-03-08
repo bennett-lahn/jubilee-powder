@@ -28,8 +28,10 @@ os.environ['KIVY_CLIPBOARD'] = 'dummy'
 
 from kivymd.app import MDApp
 from kivy.lang import Builder
+from kivy.core.window import Window
+from kivy.utils import get_color_from_hex
 from kivy.resources import resource_add_path
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ObjectProperty
 from kivy.clock import Clock
 
 # Import screens
@@ -57,6 +59,11 @@ class JubileeGUIApp(MDApp):
         - Extensible modular architecture
     """
     
+    # UI references (set after KV load)
+    screen_manager = ObjectProperty(None)
+    top_bar_title = ObjectProperty(None)
+    bottom_bar = ObjectProperty(None)
+
     # Connection state
     connected = BooleanProperty(False)
     connection_status = StringProperty("Disconnected")
@@ -78,11 +85,14 @@ class JubileeGUIApp(MDApp):
         # Lock to light mode regardless of OS theme, so Jubilee colors are stable.
         self.theme_cls.theme_style = "Light"
 
-        # Use a known-good palette name for this KivyMD build.
-        # (Some palette names can crash scheme generation in 2.0.1.dev0.)
-        self.theme_cls.primary_palette = "Yellow"
-        self.theme_cls.primary_hue = "700"  # Darker yellow
+        # Primary theme colors (bright bumblebee yellow + black text).
+        self.theme_cls.primaryColor = get_color_from_hex("#EDAE49")
+        self.theme_cls.onPrimaryColor = get_color_from_hex("#1E2220")
+        self.theme_cls.onSurfaceColor = get_color_from_hex("#1E2220")
         self.theme_cls.accent_palette = "Amber"
+
+        # Ensure the app background isn't black.
+        Window.clearcolor = get_color_from_hex("#F7F7F2")
         
         # Set window title
         self.title = "Jubilee Automation System"
@@ -124,14 +134,6 @@ class JubileeGUIApp(MDApp):
     def apply_alpha(self, color, alpha: float):
         """Return color with the specified alpha."""
         return [color[0], color[1], color[2], alpha]
-
-    def nav_icon_color(self, screen_name: str):
-        """Return nav icon color based on active screen."""
-        if not getattr(self, "screen_manager", None):
-            return self.apply_alpha(self.theme_cls.textColor, 0.6)
-        if self.screen_manager.current == screen_name:
-            return self.theme_cls.primaryColor
-        return self.apply_alpha(self.theme_cls.textColor, 0.6)
     
     def switch_screen(self, screen_name: str, title: str):
         """Switch to a different screen."""

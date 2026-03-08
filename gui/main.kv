@@ -18,32 +18,27 @@
         MDIconButton:
             icon: "beaker"
             on_release: app.switch_screen("powder_dispensing", "Powder Dispensing")
-            theme_icon_color: "Custom"
-            icon_color: app.nav_icon_color("powder_dispensing")
+            theme_icon_color: "Primary" if app.screen_manager and app.screen_manager.current == "powder_dispensing" else "Secondary"
 
         MDIconButton:
             icon: "hammer"
             on_release: app.switch_screen("hardness_testing", "Hardness Testing")
-            theme_icon_color: "Custom"
-            icon_color: app.nav_icon_color("hardness_testing")
+            theme_icon_color: "Primary" if app.screen_manager and app.screen_manager.current == "hardness_testing" else "Secondary"
 
         MDIconButton:
             icon: "chart-box"
             on_release: app.switch_screen("data", "Data")
-            theme_icon_color: "Custom"
-            icon_color: app.nav_icon_color("data")
+            theme_icon_color: "Primary" if app.screen_manager and app.screen_manager.current == "data" else "Secondary"
 
         MDIconButton:
             icon: "hand-back-right"
             on_release: app.switch_screen("manual_control", "Manual Control")
-            theme_icon_color: "Custom"
-            icon_color: app.nav_icon_color("manual_control")
+            theme_icon_color: "Primary" if app.screen_manager and app.screen_manager.current == "manual_control" else "Secondary"
 
         MDIconButton:
             icon: "cog"
             on_release: app.switch_screen("settings", "Settings")
-            theme_icon_color: "Custom"
-            icon_color: app.nav_icon_color("settings")
+            theme_icon_color: "Primary" if app.screen_manager and app.screen_manager.current == "settings" else "Secondary"
 
         Widget:
 
@@ -57,6 +52,8 @@
             MDTopAppBarTitle:
                 id: top_bar_title
                 text: "Powder Dispensing"
+                theme_text_color: "Custom"
+                text_color: app.theme_cls.onPrimaryColor
 
         MDScreenManager:
             id: screen_manager

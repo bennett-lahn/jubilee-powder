@@ -1,29 +1,150 @@
 #:import dp kivy.metrics.dp
 
+<HardnessSampleWidget>:
+    orientation: "vertical"
+    size_hint: None, None
+    size: dp(42), dp(42)
+    canvas:
+        Color:
+            rgba: app.theme_cls.primaryColor if self.selected else app.apply_alpha(app.theme_cls.onSurfaceColor, 0.25)
+        Ellipse:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: app.apply_alpha(app.theme_cls.onSurfaceColor, 0.6)
+        Line:
+            ellipse: (self.x, self.y, self.width, self.height)
+            width: 1.5
+
+    MDLabel:
+        text: "A" if root.test_mode == "shore_a" else ("A+D" if root.test_mode == "shore_a_d" else ("D" if root.test_mode == "shore_d" else ""))
+        halign: "center"
+        valign: "center"
+        theme_text_color: "Custom"
+        text_color: app.theme_cls.onPrimaryColor if root.selected else app.theme_cls.onSurfaceColor
+        font_style: "Label"
+        role: "small"
+
+<HardnessSampleGrid>:
+    orientation: "vertical"
+    spacing: dp(8)
+
+    MDBoxLayout:
+        size_hint_y: None
+        height: dp(24)
+        spacing: dp(6)
+
+        Widget:
+            size_hint_x: None
+            width: dp(24)
+
+        MDBoxLayout:
+            id: col_buttons
+            spacing: dp(6)
+
+    MDBoxLayout:
+        orientation: "horizontal"
+        spacing: dp(6)
+
+        MDBoxLayout:
+            id: row_buttons
+            orientation: "vertical"
+            size_hint_x: None
+            width: dp(24)
+            spacing: dp(6)
+
+        MDAnchorLayout:
+            anchor_x: "center"
+            anchor_y: "center"
+
+            MDGridLayout:
+                id: samples_grid
+                cols: root.cols
+                rows: root.rows
+                spacing: dp(12)
+                size_hint: None, None
+                width: self.minimum_width
+                height: self.minimum_height
+                row_force_default: True
+                col_force_default: True
+                row_default_height: dp(42)
+                col_default_width: dp(42)
+
 <HardnessTestingScreen>:
     MDBoxLayout:
         orientation: "vertical"
-        padding: dp(32)
+        padding: dp(16)
         spacing: dp(16)
 
         MDCard:
-            orientation: "vertical"
-            padding: dp(32)
-            spacing: dp(16)
+            orientation: "horizontal"
+            size_hint_y: None
+            height: dp(88)
+            padding: dp(12)
+            spacing: dp(8)
+            elevation: 2
+            radius: [dp(8)]
+
+            MDButton:
+                style: "elevated"
+                on_release: root.select_all_samples()
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "Select All"
+
+            MDButton:
+                style: "text"
+                on_release: root.clear_selection()
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "Clear"
+
+            MDButton:
+                style: "text"
+                on_release: root.set_mode_for_selected("none")
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "None"
+
+            MDButton:
+                style: "filled"
+                on_release: root.set_mode_for_selected("shore_a")
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "Shore A"
+
+            MDButton:
+                style: "filled"
+                on_release: root.set_mode_for_selected("shore_a_d")
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "A + D"
+
+            MDButton:
+                style: "filled"
+                on_release: root.set_mode_for_selected("shore_d")
+                size_hint_x: 0.166
+                size_hint_y: None
+                height: dp(48)
+                MDButtonText:
+                    text: "Shore D"
+
+        MDCard:
+            size_hint_y: 1
             elevation: 4
             radius: [dp(12)]
+            padding: dp(16)
 
-            MDLabel:
-                text: "Hardness Testing"
-                font_style: "Headline"
-                role: "medium"
-                halign: "center"
-                size_hint_y: None
-                height: dp(60)
-
-            MDLabel:
-                text: "This screen will be used to configure and run hardness testing operations.\n\nSimilar to powder dispensing, it will feature:\n• Visual bed layout with sample positions\n• Test parameter configuration\n• Real-time test progress\n• Results display and export\n\nImplementation details to be determined based on specific hardness testing requirements."
-                halign: "center"
-                theme_text_color: "Secondary"
-                size_hint_y: None
-                height: dp(300)
+            HardnessSampleGrid:
+                id: sample_grid
+                size_hint: 1, 1

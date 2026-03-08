@@ -9,7 +9,6 @@ from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.button import MDButton, MDButtonText  # KivyMD 2.0 (MD3 buttons)
-from kivymd.uix.anchorlayout import MDAnchorLayout
 from kivymd.uix.dialog import (
     MDDialog,
     MDDialogHeadlineText,
@@ -51,7 +50,7 @@ class MoldWidget(Widget):
         return super().on_touch_down(touch)
 
 
-class BedVisualization(MDAnchorLayout):
+class BedVisualization(MDBoxLayout):
     """
     Visual representation of the Jubilee bed with wells.
     
@@ -69,6 +68,7 @@ class BedVisualization(MDAnchorLayout):
 
     def on_kv_post(self, base_widget):
         self.populate_molds()
+        self.populate_row_col_buttons()
 
     def populate_molds(self):
         """Populate the mold grid once."""
@@ -81,6 +81,29 @@ class BedVisualization(MDAnchorLayout):
             self.molds[mold_id] = {"target_weight": 0.0, "current_weight": 0.0}
             self.mold_widgets[mold_id] = mold
             grid.add_widget(mold)
+
+    def populate_row_col_buttons(self):
+        """Populate row/column select buttons once."""
+        if self.ids.row_buttons.children or self.ids.col_buttons.children:
+            return
+        for row in range(self.rows):
+            btn = MDButton(
+                MDButtonText(text=str(row + 1)),
+                style="text",
+                on_release=lambda x, r=row: self.select_row(r),
+                size_hint=(None, None),
+                size=(dp(24), dp(24)),
+            )
+            self.ids.row_buttons.add_widget(btn)
+        for col in range(self.cols):
+            btn = MDButton(
+                MDButtonText(text=str(col + 1)),
+                style="text",
+                on_release=lambda x, c=col: self.select_col(c),
+                size_hint=(None, None),
+                size=(dp(24), dp(24)),
+            )
+            self.ids.col_buttons.add_widget(btn)
 
     def get_selected_molds(self) -> Set[str]:
         """Get set of selected mold IDs."""
@@ -100,6 +123,18 @@ class BedVisualization(MDAnchorLayout):
         """Clear all selections."""
         for mold in self.mold_widgets.values():
             mold.selected = False
+
+    def select_row(self, row_index: int):
+        """Select all molds in a row."""
+        for col in range(self.cols):
+            mold_id = str(row_index * self.cols + col)
+            self.set_mold_selected(mold_id, True)
+
+    def select_col(self, col_index: int):
+        """Select all molds in a column."""
+        for row in range(self.rows):
+            mold_id = str(row * self.cols + col_index)
+            self.set_mold_selected(mold_id, True)
 
     def set_mold_weight(self, mold_id: str, target: float = None, current: float = None):
         """Set weight information for a mold."""

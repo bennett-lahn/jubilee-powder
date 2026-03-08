@@ -181,58 +181,58 @@ KV = '''
                             radius: [dp(8)]
                     
                     WeightWellButton:
-                        text: 'A1\\n0.0g'
-                        well_id: 'A1'
-                        selected: root.is_well_selected('A1')
-                        on_press: root.toggle_well('A1')
+                        text: '0\\n0.0g'
+                        well_id: '0'
+                        selected: root.is_well_selected('0')
+                        on_press: root.toggle_well('0')
                     
                     WeightWellButton:
-                        text: 'A2\\n0.0g'
-                        well_id: 'A2'
-                        selected: root.is_well_selected('A2')
-                        on_press: root.toggle_well('A2')
+                        text: '1\\n0.0g'
+                        well_id: '1'
+                        selected: root.is_well_selected('1')
+                        on_press: root.toggle_well('1')
                     
                     WeightWellButton:
-                        text: 'A3\\n0.0g'
-                        well_id: 'A3'
-                        selected: root.is_well_selected('A3')
-                        on_press: root.toggle_well('A3')
+                        text: '2\\n0.0g'
+                        well_id: '2'
+                        selected: root.is_well_selected('2')
+                        on_press: root.toggle_well('2')
                     
                     WeightWellButton:
-                        text: 'B1\\n0.0g'
-                        well_id: 'B1'
-                        selected: root.is_well_selected('B1')
-                        on_press: root.toggle_well('B1')
+                        text: '3\\n0.0g'
+                        well_id: '3'
+                        selected: root.is_well_selected('3')
+                        on_press: root.toggle_well('3')
                     
                     WeightWellButton:
-                        text: 'B2\\n0.0g'
-                        well_id: 'B2'
-                        selected: root.is_well_selected('B2')
-                        on_press: root.toggle_well('B2')
+                        text: '4\\n0.0g'
+                        well_id: '4'
+                        selected: root.is_well_selected('4')
+                        on_press: root.toggle_well('4')
                     
                     WeightWellButton:
-                        text: 'B3\\n0.0g'
-                        well_id: 'B3'
-                        selected: root.is_well_selected('B3')
-                        on_press: root.toggle_well('B3')
+                        text: '5\\n0.0g'
+                        well_id: '5'
+                        selected: root.is_well_selected('5')
+                        on_press: root.toggle_well('5')
                     
                     WeightWellButton:
-                        text: 'C1\\n0.0g'
-                        well_id: 'C1'
-                        selected: root.is_well_selected('C1')
-                        on_press: root.toggle_well('C1')
+                        text: '6\\n0.0g'
+                        well_id: '6'
+                        selected: root.is_well_selected('6')
+                        on_press: root.toggle_well('6')
                     
                     WeightWellButton:
-                        text: 'C2\\n0.0g'
-                        well_id: 'C2'
-                        selected: root.is_well_selected('C2')
-                        on_press: root.toggle_well('C2')
+                        text: '7\\n0.0g'
+                        well_id: '7'
+                        selected: root.is_well_selected('7')
+                        on_press: root.toggle_well('7')
                     
                     WeightWellButton:
-                        text: 'C3\\n0.0g'
-                        well_id: 'C3'
-                        selected: root.is_well_selected('C3')
-                        on_press: root.toggle_well('C3')
+                        text: '8\\n0.0g'
+                        well_id: '8'
+                        selected: root.is_well_selected('8')
+                        on_press: root.toggle_well('8')
             
             # Right side - Controls
             BoxLayout:
