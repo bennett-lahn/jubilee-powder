@@ -34,6 +34,9 @@ import {
   disconnectHardware as apiDisconnectHardware,
   startJob,
   stopJob as apiStopJob,
+  cancelJob as apiCancelJob,
+  abortJob as apiAbortJob,
+  fetchJobLog as apiFetchJobLog,
 } from '../api/jubileeApi'
 
 function wsUrl() {
@@ -63,6 +66,12 @@ export const useJubileeStore = create((set, get) => ({
   // -------------------------------------------------------------------------
   hardwareStatus: null,
   statusError:    null,
+
+  // -------------------------------------------------------------------------
+  // Job log  (most recent completed or in-progress job, populated via REST)
+  // -------------------------------------------------------------------------
+  jobLog:     null,
+  jobLogError: null,
 
   // -------------------------------------------------------------------------
   // WebSocket connection state
@@ -221,6 +230,53 @@ export const useJubileeStore = create((set, get) => ({
       await apiStopJob()
       return { ok: true }
     } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  /**
+   * POST /api/job/cancel
+   * Graceful cancel: finishes the current mold then stows the tool.
+   *
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  async cancelJob() {
+    try {
+      await apiCancelJob()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  /**
+   * POST /api/job/abort
+   * Emergency stop: immediately halts all motion and sets ERROR state.
+   *
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  async abortJob() {
+    try {
+      await apiAbortJob()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  /**
+   * GET /api/job/log
+   * Fetch the most recent job log and store it.
+   *
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  async fetchJobLog() {
+    try {
+      const data = await apiFetchJobLog()
+      set({ jobLog: data.log ?? null, jobLogError: null })
+      return { ok: true }
+    } catch (err) {
+      set({ jobLogError: err.message })
       return { ok: false, error: err.message }
     }
   },

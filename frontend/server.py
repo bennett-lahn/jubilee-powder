@@ -26,11 +26,14 @@ Usage (from the project root):
 """
 
 import asyncio
+import json
 import math
 import random
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -115,6 +118,8 @@ class JobProgress:
         self.total:        int           = 0
         self.current_item: Optional[str] = None
         self.error:        Optional[str] = None
+        self.started_at:   Optional[str] = None   # ISO-8601 UTC string
+        self.items:        list          = []      # ordered list of item dicts from the job request
 
     def reset(self) -> None:
         self.__init__()
@@ -127,6 +132,8 @@ class JobProgress:
             "total":        self.total,
             "current_item": self.current_item,
             "error":        self.error,
+            "started_at":   self.started_at,
+            "items":        self.items,
         }
 
 
@@ -216,7 +223,9 @@ class MockHardwareManager:
                 await asyncio.sleep(2.0)
                 progress.completed = i + 1
         finally:
-            self.state = MachineState.IDLE
+            # Do not overwrite ERROR set by an abort call
+            if self.state == MachineState.RUNNING:
+                self.state = MachineState.IDLE
 
     async def run_hardness_job(
         self, samples: list[dict], progress: JobProgress
@@ -230,7 +239,8 @@ class MockHardwareManager:
                 await asyncio.sleep(1.5)
                 progress.completed = i + 1
         finally:
-            self.state = MachineState.IDLE
+            if self.state == MachineState.RUNNING:
+                self.state = MachineState.IDLE
 
 
 # =============================================================================
@@ -354,7 +364,8 @@ class HardwareManager:
                     )
                 progress.completed = i + 1
         finally:
-            self.state = MachineState.IDLE
+            if self.state == MachineState.RUNNING:
+                self.state = MachineState.IDLE
 
     async def run_hardness_job(
         self, samples: list[dict], progress: JobProgress
@@ -369,7 +380,8 @@ class HardwareManager:
                 await asyncio.sleep(1.5)
                 progress.completed = i + 1
         finally:
-            self.state = MachineState.IDLE
+            if self.state == MachineState.RUNNING:
+                self.state = MachineState.IDLE
 
 
 # =============================================================================
@@ -544,23 +556,29 @@ async def start_job(body: JobRequest):
             detail="A job is already in progress. Only one job may run at a time.",
         )
 
+    now = datetime.now(timezone.utc).isoformat()
+
     if body.job_type == "dispensing":
         items = [w.model_dump() for w in body.wells]
-        progress.job_type  = "dispensing"
-        progress.total     = len(items)
-        progress.completed = 0
-        progress.error     = None
-        progress.running   = True
+        progress.job_type   = "dispensing"
+        progress.total      = len(items)
+        progress.completed  = 0
+        progress.error      = None
+        progress.started_at = now
+        progress.items      = items
+        progress.running    = True
         asyncio.create_task(_run_dispensing(items))
         return {"accepted": True, "job_type": "dispensing", "total": len(items)}
 
     else:  # hardness
         items = [s.model_dump() for s in body.samples]
-        progress.job_type  = "hardness"
-        progress.total     = len(items)
-        progress.completed = 0
-        progress.error     = None
-        progress.running   = True
+        progress.job_type   = "hardness"
+        progress.total      = len(items)
+        progress.completed  = 0
+        progress.error      = None
+        progress.started_at = now
+        progress.items      = items
+        progress.running    = True
         asyncio.create_task(_run_hardness(items))
         return {"accepted": True, "job_type": "hardness", "total": len(items)}
 
@@ -575,6 +593,83 @@ async def stop_job():
         raise HTTPException(status_code=400, detail="No job is currently running.")
     progress.running = False
     return {"stopping": True}
+
+
+@app.post("/api/job/cancel", status_code=200)
+async def cancel_job():
+    """
+    Graceful cancel: finish the current mold/sample, then stop and stow the tool.
+
+    The job exits at the next iteration boundary (same as stop).  On real
+    hardware the manager will home/stow the active tool before releasing IDLE.
+    The machine returns to IDLE when the current operation completes.
+    """
+    if not progress.running:
+        raise HTTPException(status_code=400, detail="No job is currently running.")
+    progress.running = False
+    return {"cancelling": True}
+
+
+@app.post("/api/job/abort", status_code=200)
+async def abort_job():
+    """
+    Emergency stop: immediately halt all motion.
+
+    Sets machine state to ERROR.  The hardware must be re-homed before
+    starting a new job.  On real hardware this triggers a Duet M112 e-stop.
+    """
+    progress.running = False
+    hw.state = MachineState.ERROR   # prevents job finally-block from resetting to IDLE
+    return {"aborted": True}
+
+
+@app.get("/api/job/log")
+async def get_job_log():
+    """
+    Return the most recent job log.
+
+    Mock mode:  synthesises a log from the current in-memory progress so the
+                home screen always has data to display during UI development.
+    Real mode:  reads jubilee_api_config/job_log.json written by JubileeManager.
+                Returns null if no log file exists yet.
+    """
+    if MOCK_HARDWARE:
+        if progress.job_type is None:
+            return {"log": None}
+        log = _build_progress_log()
+        return {"log": log}
+
+    log_path = Path("../jubilee_api_config/job_log.json")
+    if not log_path.exists():
+        return {"log": None}
+    try:
+        return {"log": json.loads(log_path.read_text())}
+    except Exception:
+        return {"log": None}
+
+
+def _build_progress_log() -> dict:
+    """Synthesise a job log dict from the current JobProgress state."""
+    items_with_status = []
+    for i, item in enumerate(progress.items):
+        item_id = item.get("well_id") or item.get("sample_id")
+        if i < progress.completed:
+            status = "complete"
+        elif item_id == progress.current_item:
+            status = "active"
+        else:
+            status = "pending"
+        items_with_status.append({**item, "status": status})
+
+    return {
+        "job_type":   progress.job_type,
+        "started_at": progress.started_at,
+        "status":     "running" if progress.running else "complete",
+        "completed":  progress.completed,
+        "total":      progress.total,
+        "error":      progress.error,
+        "items":      items_with_status,
+    }
 
 
 # =============================================================================

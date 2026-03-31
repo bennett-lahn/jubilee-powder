@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom'
-import { FlaskConical, Activity, FolderOpen, Gamepad2, Settings } from 'lucide-react'
+import { Home, FlaskConical, Activity, FolderOpen, Gamepad2, Settings } from 'lucide-react'
 
 const NAV_ITEMS = [
-  { to: '/',         icon: FlaskConical, label: 'Dispensing' },
-  { to: '/hardness', icon: Activity,     label: 'Hardness'   },
-  { to: '/data',     icon: FolderOpen,   label: 'Data'       },
-  { to: '/manual',   icon: Gamepad2,     label: 'Manual'     },
-  { to: '/settings', icon: Settings,     label: 'Settings'   },
+  { to: '/',           icon: Home,        label: 'Home'       },
+  { to: '/dispensing', icon: FlaskConical, label: 'Dispensing' },
+  { to: '/hardness',   icon: Activity,    label: 'Hardness'   },
+  { to: '/data',       icon: FolderOpen,  label: 'Data'       },
+  { to: '/manual',     icon: Gamepad2,    label: 'Manual'     },
+  { to: '/settings',   icon: Settings,    label: 'Settings'   },
 ]
 
 export default function NavRail() {

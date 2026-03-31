@@ -16,6 +16,8 @@
  * Variants
  *   'dispensing'  — shows target weight label inside selected wells
  *   'hardness'    — shows Shore mode label (A / A+D / D)
+ *   'result'      — read-only; colors wells by status field (pending/active/complete/error/excluded)
+ *                   used on the Home screen to display live job progress and completed job results
  */
 
 import { useState, useCallback, useMemo } from 'react'
@@ -158,7 +160,57 @@ export function useWellGrid(rows = 4, cols = 6) {
 // Internal sub-components
 // ---------------------------------------------------------------------------
 
+// ── Result-variant status colours ────────────────────────────────────────────
+// Used when variant === 'result'.  Non-interactive divs — no hover or focus states.
+const RESULT_STATUS_CLASS = {
+  excluded: 'bg-slate-950 border border-slate-800',
+  pending:  'bg-slate-800 border border-slate-700',
+  active:   'bg-amber-500 ring-2 ring-amber-400/60',
+  complete: 'bg-green-700 border border-green-600',
+  error:    'bg-red-800 border border-red-700',
+}
+
 function WellCircle({ id, well, onClick, variant }) {
+  // ── Result variant (read-only job display) ────────────────────────────────
+  if (variant === 'result') {
+    const { status = 'excluded', actualWeight = null, targetWeight = 0, mode = 'none' } = well
+    const shoreLabel = SHORE_LABELS[mode] ?? ''
+
+    let innerLabel = null
+    if (status === 'complete') {
+      if (actualWeight !== null) {
+        innerLabel = `${actualWeight.toFixed(1)}g`
+      } else if (shoreLabel) {
+        innerLabel = shoreLabel
+      } else {
+        innerLabel = '✓'
+      }
+    } else if (status === 'active') {
+      innerLabel = '···'
+    }
+
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div
+          aria-label={`Well ${id} — ${status}`}
+          style={{ aspectRatio: '1' }}
+          className={[
+            'h-full max-w-full rounded-full flex items-center justify-center',
+            status === 'active' ? 'animate-pulse' : '',
+            RESULT_STATUS_CLASS[status] ?? RESULT_STATUS_CLASS.excluded,
+          ].join(' ')}
+        >
+          {innerLabel && (
+            <span className="text-xs font-semibold leading-none select-none text-white">
+              {innerLabel}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Interactive variants (dispensing / hardness) ──────────────────────────
   const { selected, targetWeight, mode } = well
   const shoreLabel = SHORE_LABELS[mode] ?? ''
 
@@ -226,7 +278,14 @@ function WellCircle({ id, well, onClick, variant }) {
   )
 }
 
-function AxisButton({ label, onClick, className = '' }) {
+function AxisButton({ label, onClick, className = '', readOnly = false }) {
+  if (readOnly) {
+    return (
+      <div className={['flex items-center justify-center text-sm font-semibold text-slate-600', className].join(' ')}>
+        {label}
+      </div>
+    )
+  }
   return (
     <button
       onClick={onClick}
@@ -262,6 +321,8 @@ export default function WellGrid({
   variant = 'dispensing',
   className = '',
 }) {
+  const readOnly = variant === 'result'
+
   return (
     // h-full fills whatever space the parent gives; min-h-0 lets it shrink
     // in a flex column without overflowing.
@@ -274,7 +335,8 @@ export default function WellGrid({
           <AxisButton
             key={c}
             label={c + 1}
-            onClick={() => selectCol(c)}
+            onClick={() => !readOnly && selectCol(c)}
+            readOnly={readOnly}
             className="flex-1 h-full"
           />
         ))}
@@ -285,7 +347,8 @@ export default function WellGrid({
         <div key={r} className="flex gap-2 flex-1 min-h-0">
           <AxisButton
             label={r + 1}
-            onClick={() => selectRow(r)}
+            onClick={() => !readOnly && selectRow(r)}
+            readOnly={readOnly}
             className={[AXIS_W, 'h-full shrink-0'].join(' ')}
           />
           {Array.from({ length: cols }, (_, c) => {

@@ -87,6 +87,27 @@ export function stopJob() {
   return request('/job/stop', { method: 'POST' })
 }
 
+/**
+ * POST /api/job/cancel — graceful cancel: finish current mold, stow tool, return to idle.
+ */
+export function cancelJob() {
+  return request('/job/cancel', { method: 'POST' })
+}
+
+/**
+ * POST /api/job/abort — emergency stop: immediately halt all motion (sets ERROR state).
+ */
+export function abortJob() {
+  return request('/job/abort', { method: 'POST' })
+}
+
+/**
+ * GET /api/job/log — most recent job log, or { log: null } if none exists.
+ */
+export function fetchJobLog() {
+  return request('/job/log')
+}
+
 // ---------------------------------------------------------------------------
 // Dispensers
 // ---------------------------------------------------------------------------

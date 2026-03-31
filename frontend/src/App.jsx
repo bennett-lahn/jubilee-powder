@@ -5,6 +5,7 @@ import { useJubileeStore } from './store/jubileeStore'
 import NavRail from './components/NavRail'
 import BottomBar from './components/BottomBar'
 
+import HomeScreen             from './screens/HomeScreen'
 import PowderDispensingScreen from './screens/PowderDispensingScreen'
 import HardnessTestingScreen  from './screens/HardnessTestingScreen'
 import DataScreen             from './screens/DataScreen'
@@ -43,11 +44,12 @@ const router = createBrowserRouter([
     path: '/',
     element: <RootLayout />,
     children: [
-      { index: true,       element: <PowderDispensingScreen /> },
-      { path: 'hardness',  element: <HardnessTestingScreen />  },
-      { path: 'data',      element: <DataScreen />             },
-      { path: 'manual',    element: <ManualControlScreen />    },
-      { path: 'settings',  element: <SettingsScreen />         },
+      { index: true,          element: <HomeScreen />             },
+      { path: 'dispensing',   element: <PowderDispensingScreen /> },
+      { path: 'hardness',     element: <HardnessTestingScreen />  },
+      { path: 'data',         element: <DataScreen />             },
+      { path: 'manual',       element: <ManualControlScreen />    },
+      { path: 'settings',     element: <SettingsScreen />         },
     ],
   },
 ])
