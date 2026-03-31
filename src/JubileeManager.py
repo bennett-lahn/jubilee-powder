@@ -28,8 +28,11 @@ Example:
             manager.disconnect()
 """
 
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from src.JobLog import JobLog
 
 # Import Jubilee components
 from science_jubilee.Machine import Machine
@@ -122,6 +125,8 @@ class JubileeManager:
         self._num_piston_dispensers: int = num_piston_dispensers
         self._num_pistons_per_dispenser: int = num_pistons_per_dispenser
         self._feedrate: FeedRate = feedrate
+        self.active_job_log: Optional["JobLog"] = None
+        self.last_dispense_weight: Optional[float] = None
     
     @property
     def machine_read_only(self) -> Optional[Machine]:
@@ -582,6 +587,8 @@ class JubileeManager:
             self.get_piston_from_dispenser(dispenser_index)
             self._move_to_mold_slot(well_id)
             self.manipulator.place_mold(well_id)
+            if self.active_job_log is not None:
+                self.active_job_log.update_well(well_id)
             return True
         except Exception as e:
             print(f"Error filling mold: {e}")
@@ -817,4 +824,5 @@ class JubileeManager:
         if not result.valid:
             raise RuntimeError(f"Fill mold with powder failed: {result.reason}")
         
+        self.last_dispense_weight = self.state_machine.last_fill_weight
         return True

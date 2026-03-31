@@ -622,6 +622,11 @@ class MotionPlatformStateMachine(StateMachine):
         """Read-only access to machine for state queries (position, status, etc)."""
         return self._executor.machine
 
+    @property
+    def last_fill_weight(self) -> Optional[float]:
+        """The final stable weight reading from the most recent successful powder fill."""
+        return self._executor.last_fill_weight
+
     # ---------------------------------------------------------------------
     # Validated Movement Methods
     # =====================================================================

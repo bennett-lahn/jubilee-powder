@@ -38,6 +38,7 @@ class MovementExecutor:
         self._machine = machine
         self._scale = scale
         self._feedrate = feedrate.value
+        self.last_fill_weight: Optional[float] = None
     
     @property
     def machine(self) -> Machine:
@@ -817,6 +818,7 @@ class MovementExecutor:
                             # Check if stable weight is actually over threshold
                             if final_weight >= threshold_99_percent:
                                 print(f"\nTarget weight of {target_weight:.4f}g reached!")
+                                self.last_fill_weight = final_weight
                                 break
                             else:
                                 # Stable weight is below threshold, restart trickling

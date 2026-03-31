@@ -37,6 +37,22 @@ const COLS = 6
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Return a short date string for the results heading, e.g. "Mar 31, 2026".
+ * Accepts a job object that may carry either a `date` field (YYYY-MM-DD, from
+ * a persisted log file) or a `started_at` field (ISO-8601, from live progress).
+ */
+function formatJobDate(job) {
+  if (!job) return null
+  const raw = job.date ?? (job.started_at ? job.started_at.slice(0, 10) : null)
+  if (!raw) return null
+  // Parse as local midnight so the displayed day matches the job date.
+  const [y, m, d] = raw.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+  })
+}
+
 /** Format an integer number of seconds as "MM:SS" or "H:MM:SS". */
 function formatElapsed(totalSeconds) {
   const s = totalSeconds % 60
@@ -202,6 +218,7 @@ export default function HomeScreen() {
       : '#334155' // slate-700
 
   const resultWells = buildResultWells(ROWS, COLS, displayJob)
+  const jobDate     = formatJobDate(displayJob)
 
   // ── Empty state ──────────────────────────────────────────────────────────
   if (!hasJobData && !jobLog) {
@@ -280,13 +297,6 @@ export default function HomeScreen() {
                 {abortArmed ? 'Press Again!' : 'Abort'}
               </Button>
 
-              {/* Arm-state hint */}
-              {abortArmed && (
-                <p className="text-xs text-red-400 text-center leading-tight">
-                  Confirm emergency stop
-                </p>
-              )}
-
             </div>
           )}
         </Card>
@@ -294,7 +304,7 @@ export default function HomeScreen() {
         {/* ── Right panel: well result grid (primary content) ──────────── */}
         <Card className="flex-1 flex flex-col gap-2 p-4 min-h-0">
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 shrink-0">
-            Results per Mold
+            Results{jobDate ? ` \u2014 ${jobDate}` : ''}
           </p>
           <WellGrid
             wells={resultWells}

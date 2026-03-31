@@ -29,12 +29,22 @@ import asyncio
 import json
 import math
 import random
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
+
+# Allow imports from the project root (src.JobLog etc.) when the server is
+# launched from either the frontend/ directory or the project root.
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+_FILES_DIR = Path(__file__).parent / "api" / "files"
+_FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -212,7 +222,7 @@ class MockHardwareManager:
     # ── Job execution ─────────────────────────────────────────────────────────
 
     async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress
+        self, wells: list[dict], progress: JobProgress, job_log=None
     ) -> None:
         self.state = MachineState.RUNNING
         try:
@@ -221,6 +231,13 @@ class MockHardwareManager:
                     break
                 progress.current_item = well["well_id"]
                 await asyncio.sleep(2.0)
+                if job_log is not None:
+                    simulated_weight = well["target_weight"] * (
+                        1 + random.gauss(0, 0.008)
+                    )
+                    job_log.update_well(
+                        well["well_id"], actual_weight=round(simulated_weight, 3)
+                    )
                 progress.completed = i + 1
         finally:
             # Do not overwrite ERROR set by an abort call
@@ -228,7 +245,7 @@ class MockHardwareManager:
                 self.state = MachineState.IDLE
 
     async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress
+        self, samples: list[dict], progress: JobProgress, job_log=None
     ) -> None:
         self.state = MachineState.RUNNING
         try:
@@ -237,6 +254,11 @@ class MockHardwareManager:
                     break
                 progress.current_item = sample["sample_id"]
                 await asyncio.sleep(1.5)
+                if job_log is not None:
+                    simulated_result = round(random.uniform(30.0, 80.0), 1)
+                    job_log.update_sample(
+                        sample["sample_id"], result=simulated_result
+                    )
                 progress.completed = i + 1
         finally:
             if self.state == MachineState.RUNNING:
@@ -345,9 +367,11 @@ class HardwareManager:
     # ── Job execution ─────────────────────────────────────────────────────────
 
     async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress
+        self, wells: list[dict], progress: JobProgress, job_log=None
     ) -> None:
         self.state = MachineState.RUNNING
+        if job_log is not None and self._manager is not None:
+            self._manager.active_job_log = job_log
         try:
             for i, well in enumerate(wells):
                 if not progress.running:
@@ -364,11 +388,13 @@ class HardwareManager:
                     )
                 progress.completed = i + 1
         finally:
+            if self._manager is not None:
+                self._manager.active_job_log = None
             if self.state == MachineState.RUNNING:
                 self.state = MachineState.IDLE
 
     async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress
+        self, samples: list[dict], progress: JobProgress, job_log=None
     ) -> None:
         self.state = MachineState.RUNNING
         try:
@@ -378,6 +404,8 @@ class HardwareManager:
                 progress.current_item = sample["sample_id"]
                 # TODO: replace with asyncio.to_thread(hardness_tester.measure, ...) once integrated
                 await asyncio.sleep(1.5)
+                if job_log is not None:
+                    job_log.update_sample(sample["sample_id"], result=None)
                 progress.completed = i + 1
         finally:
             if self.state == MachineState.RUNNING:
@@ -626,30 +654,30 @@ async def abort_job():
 @app.get("/api/job/log")
 async def get_job_log():
     """
-    Return the most recent job log.
+    Return the most recent job log in the normalised live-progress format.
 
-    Mock mode:  synthesises a log from the current in-memory progress so the
-                home screen always has data to display during UI development.
-    Real mode:  reads jubilee_api_config/job_log.json written by JubileeManager.
-                Returns null if no log file exists yet.
+    Priority order:
+      1. If a job ran in this server session (progress has data), synthesise
+         from in-memory state so the home screen updates in real-time.
+      2. Otherwise read the most recent file from _FILES_DIR — this is the
+         path taken after a server restart, since in-memory state is lost.
+    Returns {"log": null} when neither source has data.
     """
-    if MOCK_HARDWARE:
-        if progress.job_type is None:
-            return {"log": None}
-        log = _build_progress_log()
-        return {"log": log}
+    if progress.job_type is not None:
+        return {"log": _build_progress_log()}
 
-    log_path = Path("../jubilee_api_config/job_log.json")
-    if not log_path.exists():
+    files = sorted(_FILES_DIR.glob("*.json"), reverse=True)
+    if not files:
         return {"log": None}
     try:
-        return {"log": json.loads(log_path.read_text())}
+        raw = json.loads(files[0].read_text())
+        return {"log": _normalize_file_log(raw)}
     except Exception:
         return {"log": None}
 
 
 def _build_progress_log() -> dict:
-    """Synthesise a job log dict from the current JobProgress state."""
+    """Synthesise a job log dict from the current in-memory JobProgress."""
     items_with_status = []
     for i, item in enumerate(progress.items):
         item_id = item.get("well_id") or item.get("sample_id")
@@ -661,14 +689,49 @@ def _build_progress_log() -> dict:
             status = "pending"
         items_with_status.append({**item, "status": status})
 
+    date_str = progress.started_at[:10] if progress.started_at else None
+
     return {
         "job_type":   progress.job_type,
         "started_at": progress.started_at,
+        "date":       date_str,
         "status":     "running" if progress.running else "complete",
         "completed":  progress.completed,
         "total":      progress.total,
         "error":      progress.error,
         "items":      items_with_status,
+    }
+
+
+def _normalize_file_log(raw: dict) -> dict:
+    """
+    Convert a persisted job JSON file to the normalised live-progress shape
+    that the frontend store and HomeScreen already understand.
+
+    File shape  →  normalised shape
+    ────────────────────────────────────────────────────────────────────────
+    metadata.job_type  "powder"/"hardness"  →  job_type  "dispensing"/"hardness"
+    metadata.date                           →  date
+    metadata.outcome                        →  status
+    state.molds / state.samples             →  items  (already in correct shape)
+    """
+    meta  = raw.get("metadata", {})
+    state = raw.get("state", {})
+
+    job_type = meta.get("job_type", "")
+
+    items = state.get("molds") or state.get("samples") or []
+    completed = sum(1 for it in items if it.get("status") == "complete")
+
+    return {
+        "job_type":   job_type,
+        "started_at": None,
+        "date":       meta.get("date"),
+        "status":     meta.get("outcome", "complete"),
+        "completed":  completed,
+        "total":      len(items),
+        "error":      None,
+        "items":      items,
     }
 
 
@@ -698,8 +761,67 @@ async def update_dispenser(index: int, body: UpdateDispenserRequest):
 
 
 # =============================================================================
+# REST — job log files
+# =============================================================================
+
+@app.get("/api/files")
+async def list_job_files():
+    """
+    Return metadata for all job log JSON files in the files directory.
+
+    Each entry contains the fields expected by the DataScreen:
+      name, size, modified (ISO-8601), type ("file").
+    Files are returned newest-first (by filename, which encodes a sequential ID).
+    """
+    entries = []
+    for f in sorted(_FILES_DIR.glob("*.json"), reverse=True):
+        stat = f.stat()
+        entries.append({
+            "name":     f.name,
+            "path":     f.name,
+            "size":     stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            "type":     "file",
+        })
+    return entries
+
+
+@app.get("/api/files/{filename}")
+async def get_job_file(filename: str):
+    """
+    Return the full JSON content of a single job log file.
+
+    filename must match exactly (e.g. "0001_2026-03-31_powder_5.json").
+    Returns HTTP 404 if the file does not exist.
+    """
+    path = _FILES_DIR / filename
+    if not path.exists() or path.suffix != ".json":
+        raise HTTPException(status_code=404, detail="File not found.")
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
+
+
+# =============================================================================
 # Background task helpers
 # =============================================================================
+
+def _make_job_log(job_type: str, items: list[dict]):
+    """
+    Instantiate a JobLog.
+
+    In mock mode the manager reference is None; in real mode we pass the
+    underlying JubileeManager so the log can pull weight data from it.
+    """
+    try:
+        from src.JobLog import JobLog
+        manager_ref = getattr(hw, "_manager", None)
+        return JobLog(job_type=job_type, items=items, manager=manager_ref)
+    except Exception as exc:
+        print(f"[JobLog] Could not create job log: {exc}")
+        return None
+
 
 async def _run_connect(config: HardwareConfig) -> None:
     try:
@@ -710,23 +832,47 @@ async def _run_connect(config: HardwareConfig) -> None:
 
 
 async def _run_dispensing(items: list[dict]) -> None:
+    job_log = _make_job_log("dispensing", items)
+    outcome = "cancelled"
     try:
-        await hw.run_dispensing_job(items, progress)
+        await hw.run_dispensing_job(items, progress, job_log)
+        if progress.completed == progress.total:
+            outcome = "successful"
+        elif hw.state == MachineState.ERROR:
+            outcome = "aborted"
     except Exception as exc:
         progress.error = str(exc)
         hw.state = MachineState.ERROR
+        outcome = "aborted"
     finally:
         progress.running = False
+        if job_log is not None:
+            try:
+                job_log.finalize(outcome)
+            except Exception as exc:
+                print(f"[JobLog] Failed to write log: {exc}")
 
 
 async def _run_hardness(items: list[dict]) -> None:
+    job_log = _make_job_log("hardness", items)
+    outcome = "cancelled"
     try:
-        await hw.run_hardness_job(items, progress)
+        await hw.run_hardness_job(items, progress, job_log)
+        if progress.completed == progress.total:
+            outcome = "successful"
+        elif hw.state == MachineState.ERROR:
+            outcome = "aborted"
     except Exception as exc:
         progress.error = str(exc)
         hw.state = MachineState.ERROR
+        outcome = "aborted"
     finally:
         progress.running = False
+        if job_log is not None:
+            try:
+                job_log.finalize(outcome)
+            except Exception as exc:
+                print(f"[JobLog] Failed to write log: {exc}")
 
 
 # =============================================================================

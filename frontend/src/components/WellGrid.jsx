@@ -163,11 +163,23 @@ export function useWellGrid(rows = 4, cols = 6) {
 // ── Result-variant status colours ────────────────────────────────────────────
 // Used when variant === 'result'.  Non-interactive divs — no hover or focus states.
 const RESULT_STATUS_CLASS = {
-  excluded: 'bg-slate-950 border border-slate-800',
-  pending:  'bg-slate-800 border border-slate-700',
+  excluded: 'bg-slate-800 border border-slate-700',
+  pending:  'bg-slate-950 border border-slate-800',
   active:   'bg-amber-500 ring-2 ring-amber-400/60',
   complete: 'bg-green-700 border border-green-600',
   error:    'bg-red-800 border border-red-700',
+}
+
+/**
+ * Format a weight in grams to a compact string that fits inside a well circle.
+ * Uses more decimal places for small values so differences are visible.
+ */
+function fmtWeight(g) {
+  if (g == null) return ''
+  if (g >= 100) return `${g.toFixed(0)}g`
+  if (g >= 10)  return `${g.toFixed(1)}g`
+  if (g >= 1)   return `${g.toFixed(2)}g`
+  return `${g.toFixed(3)}g`
 }
 
 function WellCircle({ id, well, onClick, variant }) {
@@ -176,17 +188,36 @@ function WellCircle({ id, well, onClick, variant }) {
     const { status = 'excluded', actualWeight = null, targetWeight = 0, mode = 'none' } = well
     const shoreLabel = SHORE_LABELS[mode] ?? ''
 
-    let innerLabel = null
-    if (status === 'complete') {
-      if (actualWeight !== null) {
-        innerLabel = `${actualWeight.toFixed(1)}g`
-      } else if (shoreLabel) {
-        innerLabel = shoreLabel
-      } else {
-        innerLabel = '✓'
-      }
+    // Dispensing result: both target and actual weight are available.
+    // Show target (dim, small) above actual (bright, larger) so the operator
+    // can immediately compare requested vs delivered without a checkmark.
+    const isDispensingResult = status === 'complete' && actualWeight !== null && targetWeight > 0
+
+    let innerContent = null
+    if (isDispensingResult) {
+      innerContent = (
+        <div className="flex flex-col items-center leading-tight gap-px">
+          <span className="text-[9px] font-medium text-slate-300 select-none">
+            {fmtWeight(targetWeight)}
+          </span>
+          <span className="text-[11px] font-semibold text-white select-none">
+            {fmtWeight(actualWeight)}
+          </span>
+        </div>
+      )
+    } else if (status === 'complete') {
+      const label = actualWeight !== null ? fmtWeight(actualWeight)
+                  : shoreLabel           ? shoreLabel
+                  : '✓'
+      innerContent = (
+        <span className="text-xs font-semibold leading-none select-none text-white">
+          {label}
+        </span>
+      )
     } else if (status === 'active') {
-      innerLabel = '···'
+      innerContent = (
+        <span className="text-xs font-semibold leading-none select-none text-white">···</span>
+      )
     }
 
     return (
@@ -200,11 +231,7 @@ function WellCircle({ id, well, onClick, variant }) {
             RESULT_STATUS_CLASS[status] ?? RESULT_STATUS_CLASS.excluded,
           ].join(' ')}
         >
-          {innerLabel && (
-            <span className="text-xs font-semibold leading-none select-none text-white">
-              {innerLabel}
-            </span>
-          )}
+          {innerContent}
         </div>
       </div>
     )

@@ -11,14 +11,14 @@
 const DOT = {
   ok:    'bg-green-400',
   error: 'bg-red-500',
-  warn:  'bg-jubilee',
+  warn:  'bg-orange-400',
   idle:  'bg-slate-600',
 }
 
 const TEXT = {
   ok:    'text-green-400',
   error: 'text-red-400',
-  warn:  'text-jubilee',
+  warn:  'text-orange-400',
   idle:  'text-slate-500',
 }
 
