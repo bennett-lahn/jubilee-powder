@@ -1,0 +1,184 @@
+/**
+ * Settings Screen.
+ *
+ * Ports the Kivy SettingsScreen.
+ *
+ * Connection state is driven entirely by telemetry.state from the WebSocket
+ * rather than a separate REST poll, so the UI reflects hardware transitions
+ * (DISCONNECTED → HOMING → IDLE/ERROR) in real time without polling.
+ *
+ * Input locking rules:
+ *   - Locked when state is IDLE, RUNNING, or HOMING (hardware active).
+ *   - Unlocked only when DISCONNECTED or ERROR.
+ */
+
+import { useState } from 'react'
+import { useJubileeStore } from '../store/jubileeStore'
+import { Button, Card, TextInput, StatusBadge } from '../components/ui'
+
+const STATE_LABEL = {
+  idle:         'Connected',
+  running:      'Running',
+  homing:       'Connecting…',
+  error:        'Error',
+  disconnected: 'Disconnected',
+}
+
+const STATE_BADGE = {
+  idle:         'ok',
+  running:      'warn',
+  homing:       'warn',
+  error:        'error',
+  disconnected: 'idle',
+}
+
+export default function SettingsScreen() {
+  const telemetry         = useJubileeStore((s) => s.telemetry)
+  const connectHardware   = useJubileeStore((s) => s.connectHardware)
+  const disconnectHardware = useJubileeStore((s) => s.disconnectHardware)
+
+  const hwState    = telemetry.state ?? 'disconnected'
+  const isIdle     = hwState === 'idle'
+  const isRunning  = hwState === 'running'
+  const isHoming   = hwState === 'homing'
+  const isError    = hwState === 'error'
+
+  // Inputs are locked whenever hardware is active — only editable when
+  // fully disconnected or in an error state requiring reconnect.
+  const inputsLocked = isIdle || isRunning || isHoming
+
+  // Form state
+  const [numDispensers,       setNumDispensers]       = useState('2')
+  const [pistonsPerDispenser, setPistonsPerDispenser] = useState('10')
+  const [jubileeIp,           setJubileeIp]           = useState('jubilee.local')
+  const [scalePort,           setScalePort]           = useState('/dev/ttyUSB0')
+  const [statusMsg,           setStatusMsg]           = useState('')
+
+  const numD = parseInt(numDispensers,       10)
+  const numP = parseInt(pistonsPerDispenser, 10)
+  const totalPistons = (!isNaN(numD) && !isNaN(numP)) ? numD * numP : null
+  const inputsValid  = !isNaN(numD) && numD > 0 && !isNaN(numP) && numP > 0
+
+  async function handleConnect() {
+    if (!inputsValid || inputsLocked) return
+    setStatusMsg('')
+    const result = await connectHardware({
+      num_dispensers:        numD,
+      pistons_per_dispenser: numP,
+      machine_address:       jubileeIp.trim() || null,
+      scale_port:            scalePort.trim() || '/dev/ttyUSB0',
+    })
+    if (!result.ok) {
+      setStatusMsg(`Request failed: ${result.error}`)
+    }
+    // Connection progress is reflected via telemetry.state (HOMING → IDLE/ERROR)
+    // No need to poll; the WebSocket frame updates the UI automatically.
+  }
+
+  async function handleDisconnect() {
+    setStatusMsg('')
+    const result = await disconnectHardware()
+    if (!result.ok) {
+      setStatusMsg(`Disconnect failed: ${result.error}`)
+    }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="flex flex-col gap-4 max-w-xl mx-auto py-2">
+
+        {/* Connection status */}
+        <Card className="flex items-center justify-between p-4 shrink-0">
+          <div>
+            <p className="text-slate-200 font-semibold">System Status</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {inputsLocked
+                ? 'Settings are locked while hardware is active.'
+                : isError
+                  ? 'Connection error — settings unlocked for reconfiguration.'
+                  : 'Settings can be modified while disconnected.'}
+            </p>
+          </div>
+          <StatusBadge
+            status={STATE_BADGE[hwState] ?? 'idle'}
+            label={STATE_LABEL[hwState] ?? hwState}
+          />
+        </Card>
+
+        {/* Hardware configuration */}
+        <Card className="flex flex-col gap-5 p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
+            Hardware Configuration
+          </h3>
+
+          <TextInput
+            label="Number of Powder Dispensers"
+            placeholder="e.g. 2"
+            type="number"
+            value={numDispensers}
+            onChange={setNumDispensers}
+            disabled={inputsLocked}
+            hint={totalPistons !== null ? `Total pistons available: ${totalPistons}` : undefined}
+          />
+
+          <TextInput
+            label="Pistons per Dispenser"
+            placeholder="e.g. 10"
+            type="number"
+            value={pistonsPerDispenser}
+            onChange={setPistonsPerDispenser}
+            disabled={inputsLocked}
+          />
+        </Card>
+
+        {/* Network / serial configuration */}
+        <Card className="flex flex-col gap-5 p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
+            Connection Configuration
+          </h3>
+
+          <TextInput
+            label="Jubilee IP Address or Hostname"
+            placeholder="jubilee.local"
+            value={jubileeIp}
+            onChange={setJubileeIp}
+            disabled={inputsLocked}
+          />
+
+          <TextInput
+            label="Scale Serial Port"
+            placeholder="/dev/ttyUSB0"
+            value={scalePort}
+            onChange={setScalePort}
+            disabled={inputsLocked}
+            hint="Linux: /dev/ttyUSB0   Windows: COM3"
+          />
+        </Card>
+
+        {/* Connect / Disconnect */}
+        <Card className="flex items-center gap-4 p-4">
+          <Button
+            className="flex-1"
+            onClick={handleConnect}
+            disabled={inputsLocked || !inputsValid}
+          >
+            {isHoming ? 'Connecting…' : 'Connect to Jubilee'}
+          </Button>
+          <Button
+            className="flex-1"
+            variant="danger"
+            onClick={handleDisconnect}
+            disabled={!isIdle && !isRunning && !isHoming}
+          >
+            Disconnect
+          </Button>
+        </Card>
+
+        {statusMsg && (
+          <p className="text-center text-xs text-slate-500 pb-2">{statusMsg}</p>
+        )}
+
+      </div>
+    </div>
+  )
+}

@@ -55,3 +55,22 @@ htmlcov/
 # Temporary files
 *.tmp
 *.bak
+
+# Images
+*.jpg
+*.png
+*.gif
+ml/**/*.jpg
+ml/**/*.png
+ml/**/*.gif
+testing/**/*.jpg
+testing/**/*.png
+testing/**/*.gif
+
+# ML raw data
+ml/raw/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

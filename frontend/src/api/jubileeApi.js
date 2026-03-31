@@ -1,0 +1,110 @@
+/**
+ * Thin HTTP wrapper for the Jubilee FastAPI backend.
+ *
+ * All functions return the parsed JSON body on success and throw an Error
+ * whose message is the server's detail string on non-2xx responses.
+ *
+ * The Vite dev-server proxy forwards /api/* → http://localhost:8000, so the
+ * base URL works identically in development and in the production FastAPI build.
+ */
+
+const BASE = '/api'
+
+async function request(path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  })
+
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`
+    try {
+      const body = await res.json()
+      if (body?.detail) detail = body.detail
+    } catch { /* ignore parse errors */ }
+    throw new Error(detail)
+  }
+
+  return res.json()
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/** GET /api/status — full machine snapshot */
+export function fetchStatus() {
+  return request('/status')
+}
+
+// ---------------------------------------------------------------------------
+// Hardware lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/hardware/connect — begin connection with the given config.
+ * Returns 202 immediately; monitor WebSocket state for HOMING → IDLE/ERROR.
+ *
+ * @param {{ num_dispensers: number, pistons_per_dispenser: number,
+ *           machine_address?: string, scale_port?: string }} config
+ */
+export function connectHardware(config) {
+  return request('/hardware/connect', {
+    method: 'POST',
+    body:   JSON.stringify(config),
+  })
+}
+
+/**
+ * POST /api/hardware/disconnect — stop any running job and disconnect.
+ * Awaits server-side completion before resolving.
+ */
+export function disconnectHardware() {
+  return request('/hardware/disconnect', { method: 'POST' })
+}
+
+// ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/job/start — enqueue a dispensing or hardness job.
+ *
+ * @param {{ job_type: 'dispensing', wells: Array }
+ *        |{ job_type: 'hardness',  samples: Array }} body
+ */
+export function startJob(body) {
+  return request('/job/start', {
+    method: 'POST',
+    body:   JSON.stringify(body),
+  })
+}
+
+/**
+ * POST /api/job/stop — signal the running job to stop after the current well.
+ */
+export function stopJob() {
+  return request('/job/stop', { method: 'POST' })
+}
+
+// ---------------------------------------------------------------------------
+// Dispensers
+// ---------------------------------------------------------------------------
+
+/** GET /api/dispensers — list all dispenser statuses */
+export function fetchDispensers() {
+  return request('/dispensers')
+}
+
+/**
+ * PUT /api/dispensers/{index} — update remaining piston count.
+ *
+ * @param {number} index
+ * @param {number} numPistons
+ */
+export function updateDispenser(index, numPistons) {
+  return request(`/dispensers/${index}`, {
+    method: 'PUT',
+    body:   JSON.stringify({ num_pistons: numPistons }),
+  })
+}
