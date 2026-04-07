@@ -781,6 +781,35 @@ class JubileeManager:
         
         return True
 
+    def abort(self) -> None:
+        """
+        Send an emergency-stop (M112) to the Jubilee controller.
+
+        This is the only method in JubileeManager that intentionally bypasses
+        the MotionPlatformStateMachine.  This bypass is safe because:
+
+        - M112 is a firmware-level emergency stop that immediately halts all
+          motion regardless of software state.  There is no higher-priority
+          fail-safe mechanism that the state machine could add on top of it.
+
+        - After M112 the Duet firmware requires a full reset before accepting
+          any new motion commands.  The machine is therefore
+          inoperable until the operator intervenes, so the invariants of
+          MotionPlatformStateMachine (consistent position tracking, validated
+          state transitions) become irrelevant.
+
+        The method is a best-effort call: if no machine connection is available
+        (e.g. abort is called before connect() succeeds) it is silently ignored.
+        """
+        machine = self.machine_read_only
+        if machine is not None:
+            try:
+                # Bypass MotionPlatformStateMachine intentionally.  See docstring.
+                machine.gcode("M112")
+            except Exception as e:
+                print(f"[abort] M112 command failed: {e}")
+        self.connected = False
+
     def _fill_powder(self, target_weight: float) -> bool:
         """
         Fill mold with powder to target weight.
