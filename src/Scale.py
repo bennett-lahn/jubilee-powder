@@ -136,7 +136,7 @@ class Scale:
     Provides methods to send commands and parse responses according to the scale's protocol.
     """
 
-    def __init__(self, port: str, baudrate: int = 9600, timeout: int = 10, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS):
+    def __init__(self, port: str, baudrate: int = 9600, timeout: int = 10, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, serial_instance=None):
         """
         Initialize the Scale object and connection parameters.
         :param port: Serial port (e.g., 'COM1' or '/dev/ttyUSB0')
@@ -145,6 +145,9 @@ class Scale:
         :param parity: Parity setting (default: PARITY_NONE)
         :param stopbits: Stop bits setting (default: STOPBITS_ONE)
         :param bytesize: Byte size setting (default: EIGHTBITS)
+        :param serial_instance: Optional pre-built serial-like object to use instead of
+            opening a real port. Pass a FakeSerial (or any duck-typed replacement) here
+            during testing to avoid touching real hardware.
         """
         self.port = port
         self.baudrate = baudrate
@@ -154,27 +157,35 @@ class Scale:
         self.timeout = timeout
         self.serial = None
         self._is_connected = False
+        self._serial_instance = serial_instance
 
     def connect(self):
         """
         Establish a serial connection to the scale.
+        If a *serial_instance* was supplied at construction time, that object is
+        used directly and no real port is opened. Otherwise a real
+        ``serial.Serial`` connection is created from the stored parameters.
         Raises ScaleException if connection fails.
         """
         try:
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                bytesize=self.bytesize,
-                parity=self.parity,
-                stopbits=self.stopbits,
-                timeout=self.timeout
-            )
+            if self._serial_instance is not None:
+                self.serial = self._serial_instance
+            else:
+                self.serial = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baudrate,
+                    bytesize=self.bytesize,
+                    parity=self.parity,
+                    stopbits=self.stopbits,
+                    timeout=self.timeout
+                )
             self._is_connected = True
             self.display_on()
-            time.sleep(2) # Give scale time to initialize
-            # The scale can sometimes take up to 10 seconds to start if it does self-testing
-            # In this case, some commands may fail with E02, which if why a command gets resent
-            # after an E02 response.
+            if self._serial_instance is None:
+                time.sleep(2) # Give scale time to initialize
+                # The scale can sometimes take up to 10 seconds to start if it does self-testing
+                # In this case, some commands may fail with E02, which is why a command gets resent
+                # after an E02 response.
             print(f"[DEBUG] Serial connection established: {self.serial}")
             print(f"[DEBUG] Serial port open: {self.serial.is_open}")
         except serial.SerialException as e:
@@ -253,7 +264,7 @@ class Scale:
                     ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT)
                     if ack_received:
                         if is_dual_ack:
-                            ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT)
+                            ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT, initial_buffer=received_data)
                             if ack_received:
                                 print(f"[DEBUG] {error.value}: Command '{cmd}' succeeded after retry")
                                 return True
@@ -291,12 +302,17 @@ class Scale:
         # All retries exhausted, throw exception
         raise ScaleException(f"{error.value} ({desc}) persisted after all retries for command '{cmd}'")
 
-    def _wait_for_ack(self, timeout: float = ACK_TIMEOUT) -> tuple:
+    def _wait_for_ack(self, timeout: float = ACK_TIMEOUT, initial_buffer: bytes = b'') -> tuple:
         """
         Wait for an ACK response from the scale.
-        
+
         Args:
             timeout: Timeout in seconds
+            initial_buffer: Bytes already received from a previous read that
+                should be searched before polling the serial port again.  This
+                handles the case where two ACKs (dual-ACK command) arrive in
+                the same OS read and the caller needs to forward the tail of
+                the first response into the next call.
             
         Returns:
             Tuple of (success: bool, received_data: bytes, error: ScaleError or None)
@@ -305,9 +321,33 @@ class Scale:
             ScaleException: If error response received instead of ACK (for non-handled errors)
         """
         start_time = time.time()
-        buffer = b''
+        buffer = initial_buffer
         expected_ack_sequence = b'\x06\r\n'  # ACK CR LF
-        
+
+        # Evaluate initial_buffer before entering the poll loop so that a
+        # second ACK forwarded from a previous _wait_for_ack call is found
+        # immediately without needing additional bytes from the serial port.
+        if expected_ack_sequence in buffer:
+            ack_pos = buffer.find(expected_ack_sequence)
+            if ack_pos > 0:
+                print(f"[DEBUG] Warning: Unexpected data before ACK (initial): {buffer[:ack_pos]}")
+            buffer = buffer[ack_pos + len(expected_ack_sequence):]
+            if buffer:
+                print(f"[DEBUG] Data after ACK (initial): {buffer}")
+            return (True, buffer, None)
+        if b'EC,' in buffer:
+            try:
+                error_str = buffer.decode('ascii', errors='ignore')
+                lines = error_str.split('\r\n')
+                for line in lines:
+                    if line.startswith('EC,'):
+                        err = ScaleError.from_response(line)
+                        if err in (ScaleError.E02, ScaleError.E03, ScaleError.E11):
+                            return (False, buffer, err)
+                        raise ScaleException(f"Scale error (initial buffer): {err} ({line})")
+            except UnicodeDecodeError:
+                pass
+
         while time.time() - start_time < timeout:
             if self.serial.in_waiting > 0:
                 # Read available data
@@ -410,9 +450,11 @@ class Scale:
                             print(f"[DEBUG] Final failure - Received serial data: {received_data}")
                             raise ScaleAckTimeoutException(f"ACK timeout for command '{cmd}' after {MAX_RETRIES} attempts")
                     
-                    # For dual ACK commands, wait for second ACK
+                    # For dual ACK commands, wait for second ACK.
+                    # Pass any bytes that arrived alongside the first ACK so they
+                    # are not discarded when both ACKs come in the same OS read.
                     if is_dual_ack:
-                        ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT)
+                        ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT, initial_buffer=received_data)
                         
                         # Handle specific errors in second ACK
                         if error_received in (ScaleError.E02, ScaleError.E03, ScaleError.E11):

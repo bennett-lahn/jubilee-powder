@@ -27,13 +27,9 @@ Usage (from the project root):
 
 import asyncio
 import json
-import math
-import random
 import sys
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
@@ -43,12 +39,24 @@ _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+# Add frontend/src/ directly so that models, hardware_manager, and level_camera
+# can be imported by their bare module names without colliding with the
+# project-root src/ package (which contains JubileeManager, Scale, etc.).
+_backend_src = Path(__file__).parent / "src"
+if str(_backend_src) not in sys.path:
+    sys.path.insert(0, str(_backend_src))
+
 _FILES_DIR = Path(__file__).parent / "api" / "files"
 _FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
+from hardware_manager import HardwareManager, MockHardwareManager
+from level_camera import LevelCameraStreamer, MockLevelCameraStreamer, _BaseLevelCameraStreamer
 
 # ---------------------------------------------------------------------------
 # Toggle — flip to False when deploying on real hardware.
@@ -57,33 +65,8 @@ MOCK_HARDWARE: bool = True
 
 
 # =============================================================================
-# Enums
+# Pydantic models — endpoint-specific requests
 # =============================================================================
-
-class MachineState(str, Enum):
-    IDLE         = "idle"
-    HOMING       = "homing"       # connection / homing in progress
-    RUNNING      = "running"      # job executing
-    ERROR        = "error"
-    DISCONNECTED = "disconnected"
-
-
-# =============================================================================
-# Pydantic models — configuration, requests, responses
-# =============================================================================
-
-class HardwareConfig(BaseModel):
-    """Sent from the Settings screen when the user clicks Connect."""
-    num_dispensers:        int           = Field(default=2,  ge=0)
-    pistons_per_dispenser: int           = Field(default=10, ge=0)
-    machine_address:       Optional[str] = None   # None → read from system_config.json
-    scale_port:            str           = "/dev/ttyUSB0"
-
-
-class DispenserStatus(BaseModel):
-    index:             int
-    pistons_remaining: int
-
 
 class UpdateDispenserRequest(BaseModel):
     num_pistons: int = Field(ge=0)
@@ -114,302 +97,6 @@ JobRequest = Annotated[
     Union[StartPowderJobRequest, StartHardnessJobRequest],
     Body(discriminator="job_type"),
 ]
-
-
-# =============================================================================
-# Job-progress state  (shared between endpoint handlers and the telemetry loop)
-# =============================================================================
-
-class JobProgress:
-    def __init__(self) -> None:
-        self.running:      bool          = False
-        self.job_type:     Optional[str] = None
-        self.completed:    int           = 0
-        self.total:        int           = 0
-        self.current_item: Optional[str] = None
-        self.error:        Optional[str] = None
-        self.started_at:   Optional[str] = None   # ISO-8601 UTC string
-        self.items:        list          = []      # ordered list of item dicts from the job request
-
-    def reset(self) -> None:
-        self.__init__()
-
-    def to_dict(self) -> dict:
-        return {
-            "running":      self.running,
-            "job_type":     self.job_type,
-            "completed":    self.completed,
-            "total":        self.total,
-            "current_item": self.current_item,
-            "error":        self.error,
-            "started_at":   self.started_at,
-            "items":        self.items,
-        }
-
-
-# =============================================================================
-# MockHardwareManager
-#
-# Standalone simulation of the Jubilee hardware for UI development.
-# No physical hardware required.  Scale readings use a slow sine drift plus
-# Gaussian noise to mimic the real A&D FX-120i serial scale output.  Job
-# execution advances JobProgress in-place via async sleep to produce realistic
-# per-well timing visible through the telemetry WebSocket.
-#
-# Public API is identical to HardwareManager — switch between them by
-# changing MOCK_HARDWARE at the top of this file.
-# =============================================================================
-
-class MockHardwareManager:
-
-    def __init__(self) -> None:
-        self.state:   MachineState = MachineState.DISCONNECTED
-        self._config: HardwareConfig = HardwareConfig()
-        self._dispensers: list[DispenserStatus] = []
-        self._t0:         float = time.monotonic()
-        self._scale_base: float = 50.0
-
-    # ── Properties ────────────────────────────────────────────────────────────
-
-    @property
-    def connected(self) -> bool:
-        return self.state != MachineState.DISCONNECTED
-
-    @property
-    def jubilee_ip(self) -> str:
-        return self._config.machine_address or "mock.local"
-
-    # ── Connection lifecycle ───────────────────────────────────────────────────
-
-    async def connect(self, config: HardwareConfig) -> None:
-        self._config = config
-        self._dispensers = [
-            DispenserStatus(index=i, pistons_remaining=config.pistons_per_dispenser)
-            for i in range(config.num_dispensers)
-        ]
-        self.state = MachineState.HOMING
-        await asyncio.sleep(2.0)          # simulate homing sequence
-        self.state = MachineState.IDLE
-
-    async def disconnect(self) -> None:
-        self._dispensers = []
-        self.state = MachineState.DISCONNECTED
-
-    # ── Scale reads ───────────────────────────────────────────────────────────
-
-    async def get_weight_unstable(self) -> float:
-        t     = time.monotonic() - self._t0
-        drift = math.sin(t * 0.15) * 1.8
-        noise = random.gauss(0.0, 0.04)
-        return round(max(0.0, self._scale_base + drift + noise), 3)
-
-    async def get_weight_stable(self) -> float:
-        return round(self._scale_base + random.gauss(0.0, 0.008), 3)
-
-    # ── Dispenser management ──────────────────────────────────────────────────
-
-    def get_dispensers(self) -> list[DispenserStatus]:
-        return list(self._dispensers)
-
-    def update_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
-        if index >= len(self._dispensers):
-            return False
-        self._dispensers[index] = DispenserStatus(
-            index=index, pistons_remaining=num_pistons
-        )
-        return True
-
-    # ── Job execution ─────────────────────────────────────────────────────────
-
-    async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress, job_log=None
-    ) -> None:
-        self.state = MachineState.RUNNING
-        try:
-            for i, well in enumerate(wells):
-                if not progress.running:
-                    break
-                progress.current_item = well["well_id"]
-                await asyncio.sleep(2.0)
-                if job_log is not None:
-                    simulated_weight = well["target_weight"] * (
-                        1 + random.gauss(0, 0.008)
-                    )
-                    job_log.update_well(
-                        well["well_id"], actual_weight=round(simulated_weight, 3)
-                    )
-                progress.completed = i + 1
-        finally:
-            # Do not overwrite ERROR set by an abort call
-            if self.state == MachineState.RUNNING:
-                self.state = MachineState.IDLE
-
-    async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress, job_log=None
-    ) -> None:
-        self.state = MachineState.RUNNING
-        try:
-            for i, sample in enumerate(samples):
-                if not progress.running:
-                    break
-                progress.current_item = sample["sample_id"]
-                await asyncio.sleep(1.5)
-                if job_log is not None:
-                    simulated_result = round(random.uniform(30.0, 80.0), 1)
-                    job_log.update_sample(
-                        sample["sample_id"], result=simulated_result
-                    )
-                progress.completed = i + 1
-        finally:
-            if self.state == MachineState.RUNNING:
-                self.state = MachineState.IDLE
-
-
-# =============================================================================
-# HardwareManager
-#
-# Production wrapper around the real JubileeManager.  All blocking serial /
-# network calls are offloaded to asyncio.to_thread() so the uvicorn event loop
-# is never stalled.
-#
-# JubileeManager is imported lazily inside connect() so the server starts
-# cleanly on developer machines that lack the science_jubilee package.
-#
-# Public API is identical to MockHardwareManager — switch between them by
-# changing MOCK_HARDWARE at the top of this file.
-# =============================================================================
-
-class HardwareManager:
-
-    def __init__(self) -> None:
-        self.state:    MachineState  = MachineState.DISCONNECTED
-        self._config:  HardwareConfig = HardwareConfig()
-        self._manager                 = None   # JubileeManager instance
-
-    # ── Properties ────────────────────────────────────────────────────────────
-
-    @property
-    def connected(self) -> bool:
-        return self.state != MachineState.DISCONNECTED
-
-    @property
-    def jubilee_ip(self) -> str:
-        return self._config.machine_address or "jubilee.local"
-
-    # ── Connection lifecycle ───────────────────────────────────────────────────
-
-    async def connect(self, config: HardwareConfig) -> None:
-        """
-        Initiate hardware connection.  Called from a background asyncio.Task
-        so the HTTP 202 response returns immediately.
-
-        State transitions:  DISCONNECTED → HOMING → IDLE  (success)
-                            DISCONNECTED → HOMING → ERROR (failure)
-        """
-        self._config = config
-        self.state   = MachineState.HOMING
-        try:
-            from src.JubileeManager import JubileeManager as _JM   # lazy import
-            self._manager = _JM(
-                num_piston_dispensers=config.num_dispensers,
-                num_pistons_per_dispenser=config.pistons_per_dispenser,
-            )
-            success = await asyncio.to_thread(
-                self._manager.connect,
-                machine_address=config.machine_address,
-                scale_port=config.scale_port,
-            )
-            if not success:
-                raise RuntimeError("JubileeManager.connect() returned False")
-            self.state = MachineState.IDLE
-        except Exception:
-            self.state    = MachineState.ERROR
-            self._manager = None
-            raise
-
-    async def disconnect(self) -> None:
-        if self._manager is not None:
-            await asyncio.to_thread(self._manager.disconnect)
-            self._manager = None
-        self.state = MachineState.DISCONNECTED
-
-    # ── Scale reads ───────────────────────────────────────────────────────────
-
-    async def get_weight_unstable(self) -> float:
-        if self._manager and self._manager.connected:
-            return await asyncio.to_thread(self._manager.get_weight_unstable)
-        return 0.0
-
-    async def get_weight_stable(self) -> float:
-        if self._manager and self._manager.connected:
-            return await asyncio.to_thread(self._manager.get_weight_stable)
-        return 0.0
-
-    # ── Dispenser management ──────────────────────────────────────────────────
-
-    def get_dispensers(self) -> list[DispenserStatus]:
-        if self._manager and self._manager.connected:
-            return [
-                DispenserStatus(index=d.index, pistons_remaining=d.num_pistons)
-                for d in self._manager.piston_dispensers
-            ]
-        return []
-
-    def update_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
-        if not (self._manager and self._manager.connected):
-            return False
-        dispensers = self._manager.piston_dispensers
-        if index >= len(dispensers):
-            return False
-        dispensers[index].num_pistons = num_pistons
-        return True
-
-    # ── Job execution ─────────────────────────────────────────────────────────
-
-    async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress, job_log=None
-    ) -> None:
-        self.state = MachineState.RUNNING
-        if job_log is not None and self._manager is not None:
-            self._manager.active_job_log = job_log
-        try:
-            for i, well in enumerate(wells):
-                if not progress.running:
-                    break
-                progress.current_item = well["well_id"]
-                success = await asyncio.to_thread(
-                    self._manager.dispense_to_well,
-                    well["well_id"],
-                    well["target_weight"],
-                )
-                if not success:
-                    raise RuntimeError(
-                        f"Dispense failed for well {well['well_id']!r}"
-                    )
-                progress.completed = i + 1
-        finally:
-            if self._manager is not None:
-                self._manager.active_job_log = None
-            if self.state == MachineState.RUNNING:
-                self.state = MachineState.IDLE
-
-    async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress, job_log=None
-    ) -> None:
-        self.state = MachineState.RUNNING
-        try:
-            for i, sample in enumerate(samples):
-                if not progress.running:
-                    break
-                progress.current_item = sample["sample_id"]
-                # TODO: replace with asyncio.to_thread(hardness_tester.measure, ...) once integrated
-                await asyncio.sleep(1.5)
-                if job_log is not None:
-                    job_log.update_sample(sample["sample_id"], result=None)
-                progress.completed = i + 1
-        finally:
-            if self.state == MachineState.RUNNING:
-                self.state = MachineState.IDLE
 
 
 # =============================================================================
@@ -449,11 +136,14 @@ class ConnectionManager:
 # Module-level singletons
 # =============================================================================
 
-hw:       MockHardwareManager | HardwareManager = (
+hw:        MockHardwareManager | HardwareManager = (
     MockHardwareManager() if MOCK_HARDWARE else HardwareManager()
 )
 ws_mgr   = ConnectionManager()
 progress = JobProgress()
+level_cam: _BaseLevelCameraStreamer = (
+    MockLevelCameraStreamer() if MOCK_HARDWARE else LevelCameraStreamer()
+)
 
 
 # =============================================================================
@@ -492,6 +182,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(telemetry_loop())
     yield
     task.cancel()
+    level_cam.stop()
 
 
 app = FastAPI(title="Jubilee Automation API", lifespan=lifespan)
@@ -643,11 +334,14 @@ async def abort_job():
     """
     Emergency stop: immediately halt all motion.
 
-    Sets machine state to ERROR.  The hardware must be re-homed before
-    starting a new job.  On real hardware this triggers a Duet M112 e-stop.
+    Signals the job loop to exit, then delegates to the hardware manager's
+    abort() method, which sends M112 to the Duet controller on real hardware.
+    Sets machine state to ERROR so the job finally-block cannot silently
+    reset it back to IDLE.  The hardware must be restarted before starting
+    a new job.
     """
     progress.running = False
-    hw.state = MachineState.ERROR   # prevents job finally-block from resetting to IDLE
+    await hw.abort()
     return {"aborted": True}
 
 
@@ -801,6 +495,43 @@ async def get_job_file(filename: str):
         return json.loads(path.read_text())
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
+
+
+# =============================================================================
+# REST — level camera
+# =============================================================================
+
+@app.post("/api/camera/start", status_code=200)
+async def start_level_camera():
+    """Start the bubble-level camera stream."""
+    if level_cam.active:
+        return {"active": True, "message": "Camera already running."}
+    try:
+        await asyncio.to_thread(level_cam.start)
+        return {"active": True, "message": "Camera started."}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/camera/stop", status_code=200)
+async def stop_level_camera():
+    """Stop the bubble-level camera stream."""
+    await asyncio.to_thread(level_cam.stop)
+    return {"active": False, "message": "Camera stopped."}
+
+
+@app.get("/api/camera/stream")
+async def level_camera_stream():
+    """MJPEG stream of the bubble-level camera."""
+    if not level_cam.active:
+        raise HTTPException(
+            status_code=503,
+            detail="Camera is not running. POST /api/camera/start first.",
+        )
+    return StreamingResponse(
+        level_cam.frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 # =============================================================================

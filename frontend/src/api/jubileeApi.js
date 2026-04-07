@@ -109,6 +109,20 @@ export function fetchJobLog() {
 }
 
 // ---------------------------------------------------------------------------
+// Level camera
+// ---------------------------------------------------------------------------
+
+/** POST /api/camera/start - begin streaming the bubble-level camera. */
+export function startLevelCamera() {
+  return request('/camera/start', { method: 'POST' })
+}
+
+/** POST /api/camera/stop - stop the bubble-level camera stream. */
+export function stopLevelCamera() {
+  return request('/camera/stop', { method: 'POST' })
+}
+
+// ---------------------------------------------------------------------------
 // Dispensers
 // ---------------------------------------------------------------------------
 

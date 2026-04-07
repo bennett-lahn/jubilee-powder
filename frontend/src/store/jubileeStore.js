@@ -37,6 +37,8 @@ import {
   cancelJob as apiCancelJob,
   abortJob as apiAbortJob,
   fetchJobLog as apiFetchJobLog,
+  startLevelCamera as apiStartLevelCamera,
+  stopLevelCamera as apiStopLevelCamera,
 } from '../api/jubileeApi'
 
 function wsUrl() {
@@ -72,6 +74,11 @@ export const useJubileeStore = create((set, get) => ({
   // -------------------------------------------------------------------------
   jobLog:     null,
   jobLogError: null,
+
+  // -------------------------------------------------------------------------
+  // Level camera state
+  // -------------------------------------------------------------------------
+  levelCameraActive: false,
 
   // -------------------------------------------------------------------------
   // WebSocket connection state
@@ -277,6 +284,30 @@ export const useJubileeStore = create((set, get) => ({
       return { ok: true }
     } catch (err) {
       set({ jobLogError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Level camera actions
+  // -------------------------------------------------------------------------
+
+  async startLevelCamera() {
+    try {
+      await apiStartLevelCamera()
+      set({ levelCameraActive: true })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async stopLevelCamera() {
+    try {
+      await apiStopLevelCamera()
+      set({ levelCameraActive: false })
+      return { ok: true }
+    } catch (err) {
       return { ok: false, error: err.message }
     }
   },

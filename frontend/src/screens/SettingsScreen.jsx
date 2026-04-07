@@ -12,7 +12,8 @@
  *   - Unlocked only when DISCONNECTED or ERROR.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { ArrowLeft, Camera } from 'lucide-react'
 import { useJubileeStore } from '../store/jubileeStore'
 import { Button, Card, TextInput, StatusBadge } from '../components/ui'
 
@@ -32,10 +33,67 @@ const STATE_BADGE = {
   disconnected: 'idle',
 }
 
+function LevelCameraView({ onClose }) {
+  const startLevelCamera = useJubileeStore((s) => s.startLevelCamera)
+  const stopLevelCamera  = useJubileeStore((s) => s.stopLevelCamera)
+  const [ready, setReady]   = useState(false)
+  const [error, setError]   = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const result = await startLevelCamera()
+      if (cancelled) return
+      if (!result.ok) {
+        setError(result.error)
+      } else {
+        setReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+      stopLevelCamera()
+    }
+  }, [startLevelCamera, stopLevelCamera])
+
+  return (
+    <div className="flex flex-col gap-4 h-full">
+      <Card className="flex items-center gap-3 p-3 shrink-0">
+        <Button variant="ghost" size="sm" onClick={onClose} className="shrink-0">
+          <ArrowLeft size={16} className="mr-1" />
+          Back to Settings
+        </Button>
+        <div className="w-px h-4 bg-slate-700 shrink-0" />
+        <Camera size={16} className="text-slate-400" />
+        <span className="text-slate-300 font-medium">Scale Bubble Level</span>
+      </Card>
+
+      <Card className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-hidden">
+        {error ? (
+          <div className="text-center">
+            <StatusBadge status="error" label="Camera Error" />
+            <p className="text-xs text-slate-500 mt-2">{error}</p>
+          </div>
+        ) : !ready ? (
+          <p className="text-slate-500 text-sm">Starting camera...</p>
+        ) : (
+          <img
+            src="/api/camera/stream"
+            alt="Scale bubble level"
+            className="max-w-full max-h-full rounded-lg object-contain"
+          />
+        )}
+      </Card>
+    </div>
+  )
+}
+
 export default function SettingsScreen() {
   const telemetry         = useJubileeStore((s) => s.telemetry)
   const connectHardware   = useJubileeStore((s) => s.connectHardware)
   const disconnectHardware = useJubileeStore((s) => s.disconnectHardware)
+
+  const [showLevelCamera, setShowLevelCamera] = useState(false)
 
   const hwState    = telemetry.state ?? 'disconnected'
   const isIdle     = hwState === 'idle'
@@ -81,6 +139,10 @@ export default function SettingsScreen() {
     if (!result.ok) {
       setStatusMsg(`Disconnect failed: ${result.error}`)
     }
+  }
+
+  if (showLevelCamera) {
+    return <LevelCameraView onClose={() => setShowLevelCamera(false)} />
   }
 
   return (
@@ -153,6 +215,20 @@ export default function SettingsScreen() {
             disabled={inputsLocked}
             hint="Linux: /dev/ttyUSB0   Windows: COM3"
           />
+        </Card>
+
+        {/* Scale level camera */}
+        <Card className="flex items-center justify-between p-4">
+          <div>
+            <p className="text-slate-200 font-semibold">Scale Level Camera</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              View the bubble level to help level the scale.
+            </p>
+          </div>
+          <Button onClick={() => setShowLevelCamera(true)}>
+            <Camera size={16} className="mr-2" />
+            Open Camera
+          </Button>
         </Card>
 
         {/* Connect / Disconnect */}

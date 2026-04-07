@@ -6,6 +6,7 @@ numpy>=1.21.0
 science-jubilee 
 tesserocr
 opencv-python
+PyTurboJPEG>=1.7.0 # TODO DOCS: Also need libturbojpeg
 pillow
 matplotlib>=3.5.0
 python-statemachine>=2.1.0 
