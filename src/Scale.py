@@ -1,4 +1,5 @@
 import time
+import threading
 import serial
 from enum import Enum
 
@@ -40,6 +41,9 @@ ACK_COMMANDS = {
 
 # Commands that send two ACKs (one when received, one when executed)
 DUAL_ACK_COMMANDS = {'CAL', 'ON', 'P', 'R', 'Z', 'T'}
+
+# Commands that return weight data (used for caching the last weight result)
+WEIGHT_DATA_COMMANDS = frozenset({'Q', 'S', 'SI', 'SIR', '\x1bP', 'PRT'})
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -159,6 +163,23 @@ class Scale:
         self._is_connected = False
         self._serial_instance = serial_instance
 
+        # Concurrency: monitor used to serialise access to the scale.
+        # _busy is True while a command is in flight; threads that arrive
+        # while it is set wait on _cmd_condition and are woken one at a
+        # time when the running command finishes.
+        # _waiting_count tracks how many threads are currently suspended
+        # inside wait(); it is read by get_weight_for_telemetry to decide
+        # whether to yield to higher-priority callers.
+        self._cmd_condition: threading.Condition = threading.Condition()
+        self._busy: bool = False
+        self._waiting_count: int = 0
+
+        # Cache of the most recent successful weight-data response.
+        # _last_weight_time is a float from time.time() (seconds, sub-ms
+        # precision); _last_weight_message is the raw decoded response string.
+        self._last_weight_time: float | None = None
+        self._last_weight_message: str | None = None
+
     def connect(self):
         """
         Establish a serial connection to the scale.
@@ -208,6 +229,75 @@ class Scale:
         :return: True if connected, False otherwise
         """
         return self._is_connected and self.serial and self.serial.is_open
+
+    def _acquire_busy(self) -> bool:
+        """
+        Atomically wait until no command is running, then mark the scale as
+        busy for the calling thread.
+
+        Returns True if the caller had to block (another command was in flight
+        when this was called), False if the scale was idle immediately.
+        """
+        with self._cmd_condition:
+            blocked = self._busy
+            while self._busy:
+                self._waiting_count += 1
+                try:
+                    self._cmd_condition.wait()
+                finally:
+                    self._waiting_count -= 1
+            self._busy = True
+        return blocked
+
+    def _acquire_busy_for_telemetry(self) -> bool:
+        """
+        Variant of _acquire_busy for the telemetry thread.
+
+        In addition to the normal wait-until-idle behaviour, every time this
+        thread is woken it checks whether other threads are still queued on
+        the monitor.  If they are, it re-notifies one of them and goes back
+        to sleep, effectively giving non-telemetry commands priority.  This
+        repeats until no other waiters remain, at which point the telemetry
+        thread acquires the busy flag normally.
+
+        The behavior of this function is unspecified if multiple threads call acquire_busy_for_telemetry()
+        at the same time; it may cause starvation through livelock.
+
+        Returns True if the caller had to block at any point, False if the
+        scale was idle when first called.
+        """
+        with self._cmd_condition:
+            if not self._busy:
+                self._busy = True
+                return False
+
+            while True:
+                self._waiting_count += 1
+                try:
+                    self._cmd_condition.wait()
+                finally:
+                    self._waiting_count -= 1
+                    
+                if self._busy:
+                    # Scale was grabbed by someone else before we ran; wait again.
+                    continue
+
+                if self._waiting_count > 0:
+                    # Other commands are queued - yield to them.
+                    self._cmd_condition.notify()
+                    continue
+
+                self._busy = True
+                return True
+
+    def _release_busy(self) -> None:
+        """
+        Clear the busy flag and wake exactly one thread that is waiting on
+        the monitor (if any).
+        """
+        with self._cmd_condition:
+            self._busy = False
+            self._cmd_condition.notify()
 
     def _handle_specific_error(self, error: ScaleError, cmd: str, expect_ack: bool = True, is_dual_ack: bool = False) -> bool:
         """
@@ -394,15 +484,42 @@ class Scale:
 
     def _send_command(self, cmd: str, expect_data: bool = False) -> str:
         """
-        Send a command to the scale with retry logic and ACK handling.
-        
+        Acquire exclusive access to the scale, execute the command, update
+        the weight cache when appropriate, and release access.
+
         Args:
             cmd: Command string to send
             expect_data: If True, expects a data response after ACK
-            
+
         Returns:
             Response string from the scale
-            
+
+        Raises:
+            ScaleException: If command fails after retries or ACK timeout
+        """
+        self._acquire_busy()
+        try:
+            result = self._execute_command(cmd, expect_data)
+            if expect_data and cmd in WEIGHT_DATA_COMMANDS:
+                self._last_weight_time = time.time()
+                self._last_weight_message = result
+            return result
+        finally:
+            self._release_busy()
+
+    def _execute_command(self, cmd: str, expect_data: bool = False) -> str:
+        """
+        Send a command to the scale with retry logic and ACK handling.
+        Must only be called while the busy flag is held by the calling thread
+        (i.e. from _send_command or get_weight_for_telemetry).
+
+        Args:
+            cmd: Command string to send
+            expect_data: If True, expects a data response after ACK
+
+        Returns:
+            Response string from the scale
+
         Raises:
             ScaleException: If command fails after retries or ACK timeout
         """
@@ -655,6 +772,46 @@ class Scale:
         resp = self.request_stable_weight() if stable else self.request_instant_weight()
         print(f"[DEBUG] Response: {resp}")
         return self._parse_weight(resp, expect_stable=stable)
+
+    def get_weight_for_telemetry(self) -> float:
+        """
+        Get the current unstable weight for use by the telemetry background
+        thread.
+
+        Behaviour differs from get_weight(stable=False) in two ways:
+
+        Priority yielding: if, upon waking from a wait, other threads are
+        still queued on the monitor, this thread re-notifies one of them and
+        goes back to sleep.  This repeats until no other waiters remain,
+        giving non-telemetry commands effective priority over the telemetry
+        thread.
+
+        This function's behavior is unspecified if multiple threads call it simultaneously, as it will cause livelock.
+
+        Cache shortcut: if this call had to block at any point and the most
+        recently cached weight result is less than 400 ms old when this
+        thread finally acquires the scale, the cached value is returned
+        immediately without sending any command to the scale.  In all other
+        cases (no blocking occurred, or the cache is stale / absent) the scale
+        is queried with the SI (instant/unstable weight) command exactly as
+        get_weight(stable=False) would do, and the result becomes the new cached
+        weight.
+        """
+        blocked = self._acquire_busy_for_telemetry()
+        try:
+            if blocked and self._last_weight_time is not None:
+                age = time.time() - self._last_weight_time
+                if age < 0.5:
+                    print(f"[DEBUG] Telemetry: using cached weight ({age * 1000:.1f} ms old)")
+                    return self._parse_weight(self._last_weight_message, expect_stable=False)
+
+            resp = self._execute_command('SI', expect_data=True)
+            self._last_weight_time = time.time()
+            self._last_weight_message = resp
+            print(f"[DEBUG] Response: {resp}")
+            return self._parse_weight(resp, expect_stable=False)
+        finally:
+            self._release_busy()
 
     def _parse_weight(self, data: str, expect_stable: bool = True) -> float:
         """
