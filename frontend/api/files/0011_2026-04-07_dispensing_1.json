@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "id": 11,
+    "date": "2026-04-07",
+    "job_type": "dispensing",
+    "outcome": "aborted",
+    "units_completed": 1
+  },
+  "state": {
+    "molds": [
+      {
+        "well_id": "0",
+        "target_weight": 0.375,
+        "actual_weight": null,
+        "status": "incomplete"
+      }
+    ]
+  }
+}

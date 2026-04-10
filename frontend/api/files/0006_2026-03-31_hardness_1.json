@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "id": 6,
+    "date": "2026-03-31",
+    "job_type": "hardness",
+    "outcome": "successful",
+    "units_completed": 1
+  },
+  "state": {
+    "samples": [
+      {
+        "sample_id": "12",
+        "mode": "shore_a",
+        "result": 51.7,
+        "status": "complete"
+      }
+    ]
+  }
+}

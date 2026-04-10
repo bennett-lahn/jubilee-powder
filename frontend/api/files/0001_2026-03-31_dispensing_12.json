@@ -1,0 +1,85 @@
+{
+  "metadata": {
+    "id": 1,
+    "date": "2026-03-31",
+    "job_type": "dispensing",
+    "outcome": "successful",
+    "units_completed": 12
+  },
+  "state": {
+    "molds": [
+      {
+        "well_id": "0",
+        "target_weight": 0.578,
+        "actual_weight": 0.582,
+        "status": "complete"
+      },
+      {
+        "well_id": "4",
+        "target_weight": 0.105,
+        "actual_weight": 0.105,
+        "status": "complete"
+      },
+      {
+        "well_id": "6",
+        "target_weight": 0.578,
+        "actual_weight": 0.573,
+        "status": "complete"
+      },
+      {
+        "well_id": "8",
+        "target_weight": 0.578,
+        "actual_weight": 0.581,
+        "status": "complete"
+      },
+      {
+        "well_id": "10",
+        "target_weight": 0.105,
+        "actual_weight": 0.106,
+        "status": "complete"
+      },
+      {
+        "well_id": "15",
+        "target_weight": 0.578,
+        "actual_weight": 0.584,
+        "status": "complete"
+      },
+      {
+        "well_id": "18",
+        "target_weight": 0.578,
+        "actual_weight": 0.585,
+        "status": "complete"
+      },
+      {
+        "well_id": "19",
+        "target_weight": 0.578,
+        "actual_weight": 0.579,
+        "status": "complete"
+      },
+      {
+        "well_id": "20",
+        "target_weight": 0.578,
+        "actual_weight": 0.58,
+        "status": "complete"
+      },
+      {
+        "well_id": "21",
+        "target_weight": 0.578,
+        "actual_weight": 0.569,
+        "status": "complete"
+      },
+      {
+        "well_id": "22",
+        "target_weight": 0.578,
+        "actual_weight": 0.572,
+        "status": "complete"
+      },
+      {
+        "well_id": "23",
+        "target_weight": 0.578,
+        "actual_weight": 0.571,
+        "status": "complete"
+      }
+    ]
+  }
+}

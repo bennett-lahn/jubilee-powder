@@ -113,12 +113,8 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
         print(f"  ✓ Labware loaded in {labware_count}/{expected_slots} slots")
         
         if missing_labware:
-            # Map slot numbers to mold slot IDs for user reference
-            missing_well_ids = []
-            for slot_id in missing_labware:
-                row = chr(ord('A') + (slot_id // 4))
-                col = (slot_id % 4) + 1
-                missing_well_ids.append(f"{row}{col}")
+            # Use numerical slot IDs directly
+            missing_well_ids = [str(slot_id) for slot_id in missing_labware]
             
             warnings.append(f"⚠ No labware in slots: {', '.join(missing_well_ids)}")
             print(f"  ⚠ Missing labware in wells: {', '.join(missing_well_ids)}")
@@ -132,9 +128,8 @@ def validate_jubilee_manager_config(manager: JubileeManager) -> bool:
         
         for slot_id in range(16):
             slot_key = str(slot_id)
-            row = chr(ord('A') + (slot_id // 4))
-            col = (slot_id % 4) + 1
-            well_id = f"{row}{col}"
+            # Use numerical slot ID directly as well_id
+            well_id = str(slot_id)
             
             # Try to get the well
             if manager.state_machine:
@@ -268,7 +263,7 @@ def main():
     DUET_IP = "192.168.1.2"
     SCALE_PORT = "/dev/ttyUSB0"
     TARGET_WEIGHT = 0.5  # grams
-    TEST_WELL_ID = "A1"  # Mold slot to pick up mold from (A1 = slot 0)
+    TEST_WELL_ID = "0"  # Mold slot to pick up mold from (numerical index 0-17)
     FEEDRATE = FeedRate.MEDIUM  # Movement feedrate (FAST, MEDIUM, SLOW)
     
     # Total number of steps
@@ -300,7 +295,7 @@ def main():
     if scale_input:
         SCALE_PORT = scale_input
     
-    well_input = input(f"Enter well ID to test (A1-A7, B1-B7, C1-C4, default: {TEST_WELL_ID}): ").strip().upper()
+    well_input = input(f"Enter well ID to test (0-17, default: {TEST_WELL_ID}): ").strip()
     if well_input:
         TEST_WELL_ID = well_input
     

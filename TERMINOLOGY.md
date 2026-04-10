@@ -133,7 +133,7 @@ Ready position for the scale. Includes `scale_active` for active weighing operat
 ### "WeightWell" → "Mold"
 - The class name `WeightWell` should be renamed to `Mold`
 - References to "well" in the context of molds should be updated to "mold"
-- Well IDs (e.g., "A1", "0") can remain as identifiers, but the object itself is a "mold"
+- Mold IDs use numerical indexing (e.g., "0", "1", "2"), and the object itself is a "mold"
 
 ### "Dispense" (for powder filling) → "Fill" or "Add Powder"
 - When referring to adding powder to molds, use "fill" or "add powder"

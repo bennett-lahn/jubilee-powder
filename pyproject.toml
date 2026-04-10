@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+# Add the project root to sys.path so that both `src.*` and `tests.*` are importable.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: fast, fully-mocked tests with no I/O (run in CI)",
+    "integration: multi-component tests using MagicMock for hardware (run in CI)",
+    "hardware: tests that require physical hardware attached (run manually)",
+]

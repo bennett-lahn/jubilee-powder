@@ -61,7 +61,7 @@ from level_camera import LevelCameraStreamer, MockLevelCameraStreamer, _BaseLeve
 # ---------------------------------------------------------------------------
 # Toggle — flip to False when deploying on real hardware.
 # ---------------------------------------------------------------------------
-MOCK_HARDWARE: bool = True
+MOCK_HARDWARE: bool = False
 
 
 # =============================================================================

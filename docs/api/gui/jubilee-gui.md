@@ -89,8 +89,10 @@ python gui/jubilee_gui.py
 from gui.jubilee_gui import JubileeGUIApp
 
 if __name__ == '__main__':
+    print("before")
     app = JubileeGUIApp()
     app.run()
+    print("after")
 ```
 
 ## User Workflow

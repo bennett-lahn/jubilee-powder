@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "id": 2,
+    "date": "2026-03-31",
+    "job_type": "hardness",
+    "outcome": "successful",
+    "units_completed": 14
+  },
+  "state": {
+    "samples": [
+      {
+        "sample_id": "0",
+        "mode": "shore_a_d",
+        "result": 48.9,
+        "status": "complete"
+      },
+      {
+        "sample_id": "1",
+        "mode": "shore_d",
+        "result": 40.7,
+        "status": "complete"
+      },
+      {
+        "sample_id": "5",
+        "mode": "shore_a",
+        "result": 55.8,
+        "status": "complete"
+      },
+      {
+        "sample_id": "7",
+        "mode": "shore_d",
+        "result": 48.7,
+        "status": "complete"
+      },
+      {
+        "sample_id": "8",
+        "mode": "shore_a",
+        "result": 66.6,
+        "status": "complete"
+      },
+      {
+        "sample_id": "10",
+        "mode": "shore_a",
+        "result": 48.1,
+        "status": "complete"
+      },
+      {
+        "sample_id": "13",
+        "mode": "shore_d",
+        "result": 55.5,
+        "status": "complete"
+      },
+      {
+        "sample_id": "15",
+        "mode": "shore_a",
+        "result": 44.7,
+        "status": "complete"
+      },
+      {
+        "sample_id": "18",
+        "mode": "shore_a_d",
+        "result": 59.9,
+        "status": "complete"
+      },
+      {
+        "sample_id": "19",
+        "mode": "shore_a_d",
+        "result": 40.8,
+        "status": "complete"
+      },
+      {
+        "sample_id": "20",
+        "mode": "shore_a_d",
+        "result": 76.1,
+        "status": "complete"
+      },
+      {
+        "sample_id": "21",
+        "mode": "shore_a_d",
+        "result": 63.2,
+        "status": "complete"
+      },
+      {
+        "sample_id": "22",
+        "mode": "shore_a_d",
+        "result": 65.6,
+        "status": "complete"
+      },
+      {
+        "sample_id": "23",
+        "mode": "shore_a_d",
+        "result": 49.3,
+        "status": "complete"
+      }
+    ]
+  }
+}
