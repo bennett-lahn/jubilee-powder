@@ -208,9 +208,12 @@ class MovementExecutor:
             feedrate = self._feedrate
             self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
             self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
-            self._machine.gcode("M208 Z34.5:195")      # Move bed up so well fits under trickler, relax z-limit to do so
+            self._machine.gcode("M208 Z32.5:195")      # Move bed up so well fits under trickler, relax z-limit to do so
             self._machine.move_to(z=34.5, s=feedrate)
-            self._machine.move(dy=28, s=feedrate)    # Move mold under trickler    
+            self._machine.move(dy=7, s=feedrate)
+            # TODO: open chute
+            self._machine.move_to(z=32.5, s=feedrate)
+            self._machine.move(dy=19, s=feedrate)
             self._machine.gcode("M208 Z27:195")      # Move bed up so well is resting on scale, relax z-limit to do so
             self._machine.move_to(z=27, s=feedrate)
             self._machine.move(dy=-1, s= feedrate)   # Back off mold so tool isn't touching
@@ -251,14 +254,14 @@ class MovementExecutor:
             print("Picking mold from scale...")
             feedrate = self._feedrate
             self._machine.move(dy=1, s=feedrate)          # Return to model position
-            self._machine.move_to(z=34.5, s=feedrate)     # Pick up well off scale
-            self._machine.gcode("M208 Z38:195")           # Revert z-limit
-            self._machine.move(dy=-28, s=feedrate)        # Move well from under trickler
+            self._machine.move_to(z=32.5, s=feedrate)     # Pick up mold off scale
+            self._machine.gcode("M208 Z34.5:195")         # Revert z-limit to protect tool
+            self._machine.move(dy=-19, s=feedrate)        # Move mold from under trickler
             self._machine.move_to(z=34.5, s=feedrate)     # Move within z-limits
-            self._machine.gcode("M208 Z34.5:195")         # Restore z-limit to protect tool
+            self._machine.move(dy=-7, s=feedrate)         # Move all the way back from under trickler
             self._machine.move_to(z=ready_z, s=feedrate)  # Move mold out from trickler
             self._machine.move_to(v=30, s=feedrate)       # Move tool to travel position
-            self._machine.move(dy=-38, s=feedrate)        # Restore y position to position before well was placed
+            self._machine.move(dy=-38, s=feedrate)        # Restore y position to position before mold was placed
             return True
         except Exception as e:
             print(f"Error picking mold from scale: {e}")

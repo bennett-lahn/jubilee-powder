@@ -48,7 +48,8 @@ WEIGHT_DATA_COMMANDS = frozenset({'Q', 'S', 'SI', 'SIR', '\x1bP', 'PRT'})
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
-ACK_TIMEOUT = 5.0  # seconds for dual ACK commands
+ACK_TIMEOUT = 10.0       # seconds to wait for a ACK in single ACK commands
+ACK_TIMEOUT_DUAL = 20.0  # seconds to wait for ACK in dual-ACK commands
 
 class ScaleError(Enum):
     E00 = 'E00'  # Communications error
@@ -296,6 +297,8 @@ class Scale:
         the monitor (if any).
         """
         with self._cmd_condition:
+            # Scale should be ready at this point, but sending another command too soon after receiving an ACK can cause EC,02 not ready error
+            time.sleep(0.5)
             self._busy = False
             self._cmd_condition.notify()
 
@@ -351,10 +354,10 @@ class Scale:
                 
                 # Wait for response
                 if expect_ack:
-                    ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT)
+                    ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT_DUAL if is_dual_ack else ACK_TIMEOUT)
                     if ack_received:
                         if is_dual_ack:
-                            ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT, initial_buffer=received_data)
+                            ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT_DUAL, initial_buffer=received_data)
                             if ack_received:
                                 print(f"[DEBUG] {error.value}: Command '{cmd}' succeeded after retry")
                                 return True
@@ -540,7 +543,7 @@ class Scale:
                 
                 if expect_ack:
                     # Wait for first ACK
-                    ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT)
+                    ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT_DUAL if is_dual_ack else ACK_TIMEOUT)
                     
                     # Handle specific errors
                     if error_received in (ScaleError.E02, ScaleError.E03, ScaleError.E11):
@@ -571,7 +574,7 @@ class Scale:
                     # Pass any bytes that arrived alongside the first ACK so they
                     # are not discarded when both ACKs come in the same OS read.
                     if is_dual_ack:
-                        ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT, initial_buffer=received_data)
+                        ack_received, received_data, error_received = self._wait_for_ack(ACK_TIMEOUT_DUAL, initial_buffer=received_data)
                         
                         # Handle specific errors in second ACK
                         if error_received in (ScaleError.E02, ScaleError.E03, ScaleError.E11):

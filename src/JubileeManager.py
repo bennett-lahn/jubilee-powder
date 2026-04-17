@@ -353,7 +353,7 @@ class JubileeManager:
                 z_height_id="mold_transfer_safe"
             )
             
-            # Home all axes (X, Y, Z, U) through state machine
+            # Home all axes (X, Y, Z, U, V) through state machine
             # This requires no tool picked up and no mold
             # Returns to global_ready position at mold_transfer_safe z-height
             result = self.state_machine.validated_home_all()
@@ -368,12 +368,6 @@ class JubileeManager:
             result = self.state_machine.validated_pickup_tool(self.manipulator)
             if not result.valid:
                 raise RuntimeError(f"Failed to pick up tool: {result.reason}")
-            
-            # Home the manipulator axis (V) through state machine
-            # This requires no mold picked up
-            result = self.state_machine.validated_home_manipulator(manipulator_axis='V')
-            if not result.valid:
-                raise RuntimeError(f"Failed to home manipulator: {result.reason}")
             
             self.connected = True
             return True
