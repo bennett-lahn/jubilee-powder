@@ -110,7 +110,7 @@ M203 X18000 Y18000 Z800 U9000 V2500     ; Maximum axis speeds (mm/min)
 M203 W200                               ; Scale axis, deg/min
 M203 E500 M400
 M566 X500 Y500 Z500 E3000 U50 V50 M500  ; Maximum jerk speeds (mm/min)
-M566 W80                               ; Scale jerk (deg/min)
+M566 W800                               ; Scale jerk (deg/min)
 
 ; Servos
 ;-------------------------------------------------------------------------------

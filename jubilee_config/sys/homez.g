@@ -22,9 +22,9 @@ G91                     ; Relative mode
 G1 H2 Z25 F5000         ; Lower the bed
 G90                     ; back to absolute positioning
 
-; G90 G1 X150 Y130 F10000 ; Move to the center of the bed -20mm to not probe on
+; G90 G1 X150 Y130 F3000 ; Move to the center of the bed -20mm to not probe on
                         ; top of the mandal rose bed magnet skrew head
-G1 X137 Y77 F2000
+G1 X137 Y77 F6000
 
 M558 F500               ; Set the probing speed
 G30                     ; Probe
