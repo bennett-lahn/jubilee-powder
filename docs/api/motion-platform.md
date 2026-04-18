@@ -14,6 +14,72 @@ The state machine:
 !!! warning "Advanced Usage"
     Most users should interact with `JubileeManager` instead of using the state machine directly. Only use the state machine when you need operations not provided by `JubileeManager`.
 
+## State Machine Diagram
+
+The state machine operates on two layers: a **motion control FSM** and an **operational workflow** defined by named positions and payload context.
+
+### Motion Control FSM
+
+The inner FSM (powered by `python-statemachine`) manages three exclusive control states. Every validated method enters and exits `Moving` transiently; the `Tool Engaged` state is held while the mold rests on the scale.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+
+    Idle --> Moving : begin_motion
+    Moving --> Idle : complete_motion / abort_motion
+    Moving --> ToolEngaged : complete_motion_with_tool
+    Idle --> ToolEngaged : engage_tool
+    ToolEngaged --> Idle : disengage_tool
+
+    state "Tool Engaged" as ToolEngaged
+```
+
+### Operational Workflow
+
+The following diagram shows the logical position states and the actions that connect them. **All N mold slots resolve to the same `Mold Slot` state, and all M dispensers resolve to the same `Dispenser` state** - the state machine's validation logic is identical regardless of which specific slot or dispenser is targeted.
+
+Payload state transitions are shown on the self-loop actions that change what the manipulator is carrying.
+
+```mermaid
+stateDiagram-v2
+    [*] --> GlobalReady : home_all
+
+    state "Global Ready" as GlobalReady
+    state "Mold Slot (any of N slots)" as MoldSlot
+    state "Scale Ready" as ScaleReady
+    state "Scale Active" as ScaleActive
+    state "Dispenser (any of M dispensers)" as Dispenser
+
+    note right of ScaleActive
+        mold_on_scale: true
+        FSM control state: Tool Engaged
+    end note
+
+    note right of MoldSlot
+        All N mold slots map to
+        this single logical state.
+    end note
+
+    GlobalReady --> GlobalReady : pickup_tool / park_tool
+    GlobalReady --> MoldSlot : move_to_mold_slot
+
+    MoldSlot --> MoldSlot : pick_mold (payload → mold_without_top_piston)
+    MoldSlot --> MoldSlot : place_mold (payload → empty)
+    MoldSlot --> ScaleReady : move_to_scale
+
+    ScaleReady --> MoldSlot : move_to_mold_slot
+    ScaleReady --> ScaleActive : place_mold_on_scale
+    ScaleReady --> Dispenser : move_to_dispenser
+    ScaleReady --> ScaleReady : tamp
+
+    ScaleActive --> ScaleActive : fill_powder
+    ScaleActive --> ScaleReady : pick_mold_from_scale
+
+    Dispenser --> Dispenser : retrieve_piston (payload → mold_with_top_piston)
+    Dispenser --> MoldSlot : move_to_mold_slot
+```
+
 ## Class Reference
 
 ::: src.MotionPlatformStateMachine.MotionPlatformStateMachine

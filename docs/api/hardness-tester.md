@@ -657,5 +657,5 @@ On desktop PC:
 ## See Also
 
 - [Reading LCD Displays Guide](../how-to/reading-lcd-displays.md) - User-facing tutorial
-- [Segment Layout Guide](../../SEGMENT_LAYOUT_GUIDE.md) - Technical segment details
+<!-- - [Segment Layout Guide](../../SEGMENT_LAYOUT_GUIDE.md) - Technical segment details -->
 - [Architecture Overview](../concepts/architecture.md) - System design
