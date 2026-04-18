@@ -14,6 +14,64 @@ The state machine:
 !!! warning "Advanced Usage"
     Most users should interact with `JubileeManager` instead of using the state machine directly. Only use the state machine when you need operations not provided by `JubileeManager`.
 
+## State Machine Diagram
+
+The state machine operates on two layers: a **motion control FSM** and an **operational workflow** defined by named positions and payload context.
+
+### Motion Control FSM
+
+The inner FSM (powered by `python-statemachine`) manages three exclusive control states. Every validated method enters and exits `Moving` transiently; the `Tool Engaged` state is held while the mold rests on the scale.
+
+```mermaid
+graph LR
+    classDef fsm fill:#f1f5f9,stroke:#64748b,color:#1e293b
+
+    s(( )) --> Idle
+
+    Idle([Idle])
+    Moving([Moving])
+    TE([Tool Engaged])
+
+    Idle -->|begin_motion| Moving
+    Moving -->|"complete_motion / abort_motion"| Idle
+    Moving -->|complete_motion_with_tool| TE
+    Idle -->|engage_tool| TE
+    TE -->|disengage_tool| Idle
+
+    class Idle,Moving,TE fsm
+```
+
+### Operational Workflow
+
+The diagram below shows the logical position states and the actions that connect them. The `Mold Slot` subgraph groups all N physical slots into a single logical region - the validation logic is identical for every slot. Payload state is encoded as three distinct nodes within that region, so pick/place operations become directed edges rather than self-loops. In-place operations that leave the position unchanged (`tamp`, `fill_powder`, `pickup_tool / park_tool`) are listed inside the node label. Scale Active is highlighted to indicate that the FSM's `Tool Engaged` control state is active while the mold is on the scale.
+
+```mermaid
+graph LR
+    classDef pos fill:#dbeafe,stroke:#3b82f6,color:#1e293b
+    classDef hot fill:#fef3c7,stroke:#f59e0b,color:#1e293b
+
+    s(( )) -->|home_all| GR["Global Ready<br>pickup_tool / park_tool"]
+
+    subgraph Slots["Mold Slot — same logic for all N slots"]
+        MS_E(["empty"])
+        MS_M(["mold, no piston"])
+        MS_P(["mold + piston"])
+        MS_E -->|pick_mold| MS_M
+        MS_P -->|place_mold| MS_E
+    end
+
+    GR -->|move_to_mold_slot| MS_E
+    MS_M -->|move_to_scale| SR["Scale Ready<br>tamp"]
+    SR -->|place_mold_on_scale| SA["Scale Active<br>tool engaged · fill_powder"]
+    SA -->|pick_mold_from_scale| SR
+    SR -->|move_to_dispenser| D["Dispenser<br>any of M"]
+    D -->|retrieve_piston| MS_P
+    SR -->|move_to_mold_slot| MS_M
+
+    class GR,MS_E,MS_M,MS_P,SR,D pos
+    class SA hot
+```
+
 ## Class Reference
 
 ::: src.MotionPlatformStateMachine.MotionPlatformStateMachine

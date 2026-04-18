@@ -26,6 +26,7 @@ The ViewModel:
 
 ## Class Reference
 
+<!-- API reference temporarily unavailable: the gui module has been moved/removed.
 ::: gui.jubilee_view_model.JubileeViewModel
     options:
       members:
@@ -44,13 +45,16 @@ The ViewModel:
         - update_dispenser_pistons
       show_root_heading: true
       show_source: false
+-->
 
 ## DispensingJob
 
+<!-- API reference temporarily unavailable: the gui module has been moved/removed.
 ::: gui.jubilee_view_model.DispensingJob
     options:
       show_root_heading: true
       show_source: false
+-->
 
 ## Usage Examples
 
