@@ -1865,7 +1865,93 @@ class MotionPlatformStateMachine(StateMachine):
             execution_func=self._executor.execute_fill_powder,
             target_weight=target_weight
         )
-    
+
+    def validated_move_to_global_ready(
+        self
+    ) -> MoveValidationResult:
+        """
+
+        """
+        if self.context.scale is None:
+            return MoveValidationResult(
+                valid=False,
+                reason="Scale not configured"
+            )
+        
+        # Get ready position coordinates from SCALE_READY position
+        try:
+            global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
+        except KeyError:
+            return MoveValidationResult(
+                valid=False,
+                reason="global_ready position not defined in configuration"
+            )
+        
+        if not global_ready_pos.coordinates:
+            return MoveValidationResult(
+                valid=False,
+                reason="GLOBAL_READY position does not have coordinates defined"
+            )
+        
+        ready_coords = global_ready_pos.coordinates
+        
+        # Validate required coordinates exist
+        if ready_coords.x is None:
+            return MoveValidationResult(
+                valid=False,
+                reason="GLOBAL_READY position missing X coordinate"
+            )
+        if ready_coords.y is None:
+            return MoveValidationResult(
+                valid=False,
+                reason="GLOBAL_READY position missing Y coordinate"
+            )
+        if ready_coords.v is None:
+            return MoveValidationResult(
+                valid=False,
+                reason="GLOBAL_READY position missing V coordinate"
+            )
+        
+        # Resolve z coordinate if needed
+        ready_z = None
+        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
+            if not self.context.z_height_id:
+                return MoveValidationResult(
+                    valid=False,
+                    reason="Z height policy required but z_height_id not set in context"
+                )
+            z_heights = self._registry.z_heights
+            if self.context.z_height_id not in z_heights:
+                return MoveValidationResult(
+                    valid=False,
+                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
+                )
+            z_config = z_heights[self.context.z_height_id]
+            if isinstance(z_config, dict):
+                ready_z = z_config.get("z_coordinate")
+            if ready_z is None:
+                return MoveValidationResult(
+                    valid=False,
+                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
+                )
+        elif ready_coords.z is not None:
+            ready_z = ready_coords.z
+        else:
+            return MoveValidationResult(
+                valid=False,
+                reason="GLOBAL_READY position missing Z coordinate"
+            )
+
+        return self._validate_and_execute_move(
+            target_position_id="global_ready",
+            execution_func=self._executor.execute_move_to_scale_location,
+            ready_x=ready_coords.x,
+            ready_y=ready_coords.y,
+            ready_z=ready_z,
+            ready_v=ready_coords.v
+        )
+
+
     def validated_home_tamper(
         self,
         tamper_axis: str = 'V'
@@ -1893,7 +1979,7 @@ class MotionPlatformStateMachine(StateMachine):
             execution_func=self._executor.execute_home_tamper,
             tamper_axis=tamper_axis
         )
-    
+
     def validated_home_all(
         self
     ) -> MoveValidationResult:

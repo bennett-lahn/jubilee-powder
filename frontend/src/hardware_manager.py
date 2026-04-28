@@ -1,25 +1,22 @@
 """
 Hardware managers for the Jubilee Automation server.
 
-MockHardwareManager
--------------------
-Standalone simulation of the Jubilee hardware for UI development.
-No physical hardware required.  Scale readings use a slow sine drift plus
-Gaussian noise to mimic the real A&D FX-120i serial scale output.  Job
-execution advances JobProgress in-place via async sleep to produce realistic
-per-well timing visible through the telemetry WebSocket.
+Both classes below expose an identical public API. Switch between them by
+setting ``MOCK_HARDWARE`` in ``server.py``; no other code needs to change.
 
-HardwareManager
----------------
-Production wrapper around the real JubileeManager.  All blocking serial /
-network calls are offloaded to asyncio.to_thread() so the uvicorn event loop
-is never stalled.
+MockHardwareManager:
+    Standalone simulation of the Jubilee hardware for UI development. No
+    physical hardware required. Scale readings use a slow sine drift plus
+    Gaussian noise to mimic the real A&D FX-120i serial scale output. Job
+    execution advances ``JobProgress`` in-place via ``asyncio.sleep()`` to
+    produce realistic per-well timing visible through the telemetry WebSocket.
 
-JubileeManager is imported lazily inside connect() so the server starts
-cleanly on developer machines that lack the science_jubilee package.
-
-Both classes expose an identical public API — switch between them by setting
-MOCK_HARDWARE in server.py.
+HardwareManager:
+    Production wrapper around the real ``JubileeManager``. All blocking serial
+    or network calls are offloaded to ``asyncio.to_thread()`` so the uvicorn
+    event loop is never stalled. ``JubileeManager`` is imported lazily inside
+    ``connect()`` so the server starts cleanly on developer machines that lack
+    the ``science_jubilee`` package.
 """
 
 import asyncio
@@ -45,6 +42,13 @@ from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 # =============================================================================
 
 class MockHardwareManager:
+    """Simulated hardware manager for UI development without physical hardware.
+
+    Scale readings use a sine-wave drift plus Gaussian noise to approximate
+    the output of the A&D FX-120i scale. Job loops advance ``JobProgress``
+    via ``asyncio.sleep()`` with per-well delays that match real hardware
+    timing, so the WebSocket telemetry looks realistic during development.
+    """
 
     def __init__(self) -> None:
         self.state:   MachineState  = MachineState.DISCONNECTED
@@ -66,6 +70,14 @@ class MockHardwareManager:
     # ── Connection lifecycle ───────────────────────────────────────────────────
 
     async def connect(self, config: HardwareConfig) -> None:
+        """Simulate a hardware connection and homing sequence.
+
+        Transitions ``state`` from ``DISCONNECTED`` → ``HOMING`` → ``IDLE``
+        with a 2-second sleep to mimic the real homing sequence.
+
+        Args:
+            config: Hardware configuration (dispensers, pistons, addresses).
+        """
         self._config = config
         self._dispensers = [
             DispenserStatus(index=i, pistons_remaining=config.pistons_per_dispenser)
@@ -76,26 +88,52 @@ class MockHardwareManager:
         self.state = MachineState.IDLE
 
     async def disconnect(self) -> None:
+        """Clear dispenser state and set machine state to DISCONNECTED."""
         self._dispensers = []
         self.state = MachineState.DISCONNECTED
 
     # ── Scale reads ───────────────────────────────────────────────────────────
 
     async def get_weight_unstable(self) -> float:
+        """Return a simulated live scale reading with drift and noise.
+
+        Returns:
+            float: Simulated weight in grams (sine drift + Gaussian noise),
+            always >= 0.
+        """
         t     = time.monotonic() - self._t0
         drift = math.sin(t * 0.15) * 1.8
         noise = random.gauss(0.0, 0.04)
         return round(max(0.0, self._scale_base + drift + noise), 3)
 
     async def get_weight_stable(self) -> float:
+        """Return a simulated stable scale reading with minimal noise.
+
+        Returns:
+            float: Simulated stable weight in grams (Gaussian noise only).
+        """
         return round(self._scale_base + random.gauss(0.0, 0.008), 3)
 
     # ── Dispenser management ──────────────────────────────────────────────────
 
     def get_dispensers(self) -> list[DispenserStatus]:
+        """Return a snapshot of all dispenser statuses.
+
+        Returns:
+            list[DispenserStatus]: Copy of the internal dispenser list.
+        """
         return list(self._dispensers)
 
     def update_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
+        """Update the remaining piston count for a single dispenser.
+
+        Args:
+            index: Zero-based dispenser index.
+            num_pistons: New piston count.
+
+        Returns:
+            bool: ``True`` on success, ``False`` if the index is out of range.
+        """
         if index >= len(self._dispensers):
             return False
         self._dispensers[index] = DispenserStatus(
@@ -108,6 +146,18 @@ class MockHardwareManager:
     async def run_dispensing_job(
         self, wells: list[dict], progress: JobProgress, job_log=None
     ) -> None:
+        """Simulate a powder dispensing job.
+
+        Iterates over ``wells`` sequentially, sleeping 2 s per well to mimic
+        real hardware timing. Updates ``progress`` in-place and optionally
+        records simulated actual weights in ``job_log``.
+
+        Args:
+            wells: Ordered list of well dicts with ``well_id`` and
+                ``target_weight`` keys.
+            progress: Shared ``JobProgress`` instance updated as wells complete.
+            job_log: Optional ``JobLog`` instance for recording results.
+        """
         self.state = MachineState.RUNNING
         try:
             for i, well in enumerate(wells):
@@ -131,6 +181,17 @@ class MockHardwareManager:
     async def run_hardness_job(
         self, samples: list[dict], progress: JobProgress, job_log=None
     ) -> None:
+        """Simulate a hardness testing job.
+
+        Iterates over ``samples`` sequentially, sleeping 1.5 s per sample.
+        Simulated hardness results are drawn from a uniform distribution.
+
+        Args:
+            samples: Ordered list of sample dicts with ``sample_id`` and
+                ``mode`` keys.
+            progress: Shared ``JobProgress`` instance updated as samples complete.
+            job_log: Optional ``JobLog`` instance for recording results.
+        """
         self.state = MachineState.RUNNING
         try:
             for i, sample in enumerate(samples):
@@ -149,7 +210,7 @@ class MockHardwareManager:
                 self.state = MachineState.IDLE
 
     async def abort(self) -> None:
-        """Simulate an emergency stop.  State goes to ERROR immediately."""
+        """Simulate an emergency stop. Transitions state to ERROR immediately."""
         self.state = MachineState.ERROR
 
 
@@ -158,6 +219,13 @@ class MockHardwareManager:
 # =============================================================================
 
 class HardwareManager:
+    """Production wrapper around ``JubileeManager`` for real hardware.
+
+    All blocking serial or network calls are offloaded via ``asyncio.to_thread()``
+    so the uvicorn event loop is never stalled. ``JubileeManager`` is imported
+    lazily inside ``connect()`` so the server starts cleanly on machines that
+    lack the ``science_jubilee`` package.
+    """
 
     def __init__(self) -> None:
         self.state:    MachineState   = MachineState.DISCONNECTED
@@ -206,6 +274,7 @@ class HardwareManager:
             raise
 
     async def disconnect(self) -> None:
+        """Disconnect from hardware and reset manager state."""
         if self._manager is not None:
             await asyncio.to_thread(self._manager.disconnect)
             self._manager = None
@@ -214,11 +283,21 @@ class HardwareManager:
     # ── Scale reads ───────────────────────────────────────────────────────────
 
     async def get_weight_unstable(self) -> float:
+        """Read the current (unstable) scale weight without waiting for stability.
+
+        Returns:
+            float: Scale reading in grams, or ``0.0`` if hardware is not connected.
+        """
         if self._manager and self._manager.connected:
             return await asyncio.to_thread(self._manager.get_weight_unstable)
         return 0.0
 
     async def get_weight_stable(self) -> float:
+        """Read the scale weight after waiting for a stable reading.
+
+        Returns:
+            float: Stable scale reading in grams, or ``0.0`` if not connected.
+        """
         if self._manager and self._manager.connected:
             return await asyncio.to_thread(self._manager.get_weight_stable)
         return 0.0
@@ -226,6 +305,12 @@ class HardwareManager:
     # ── Dispenser management ──────────────────────────────────────────────────
 
     def get_dispensers(self) -> list[DispenserStatus]:
+        """Return the current status of all connected piston dispensers.
+
+        Returns:
+            list[DispenserStatus]: Per-dispenser piston counts, or an empty list
+            if hardware is not connected.
+        """
         if self._manager and self._manager.connected:
             return [
                 DispenserStatus(index=d.index, pistons_remaining=d.num_pistons)
@@ -234,6 +319,16 @@ class HardwareManager:
         return []
 
     def update_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
+        """Update the remaining piston count for a single dispenser.
+
+        Args:
+            index: Zero-based dispenser index.
+            num_pistons: New piston count.
+
+        Returns:
+            bool: ``True`` on success, ``False`` if hardware is not connected or
+            the index is out of range.
+        """
         if not (self._manager and self._manager.connected):
             return False
         dispensers = self._manager.piston_dispensers
@@ -247,6 +342,22 @@ class HardwareManager:
     async def run_dispensing_job(
         self, wells: list[dict], progress: JobProgress, job_log=None
     ) -> None:
+        """Execute a real powder dispensing job via ``JubileeManager``.
+
+        Iterates over ``wells`` sequentially, calling
+        ``JubileeManager.dispense_to_well()`` in a thread for each well.
+        Updates ``progress`` in-place after each well completes.
+
+        Args:
+            wells: Ordered list of well dicts with ``well_id`` and
+                ``target_weight`` keys.
+            progress: Shared ``JobProgress`` instance updated as wells complete.
+            job_log: Optional ``JobLog`` instance attached to the manager for
+                recording actual weights.
+
+        Raises:
+            RuntimeError: If ``dispense_to_well()`` returns ``False`` for any well.
+        """
         self.state = MachineState.RUNNING
         if job_log is not None and self._manager is not None:
             self._manager.active_job_log = job_log
@@ -274,6 +385,14 @@ class HardwareManager:
     async def run_hardness_job(
         self, samples: list[dict], progress: JobProgress, job_log=None
     ) -> None:
+        """Execute a hardness testing job (stub — integration pending).
+
+        Args:
+            samples: Ordered list of sample dicts with ``sample_id`` and
+                ``mode`` keys.
+            progress: Shared ``JobProgress`` instance updated as samples complete.
+            job_log: Optional ``JobLog`` instance for recording results.
+        """
         pass # TODO: Remove when hardness testing is implemented
         self.state = MachineState.RUNNING
         try:

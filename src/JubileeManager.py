@@ -563,13 +563,14 @@ class JubileeManager:
             if not self.state_machine:
                 raise RuntimeError("State machine not configured")
             
-            self._move_to_mold_slot(well_id)
+            self.move_to_mold_slot(well_id)
             self.manipulator.pick_mold(well_id)
-            self._move_to_scale()
+            self.move_to_scale()
             self.manipulator.place_mold_on_scale()
-            self._fill_powder(target_weight)
+            self.fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
             self.manipulator.tamp(tamp_depth=3.0, tamp_speed=500)
+            self.move_to_global_ready()
             dispenser_index = -1
             for dispenser in self.piston_dispensers:
                 if dispenser.num_pistons > 0:
@@ -577,10 +578,12 @@ class JubileeManager:
                     break
             if dispenser_index == -1:
                 raise ToolStateError("No dispenser with pistons found.")
-            self._move_to_dispenser(dispenser_index)
+            self.move_to_dispenser(dispenser_index)
             self.get_piston_from_dispenser(dispenser_index)
-            self._move_to_mold_slot(well_id)
+            self.move_to_global_ready()
+            self.move_to_mold_slot(well_id)
             self.manipulator.place_mold(well_id)
+            self.move_to_global_ready()
             if self.active_job_log is not None:
                 self.active_job_log.update_well(well_id)
             return True
@@ -588,13 +591,12 @@ class JubileeManager:
             print(f"Error filling mold: {e}")
             return False
 
-    def _move_to_dispenser(self, dispenser_index: int) -> bool:
+    def move_to_dispenser(self, dispenser_index: int) -> bool:
         """
         Move to the ready position for a specific piston dispenser.
         
-        Internal method that moves the manipulator to the position where it can
-        retrieve a piston from the specified dispenser. Movement is validated
-        through the state machine.
+        Moves the manipulator to the position where it can retrieve a piston
+        from the specified dispenser. Movement is validated through the state machine.
         
         Args:
             dispenser_index: Index of the target dispenser (0-based). Must be less
@@ -609,7 +611,7 @@ class JubileeManager:
             ValueError: If dispenser_index is out of range.
         
         Note:
-            - This is an internal method; typically called by `dispense_to_well()`
+            - Typically called by `dispense_to_well()`
             - Movement is validated against current state (tool, payload, position)
             - Does not retrieve the piston, only positions for retrieval
         """
@@ -661,20 +663,20 @@ class JubileeManager:
         Example:
             ```python
             # Manually retrieve piston (typically done by dispense_to_well)
-            if manager._move_to_dispenser(0):
+            if manager.move_to_dispenser(0):
                 if manager.get_piston_from_dispenser(0):
                     print("Piston retrieved successfully")
             ```
         
         Note:
-            - Must already be at the dispenser ready position (call `_move_to_dispenser()` first)
+            - Must already be at the dispenser ready position (call `move_to_dispenser()` first)
             - Requires mold to be held by manipulator
             - Automatically decrements piston count in the dispenser
             - Validation ensures proper state before and after retrieval
         
         Warning:
             Calling this method without first moving to the dispenser position
-            will fail validation. Always call `_move_to_dispenser()` first.
+            will fail validation. Always call `move_to_dispenser()` first.
         """
         if not self.connected or not self.piston_dispensers:
             return False
@@ -702,13 +704,13 @@ class JubileeManager:
             print(f"Getting piston from dispenser error: {e}")
             return False
 
-    def _move_to_mold_slot(self, well_id: str) -> bool:
+    def move_to_mold_slot(self, well_id: str) -> bool:
         """
         Move to a specific mold slot position.
         
-        Internal method that moves to the position where the manipulator can
-        pick up or place a mold in the specified well. The target position is
-        determined by the well's configuration in the deck layout.
+        Moves to the position where the manipulator can pick up or place a mold
+        in the specified well. The target position is determined by the well's
+        configuration in the deck layout.
         
         Args:
             well_id: Identifier for the target well using numerical indexing (e.g., "0", "1", "2").
@@ -724,7 +726,7 @@ class JubileeManager:
             KeyError: If well_id is not found in deck configuration.
         
         Note:
-            - This is an internal method; typically called by `dispense_to_well()`
+            - Typically called by `dispense_to_well()`
             - Uses the well's `ready_pos` field from deck configuration
             - Movement is validated through state machine
             - Does not pick up or place the mold, only positions for access
@@ -737,16 +739,23 @@ class JubileeManager:
         )
         if not result.valid:
             raise RuntimeError(f"Move to mold slot failed: {result.reason}")
-        
         return True
 
-    def _move_to_scale(self) -> bool:
+    def move_to_global_ready(self) -> bool:
+        if not self.state_machine:
+            raise RuntimeError("State machine not configured")
+        
+        result = self.state_machine.validated_move_to_global_ready()
+        if not result.valid:
+            raise RuntimeError(f"Move to mold slot failed: {result.reason}")
+        return True
+
+    def move_to_scale(self) -> bool:
         """
         Move to the scale ready position.
         
-        Internal method that moves the manipulator to the position where it can
-        place or pick up molds on the scale. Movement is validated through the
-        state machine.
+        Moves the manipulator to the position where it can place or pick up molds
+        on the scale. Movement is validated through the state machine.
         
         Returns:
             True if movement succeeded, False if scale is not configured.
@@ -757,7 +766,7 @@ class JubileeManager:
                 payload state, or unable to transition from current position.
         
         Note:
-            - This is an internal method; typically called by `dispense_to_well()`
+            - Typically called by `dispense_to_well()`
             - Moves to scale_ready position defined in state machine config
             - Does not place or pick up mold, only positions for access
             - Movement is validated against current state
@@ -804,13 +813,13 @@ class JubileeManager:
                 print(f"[abort] M112 command failed: {e}")
         self.connected = False
 
-    def _fill_powder(self, target_weight: float) -> bool:
+    def fill_powder(self, target_weight: float) -> bool:
         """
         Fill mold with powder to target weight.
         
-        Internal method that dispenses powder into a mold using the trickler
-        mechanism, monitoring the scale until the target weight is reached.
-        The mold must already be placed on the scale.
+        Dispenses powder into a mold using the trickler mechanism, monitoring
+        the scale until the target weight is reached. The mold must already be
+        placed on the scale.
         
         Args:
             target_weight: Target weight of powder to dispense, in grams.
@@ -824,7 +833,7 @@ class JubileeManager:
                 is in correct state for powder dispensing.
         
         Note:
-            - This is an internal method; typically called by `dispense_to_well()`
+            - Typically called by `dispense_to_well()`
             - Mold must already be on the scale before calling
             - Operation continues until target weight is reached (within tolerance)
             - Duration depends on target weight and trickler speed (typically 1-3 min)

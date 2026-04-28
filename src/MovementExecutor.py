@@ -349,7 +349,7 @@ class MovementExecutor:
 
             # Save current v value to return to after tamping
             current_position = self._machine.get_position()
-            saved_v = current_position.get('V', None)
+            saved_v = float(current_position.get('V'))
             
             # Move tamper until it is just outside mold
             self._machine.move_to(v=2, s=feedrate)
