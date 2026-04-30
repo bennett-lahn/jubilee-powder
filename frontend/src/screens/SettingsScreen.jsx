@@ -17,6 +17,63 @@ import { ArrowLeft, Camera } from 'lucide-react'
 import { useJubileeStore } from '../store/jubileeStore'
 import { Button, Card, TextInput, StatusBadge } from '../components/ui'
 
+function DispenserRow({ dispenser, disabled, onUpdate }) {
+  const [value,  setValue]  = useState(String(dispenser.pistons_remaining))
+  const [status, setStatus] = useState(null)   // null | 'ok' | 'error'
+  const [msg,    setMsg]    = useState('')
+
+  // Keep local value in sync when telemetry updates (e.g. after a successful PUT)
+  useEffect(() => {
+    setValue(String(dispenser.pistons_remaining))
+  }, [dispenser.pistons_remaining])
+
+  async function handleUpdate() {
+    const n = parseInt(value, 10)
+    if (isNaN(n) || n < 0) {
+      setStatus('error')
+      setMsg('Enter a valid number >= 0')
+      return
+    }
+    setStatus(null)
+    setMsg('')
+    const result = await onUpdate(dispenser.index, n)
+    if (result.ok) {
+      setStatus('ok')
+      setMsg('Updated')
+      setTimeout(() => setStatus(null), 2000)
+    } else {
+      setStatus('error')
+      setMsg(result.error ?? 'Update failed')
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-slate-400 text-sm w-28 shrink-0">
+        Dispenser {dispenser.index}
+      </span>
+      <TextInput
+        type="number"
+        value={value}
+        onChange={setValue}
+        disabled={disabled}
+        placeholder="0"
+        className="flex-1"
+      />
+      <Button
+        size="sm"
+        onClick={handleUpdate}
+        disabled={disabled}
+        className="shrink-0"
+      >
+        Update
+      </Button>
+      {status === 'ok'    && <span className="text-xs text-green-400 shrink-0">{msg}</span>}
+      {status === 'error' && <span className="text-xs text-red-400 shrink-0">{msg}</span>}
+    </div>
+  )
+}
+
 const STATE_LABEL = {
   idle:         'Connected',
   running:      'Running',
@@ -89,9 +146,10 @@ function LevelCameraView({ onClose }) {
 }
 
 export default function SettingsScreen() {
-  const telemetry         = useJubileeStore((s) => s.telemetry)
-  const connectHardware   = useJubileeStore((s) => s.connectHardware)
+  const telemetry          = useJubileeStore((s) => s.telemetry)
+  const connectHardware    = useJubileeStore((s) => s.connectHardware)
   const disconnectHardware = useJubileeStore((s) => s.disconnectHardware)
+  const updateDispenser    = useJubileeStore((s) => s.updateDispenser)
 
   const [showLevelCamera, setShowLevelCamera] = useState(false)
 
@@ -101,9 +159,13 @@ export default function SettingsScreen() {
   const isHoming   = hwState === 'homing'
   const isError    = hwState === 'error'
 
-  // Inputs are locked whenever hardware is active — only editable when
-  // fully disconnected or in an error state requiring reconnect.
+  // Connection config inputs are locked whenever hardware is active.
+  // Only editable when fully disconnected or in an error state.
   const inputsLocked = isIdle || isRunning || isHoming
+
+  // Dispenser piston counts can be updated while idle (not during a job or homing).
+  const dispenserEditsLocked = !isIdle
+  const dispensers = telemetry.dispensers ?? []
 
   // Form state
   const [numDispensers,       setNumDispensers]       = useState('2')
@@ -193,6 +255,29 @@ export default function SettingsScreen() {
           />
         </Card>
 
+        {/* Per-dispenser piston counts — only visible when connected */}
+        {dispensers.length > 0 && (
+          <Card className="flex flex-col gap-4 p-5">
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
+                Dispenser Pistons
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Update remaining pistons after reloading the dispensers.
+                {isRunning && ' Locked while a job is running.'}
+              </p>
+            </div>
+            {dispensers.map((d) => (
+              <DispenserRow
+                key={d.index}
+                dispenser={d}
+                disabled={dispenserEditsLocked}
+                onUpdate={updateDispenser}
+              />
+            ))}
+          </Card>
+        )}
+
         {/* Network / serial configuration */}
         <Card className="flex flex-col gap-5 p-5">
           <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
@@ -201,7 +286,7 @@ export default function SettingsScreen() {
 
           <TextInput
             label="Jubilee IP Address or Hostname"
-            placeholder="jubilee.local"
+            placeholder="192.168.1.2"
             value={jubileeIp}
             onChange={setJubileeIp}
             disabled={inputsLocked}

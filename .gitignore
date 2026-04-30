@@ -74,3 +74,4 @@ ml/raw/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/api/files/

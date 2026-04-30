@@ -1,311 +1,381 @@
-# GUI Application API Reference
+# Web Frontend Reference
 
-The Jubilee GUI provides a modern touchscreen interface for powder dispensing operations.
+The Jubilee Automation web frontend is a browser-based interface for powder dispensing and
+hardness testing operations. It replaces the former Kivy GUI with a React single-page
+application backed by a FastAPI server.
 
 ## Overview
 
-The GUI application is built with Kivy and provides:
+The frontend provides:
 
-- Visual well selection (3x3 grid)
-- Target weight configuration
-- Real-time progress monitoring
-- Hardware configuration interface
-- Safety checklist before jobs
-- Live scale weight display
+- Six navigation screens covering home/dashboard, dispensing, hardness testing, data
+  browser, manual control, and settings
+- A 4 Hz WebSocket telemetry feed keeping every screen up to date without polling
+- REST API endpoints for discrete commands (connect, start job, stop, abort)
+- An MJPEG camera stream for the scale bubble-level view
+- A mock hardware mode (`MOCK_HARDWARE = True`) for UI development without physical hardware
+
+## Technology Stack
+
+| Layer    | Technology                        |
+|----------|-----------------------------------|
+| Frontend | React 19, Vite 8, Tailwind CSS 4  |
+| State    | Zustand 5                         |
+| Routing  | React Router v7                   |
+| Backend  | FastAPI (Python 3.12+), uvicorn   |
+| Transport | REST HTTP + WebSocket            |
+| Storage  | JSON job log files                |
 
 ## Architecture
 
-The GUI follows an MVVM-inspired architecture:
+The frontend follows an MVVM pattern split across the browser and server:
 
 ```
-MainScreen (View)
-    ↓ method calls
-JubileeViewModel (Coordinator)
-    ↓ method calls
-JubileeManager (Model)
-    ↓
-Hardware
+┌──────────────────────────────────────────────────┐
+│  Browser                                         │
+│                                                  │
+│  View      ── React screens + components         │
+│  ViewModel ── Zustand store (jubileeStore.js)    │
+│                 │ REST (HTTP)    │ WebSocket /ws  │
+└──────────────────────────────────────────────────┘
+                  │                │
+┌──────────────────────────────────────────────────┐
+│  FastAPI Server (server.py)                      │
+│  Model     ── HardwareManager / MockHardwareManager│
+│                 │                                │
+│  JubileeManager ─── Scale, Dispensers, Jubilee   │
+└──────────────────────────────────────────────────┘
 ```
 
-## Main Components
+| MVVM Layer | Component                        | Responsibility                        |
+|------------|----------------------------------|---------------------------------------|
+| View       | React screens and components     | Render state, capture user input      |
+| ViewModel  | Zustand store (`jubileeStore.js`)| Derived state, REST/WebSocket actions |
+| Model      | FastAPI + `HardwareManager`      | Hardware state, physical operations   |
 
-### MainScreen
+## Starting the Server
 
-The primary screen containing:
-
-- **Well Grid**: Grid of mold slots (0-17) for selection
-- **Scale Display**: Live weight readings from the scale
-- **Control Buttons**: Hardware config, set weights, start/stop job
-- **Status Bar**: Current operation status
-
-### Dialogs
-
-#### HardwareConfigDialog
-
-Configure hardware before connection:
-
-- Number of dispensers
-- Pistons per dispenser
-- Real-time total calculation
-
-#### WeightDialog
-
-Set target weights for selected wells:
-
-- Lists all selected wells
-- Input fields for target weights (grams)
-- Validates numeric input
-
-#### ChecklistDialog
-
-Pre-job safety checklist:
-
-- Scale connected and stable
-- Powder container filled
-- Work area clear
-- All items must be checked to proceed
-
-#### ProgressDialog
-
-Real-time job progress:
-
-- Current well being processed
-- Progress bar and percentage
-- Completed/total wells count
-- Stop button to cancel job
-
-## Running the GUI
-
-### From Command Line
+From the `frontend/` directory:
 
 ```bash
-cd jubilee-automation
-python gui/jubilee_gui.py
+uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### From Script
+From the project root:
+
+```bash
+uvicorn frontend.server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+During development, also start the Vite dev server in a second terminal:
+
+```bash
+cd frontend
+npm install   # first time only
+npm run dev
+```
+
+Then navigate to `http://localhost:5173`. The Vite dev server proxies all `/api/*`
+requests to the FastAPI server on port 8000.
+
+## Mock vs Real Hardware
+
+Set `MOCK_HARDWARE` at the top of `server.py`:
 
 ```python
-from gui.jubilee_gui import JubileeGUIApp
-
-if __name__ == '__main__':
-    print("before")
-    app = JubileeGUIApp()
-    app.run()
-    print("after")
+MOCK_HARDWARE: bool = True   # UI development — no physical hardware needed
+MOCK_HARDWARE: bool = False  # Production — real Jubilee machine + scale
 ```
 
-## User Workflow
+`MockHardwareManager` and `HardwareManager` expose an identical public API so no
+other code needs to change when switching modes. The mock simulates realistic weight
+readings (sine-wave drift + Gaussian noise) and job timing (`asyncio.sleep()`).
 
-### 1. Configure Hardware (Optional)
+---
 
-If not using default configuration:
+## REST API Reference
 
-1. Click "Hardware Config" button
-2. Enter number of dispensers and pistons
-3. Click "Apply"
+All endpoints are prefixed with `/api`.
 
-**Note**: Hardware config can only be changed when disconnected.
+### Status
 
-### 2. Connection
+| Method | Path          | Description                |
+|--------|---------------|----------------------------|
+| `GET`  | `/api/status` | Full machine state snapshot |
 
-The application auto-connects on startup:
+**Response:**
 
-- Connects to Jubilee machine
-- Connects to scale
-- Homes all axes
-- Picks up manipulator tool
-
-Connection status shown in status bar and scale panel.
-
-### 3. Select Wells
-
-Click wells in the 3x3 grid to select/deselect:
-
-- Green = Selected
-- Gray = Not selected
-
-Multiple wells can be selected.
-
-### 4. Set Target Weights
-
-1. Click "Set Weights" button
-2. Enter target weight (grams) for each selected well
-3. Click "Apply"
-
-### 5. Start Job
-
-1. Click "Start Job" button
-2. Complete safety checklist
-3. Click "Start Job" in checklist dialog
-4. Monitor progress in real-time
-
-### 6. Monitor Progress
-
-During job execution:
-
-- Progress dialog shows current well
-- Progress bar updates after each well
-- Status bar shows detailed status
-- Live weight updates during filling
-
-### 7. Stop Job (If Needed)
-
-Click "Stop Job" button:
-
-- Job will stop after current well completes
-- Partial progress is saved
-
-## GUI Features
-
-### Real-Time Updates
-
-Updates happen via ViewModel callbacks:
-
-- **Weight**: Every 500ms
-- **Status**: On every operation
-- **Progress**: After each well completed
-
-### Thread Safety
-
-All hardware operations run in background threads to keep GUI responsive. Updates are scheduled on the main thread using Kivy's `Clock.schedule_once()`.
-
-### Error Handling
-
-Errors are displayed in popup dialogs with:
-
-- Clear error message
-- OK button to dismiss
-- Red styling for visibility
-
-### Visual Feedback
-
-- **Connection Status**: Color-coded (connected/disconnected)
-- **Well Selection**: Visual highlighting
-- **Progress**: Percentage and bar
-- **Status Messages**: Real-time updates
-
-## Customization
-
-### Modifying the GUI
-
-The GUI uses Kivy's KV language for layout. To modify:
-
-1. Edit the `KV` string in `jubilee_gui.py`
-2. Modify layout, colors, sizes
-3. Add new widgets or dialogs
-
-### Adding New Buttons
-
-To add a new operation button:
-
-1. Add button to KV layout
-2. Add method to `MainScreen` class
-3. Call ViewModel method from button handler
-
-Example:
-
-```python
-# In KV string:
-CustomButton:
-    text: 'My Operation'
-    on_press: root.my_operation()
-
-# In MainScreen class:
-def my_operation(self):
-    """Handle my operation"""
-    self.view_model.my_operation()
+```json
+{
+  "connected":   true,
+  "state":       "idle",
+  "jubilee_ip":  "jubilee.local",
+  "job":         { ... },
+  "dispensers":  [ { "index": 0, "pistons_remaining": 8 } ],
+  "clients":     1
+}
 ```
 
-### Custom Callbacks
+### Hardware Lifecycle
 
-The GUI implements six ViewModel callbacks:
+| Method | Path                       | Status | Description                               |
+|--------|----------------------------|--------|-------------------------------------------|
+| `POST` | `/api/hardware/connect`    | 202    | Begin hardware connection asynchronously  |
+| `POST` | `/api/hardware/disconnect` | 200    | Stop any running job and disconnect       |
 
-```python
-def _on_connection_changed(self, connected: bool):
-    """Update connection status display"""
-    
-def _on_weight_changed(self, weight: float):
-    """Update weight display"""
-    
-def _on_status_changed(self, status: str):
-    """Update status bar"""
-    
-def _on_job_progress(self, completed: int, total: int, well: str):
-    """Update progress dialog"""
-    
-def _on_job_completed(self):
-    """Show completion dialog"""
-    
-def _on_error(self, error_msg: str):
-    """Show error dialog"""
+**`POST /api/hardware/connect` request body:**
+
+```json
+{
+  "num_dispensers":        2,
+  "pistons_per_dispenser": 10,
+  "machine_address":       "jubilee.local",
+  "scale_port":            "/dev/ttyUSB0"
+}
 ```
 
-## Configuration
+The server returns HTTP 202 immediately. Monitor the WebSocket `state` field for
+connection progress:
 
-### Display Settings
+```
+DISCONNECTED → HOMING → IDLE    (success)
+DISCONNECTED → HOMING → ERROR   (failure — inspect job.error for reason)
+```
 
-Edit in KV string:
+### Jobs
 
-- Window size: Default fits touchscreen
-- Colors: Material Design palette
-- Fonts: Size adjustable via `dp()` units
+| Method | Path              | Status | Description                                   |
+|--------|-------------------|--------|-----------------------------------------------|
+| `POST` | `/api/job/start`  | 202    | Enqueue a dispensing or hardness job          |
+| `POST` | `/api/job/stop`   | 200    | Graceful stop after the current well/sample   |
+| `POST` | `/api/job/cancel` | 200    | Finish current mold then stow the tool        |
+| `POST` | `/api/job/abort`  | 200    | Emergency stop (M112), enters ERROR state     |
+| `GET`  | `/api/job/log`    | 200    | Most recent job log (in-memory or from file)  |
 
-### Hardware Settings
+**`POST /api/job/start` — dispensing job:**
 
-Edit before connection:
+```json
+{
+  "job_type": "dispensing",
+  "wells": [
+    { "well_id": "0", "target_weight": 50.0 },
+    { "well_id": "3", "target_weight": 45.0 }
+  ]
+}
+```
 
-- Dispensers: Via Hardware Config dialog
-- Machine IP: In `system_config.json`
-- Scale Port: In code or config
+**`POST /api/job/start` — hardness job:**
 
-## Troubleshooting
+```json
+{
+  "job_type": "hardness",
+  "samples": [
+    { "sample_id": "0", "mode": "shore_a" },
+    { "sample_id": "1", "mode": "shore_d" }
+  ]
+}
+```
 
-### GUI Won't Start
+Valid hardness modes: `shore_a`, `shore_a_d`, `shore_d`.
 
-- Check Kivy installation: `pip install kivy`
-- Verify Python version: 3.8+
-- Check terminal for import errors
+The server returns HTTP 202; track progress via the WebSocket `job` field.
 
-### Connection Fails
+**Stop vs Cancel vs Abort:**
 
-- Verify machine IP address
-- Check scale serial port
-- Ensure hardware is powered on
-- Check network connectivity
+| Action | Behaviour |
+|--------|-----------|
+| `stop`   | Signal job to exit at the next well boundary. Machine stays at current well, returns to IDLE. |
+| `cancel` | Finish the current mold, then stow the active tool and return to IDLE. |
+| `abort`  | Immediate M112 emergency stop. Machine enters ERROR state and must be reconnected before a new job. |
 
-### Job Fails to Start
+### Dispensers
 
-- Verify hardware is connected
-- Check enough pistons available
-- Ensure wells are selected
-- Verify target weights are set
+| Method | Path                       | Description                              |
+|--------|----------------------------|------------------------------------------|
+| `GET`  | `/api/dispensers`          | List all dispenser statuses              |
+| `PUT`  | `/api/dispensers/{index}`  | Update remaining piston count            |
 
-### Progress Not Updating
+`PUT` body: `{ "num_pistons": 10 }`
 
-- Progress updates between wells
-- Long operations (filling) show as one step
-- Check status message for details
+### Job Log Files
 
-### Cannot Change Hardware Config
+| Method | Path                    | Description                              |
+|--------|-------------------------|------------------------------------------|
+| `GET`  | `/api/files`            | List all job log files (newest-first)    |
+| `GET`  | `/api/files/{filename}` | Return full JSON content of one log file |
 
-- Config can only be changed when disconnected
-- Restart application to reconfigure
-- Or disconnect first
+File names follow the pattern `{id}_{date}_{job_type}_{n}.json`,
+e.g. `0012_2026-04-12_dispensing_1.json`. Files are stored in
+`frontend/api/files/`.
 
-## Dependencies
+### Level Camera
 
-Key dependencies:
+| Method | Path                 | Description                              |
+|--------|----------------------|------------------------------------------|
+| `POST` | `/api/camera/start`  | Start the bubble-level MJPEG stream      |
+| `POST` | `/api/camera/stop`   | Stop the stream                          |
+| `GET`  | `/api/camera/stream` | MJPEG stream (`multipart/x-mixed-replace`) |
 
-- **Kivy**: GUI framework
-- **JubileeViewModel**: Coordination layer
-- **JubileeManager**: Hardware operations
+---
 
-See `gui/requirements.txt` for full list.
+## WebSocket Protocol
+
+### Endpoint
+
+```
+ws://<host>/ws
+```
+
+### Telemetry Frame (4 Hz)
+
+The server pushes a JSON frame to every connected browser four times per second. Each
+frame is a complete snapshot — the client replaces its state wholesale so no stale
+fields from a previous server restart are retained.
+
+```json
+{
+  "weight":     50.123,
+  "state":      "idle",
+  "connected":  true,
+  "jubilee_ip": "jubilee.local",
+  "job": {
+    "running":      false,
+    "job_type":     "dispensing",
+    "completed":    6,
+    "total":        6,
+    "current_item": null,
+    "error":        null,
+    "started_at":   "2026-04-16T14:30:00Z",
+    "items":        [ ... ]
+  },
+  "dispensers": [
+    { "index": 0, "pistons_remaining": 4 },
+    { "index": 1, "pistons_remaining": 10 }
+  ],
+  "clients": 1
+}
+```
+
+`weight` is `null` when hardware is disconnected. The frame is only sent when at
+least one browser is connected; the server skips the broadcast when `clients == 0`.
+
+### Machine States
+
+| State          | Meaning                                                     |
+|----------------|-------------------------------------------------------------|
+| `disconnected` | No hardware connection                                      |
+| `homing`       | Connection sequence or homing in progress                   |
+| `idle`         | Connected and ready for a job                               |
+| `running`      | Job is executing                                            |
+| `error`        | Emergency stop or failure — reconnect required              |
+
+---
+
+## Backend Module Reference
+
+### `server.py`
+
+FastAPI application entry point. Responsible for:
+
+- Defining all REST and WebSocket endpoints
+- Running the 4 Hz `telemetry_loop` background task
+- Instantiating `HardwareManager` (or `MockHardwareManager`), `ConnectionManager`,
+  `JobProgress`, and `LevelCameraStreamer` as module-level singletons
+- Writing and reading job log files in `frontend/api/files/`
+
+### `hardware_manager.py`
+
+Provides two classes with identical public APIs, selected by `MOCK_HARDWARE`:
+
+- **`MockHardwareManager`** — standalone simulation; scale readings use a sine-wave
+  drift plus Gaussian noise to mimic the A&D FX-120i; job execution advances
+  `JobProgress` via `asyncio.sleep()` for realistic per-well timing.
+- **`HardwareManager`** — production wrapper around `JubileeManager`; all blocking
+  serial/network calls are offloaded to `asyncio.to_thread()` so the uvicorn event
+  loop is never stalled; `JubileeManager` is imported lazily inside `connect()` so
+  the server starts cleanly on machines without `science_jubilee`.
+
+### `models.py`
+
+Shared Pydantic models and enums imported by both `server.py` and
+`hardware_manager.py`:
+
+- **`MachineState`** — string enum for the five hardware states
+- **`HardwareConfig`** — settings posted by the Settings screen on connect
+- **`DispenserStatus`** — per-dispenser index and remaining piston count
+- **`JobProgress`** — mutable in-memory job state threaded through server endpoints
+  and hardware managers
+
+### `level_camera.py`
+
+Three-stage MJPEG streaming pipeline for the scale bubble-level camera:
+
+1. **Capture thread** (30 fps) — reads frames from camera or generates synthetic ones
+2. **ThreadPoolExecutor encode pool** (3 workers) — TurboJPEG compression
+3. **Async frame generator** — consumed by `GET /api/camera/stream`
+
+`MockLevelCameraStreamer` draws a synthetic bubble level using NumPy (no physical
+camera required). `LevelCameraStreamer` reads from a real USB camera via OpenCV and
+encodes with TurboJPEG.
+
+---
+
+## React Application
+
+### Screens
+
+| Route         | Component                 | Description                                       |
+|---------------|---------------------------|---------------------------------------------------|
+| `/`           | `HomeScreen`              | Live job dashboard; shows running or last job     |
+| `/dispensing` | `PowderDispensingScreen`  | Well selection, target weights, job submission    |
+| `/hardness`   | `HardnessTestingScreen`   | Sample selection, test mode assignment, job start |
+| `/data`       | `DataScreen`              | Browse and inspect historical job log files       |
+| `/manual`     | `ManualControlScreen`     | Gateway to the Jubilee machine web UI (DWC)       |
+| `/settings`   | `SettingsScreen`          | Hardware configuration and connect/disconnect     |
+
+### Persistent Layout
+
+Every route is wrapped in `RootLayout`, which renders:
+
+- **`NavRail`** — left-side vertical navigation, always visible
+- **`BottomBar`** — live weight display, machine state badge, and active tab label;
+  reads directly from the Zustand store
+- The active screen fills the remaining area
+
+On mount, `RootLayout` calls `connectWs()` and `loadStatus()` so all screens have
+live telemetry and an initial REST snapshot from the first render.
+
+### Key Components
+
+| Component     | Purpose                                                        |
+|---------------|----------------------------------------------------------------|
+| `WellGrid`    | Interactive 4×6 grid; variants: `dispensing`, `hardness`, `result` |
+| `ArcProgress` | Circular arc showing completion percentage, count, elapsed time |
+| `NavRail`     | Navigation bar with route links and connection status          |
+| `BottomBar`   | Persistent status strip with live weight and machine state     |
+
+### `useWellGrid` Hook
+
+`WellGrid.jsx` exports a `useWellGrid(rows, cols)` hook used by the dispensing and
+hardness screens to manage per-well state locally before submitting a job:
+
+```js
+const grid = useWellGrid(4, 6)
+
+grid.wells          // { [id]: { selected, targetWeight, mode, status, ... } }
+grid.selectedIds    // string[]
+grid.toggleWell(id) // toggle selection of one well
+grid.selectAll()    // select all wells
+grid.clearSelection()
+grid.setWeightForSelected(weight)
+grid.setModeForSelected(mode)
+```
+
+---
 
 ## See Also
 
-- [JubileeViewModel](jubilee-view-model.md) - Coordination layer
-- [JubileeManager](../jubilee-manager.md) - Hardware operations
-- [Using the GUI](../../how-to/using-gui.md) - Detailed user guide
-- [Architecture](../../concepts/architecture.md) - System architecture
+- [Jubilee Store](jubilee-view-model.md) — Zustand ViewModel reference
+- [Using the Automation UI](../../how-to/using-gui.md) — User guide
+- [Architecture](../../concepts/architecture.md) — System architecture overview
+- [JubileeManager](../jubilee-manager.md) — Hardware coordination layer

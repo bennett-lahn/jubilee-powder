@@ -39,6 +39,7 @@ import {
   fetchJobLog as apiFetchJobLog,
   startLevelCamera as apiStartLevelCamera,
   stopLevelCamera as apiStopLevelCamera,
+  updateDispenser as apiUpdateDispenser,
 } from '../api/jubileeApi'
 
 function wsUrl() {
@@ -306,6 +307,27 @@ export const useJubileeStore = create((set, get) => ({
     try {
       await apiStopLevelCamera()
       set({ levelCameraActive: false })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Dispenser actions
+  // -------------------------------------------------------------------------
+
+  /**
+   * PUT /api/dispensers/{index} — update piston count for one dispenser.
+   * Can be called while connected (IDLE) without disconnecting.
+   *
+   * @param {number} index
+   * @param {number} numPistons
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  async updateDispenser(index, numPistons) {
+    try {
+      await apiUpdateDispenser(index, numPistons)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err.message }

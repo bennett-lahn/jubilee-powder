@@ -1,240 +1,275 @@
-# JubileeViewModel API Reference
+# Jubilee Store Reference
 
-The `JubileeViewModel` class coordinates between the GUI and JubileeManager, following an MVVM-inspired architecture pattern.
-
-## Overview
-
-`JubileeViewModel` serves as the coordination layer that:
-
-- Manages hardware configuration before connection
-- Drives the JubileeManager to execute operations
-- Executes multi-well dispensing jobs systematically
-- Provides callbacks to update the GUI on progress
-- Handles errors and provides user-friendly feedback
+`jubileeStore.js` is the [Zustand](https://docs.pmnd.rs/zustand/getting-started/introduction)
+store that acts as the ViewModel layer in the React frontend. It is the single source of
+truth for all shared application state and exposes actions that wrap REST API calls to the
+FastAPI backend.
 
 ## Architecture Role
 
 ```
-GUI (View) → ViewModel (Coordinator) → JubileeManager (Model) → Hardware
+View      — React screens and components
+    ↕  useJubileeStore(selector)
+ViewModel — Zustand store (jubileeStore.js)
+    ↕  fetch (REST)   ↕  WebSocket /ws (4 Hz)
+Model     — FastAPI server + HardwareManager (Python)
 ```
 
-The ViewModel:
+The store is not a thin data cache. It also:
 
-- **Receives** requests from the GUI
-- **Coordinates** operations through JubileeManager
-- **Notifies** GUI of changes via callbacks
+- Owns the single `WebSocket` instance and handles reconnect logic
+- Normalises REST error responses into a consistent `{ ok, error? }` return shape
+- Keeps UI-specific derived state (e.g. `levelCameraActive`, `wsConnected`)
 
-## Class Reference
+## Usage
 
-<!-- API reference temporarily unavailable: the gui module has been moved/removed.
-::: gui.jubilee_view_model.JubileeViewModel
-    options:
-      members:
-        - __init__
-        - connected
-        - job_running
-        - num_dispensers
-        - pistons_per_dispenser
-        - set_hardware_config
-        - connect
-        - disconnect
-        - get_current_weight
-        - start_job
-        - stop_job
-        - get_dispenser_status
-        - update_dispenser_pistons
-      show_root_heading: true
-      show_source: false
--->
+```js
+import { useJubileeStore } from '../store/jubileeStore'
 
-## DispensingJob
-
-<!-- API reference temporarily unavailable: the gui module has been moved/removed.
-::: gui.jubilee_view_model.DispensingJob
-    options:
-      show_root_heading: true
-      show_source: false
--->
-
-## Usage Examples
-
-### Basic Setup
-
-```python
-from gui.jubilee_view_model import JubileeViewModel, DispensingJob
-
-# Define callbacks for GUI updates
-def on_status(status: str):
-    print(f"Status: {status}")
-
-def on_progress(completed: int, total: int, current_well: str):
-    print(f"Progress: {completed}/{total} - {current_well}")
-
-# Create ViewModel
-view_model = JubileeViewModel(
-    on_status_changed=on_status,
-    on_job_progress=on_progress
-)
-
-# Configure hardware before connecting
-view_model.set_hardware_config(
-    num_dispensers=2,
-    pistons_per_dispenser=10
-)
+// Read individual slices with selectors to minimise re-renders
+const telemetry = useJubileeStore((s) => s.telemetry)
+const submitJob = useJubileeStore((s) => s.submitJob)
 ```
 
-### Connecting to Hardware
+---
 
-```python
-# Connect (this will create JubileeManager with configured settings)
-if view_model.connect(machine_address="192.168.1.100"):
-    print("Connected successfully!")
-    print(f"Dispensers: {view_model.num_dispensers}")
-    print(f"Pistons per dispenser: {view_model.pistons_per_dispenser}")
-else:
-    print("Connection failed")
+## State Shape
+
+### `telemetry`
+
+Live snapshot received from the WebSocket at 4 Hz. Replaced wholesale on every
+frame so stale fields from a previous server restart are never retained.
+
+```js
+{
+  weight:     null,          // float | null  — scale reading in grams
+  state:      null,          // MachineState string | null
+  connected:  false,         // true when state is idle, running, or homing
+  jubilee_ip: 'jubilee.local',
+  job:        null,          // JobProgress object | null
+  dispensers: [],            // DispenserStatus[]
+  clients:    null,          // number of connected browser tabs
+}
 ```
 
-### Running a Dispensing Job
+### `hardwareStatus`
 
-```python
-# Define wells to fill
-jobs = [
-    DispensingJob(well_id="0", target_weight=50.0),
-    DispensingJob(well_id="1", target_weight=45.0),
-    DispensingJob(well_id="2", target_weight=52.0),
-]
+Last full machine snapshot from `GET /api/status`. `null` until the first successful
+fetch. Refreshed on mount and after hardware lifecycle actions.
 
-# Start job (runs in background thread)
-if view_model.start_job(jobs):
-    print("Job started")
-    
-    # Job runs asynchronously
-    # Progress updates come via on_job_progress callback
-    # Completion notification via on_job_completed callback
+### `jobLog`
+
+Normalised most-recent job log from `GET /api/job/log`. Uses the same shape as
+`telemetry.job`. `null` when no job has run in the current server session and no
+log files exist.
+
+`HomeScreen` uses `jobLog` to display the last completed job when no job is
+currently running.
+
+### `levelCameraActive`
+
+`true` when `POST /api/camera/start` has succeeded. Set back to `false` by
+`stopLevelCamera()`.
+
+### `wsConnected`
+
+`true` when the WebSocket connection to `/ws` is open. Becomes `false` briefly
+during reconnect.
+
+### `statusError` / `jobLogError`
+
+Error message strings from the most recent failed `loadStatus()` or `fetchJobLog()`
+call respectively. `null` on success.
+
+---
+
+## Actions
+
+All async actions return `{ ok: true }` on success or `{ ok: false, error: string }`
+on failure. Components are expected to check `ok` and surface `error` to the user.
+
+### WebSocket Lifecycle
+
+#### `connectWs()`
+
+Opens a single WebSocket to `/ws`. No-op if a connection is already open or
+connecting. On close or error, schedules a reconnect after 1.5 s.
+
+Called once in the `RootLayout` mount effect so all screens share the same
+persistent connection.
+
+#### `disconnectWs()`
+
+Closes the WebSocket and cancels any pending reconnect timer. Called in the
+`RootLayout` unmount cleanup.
+
+### Status
+
+#### `loadStatus()`
+
+Fetches `GET /api/status` and stores the result in `hardwareStatus`.
+
+```js
+await store.loadStatus()
+// store.hardwareStatus is now populated (or store.statusError is set)
 ```
 
-### Monitoring Progress
+### Hardware Lifecycle
 
-```python
-# Callbacks provide real-time updates
-def on_connection_changed(connected: bool):
-    if connected:
-        print("Hardware connected")
-    else:
-        print("Hardware disconnected")
+#### `connectHardware(config)`
 
-def on_weight_changed(weight: float):
-    print(f"Current weight: {weight:.3f}g")
+`POST /api/hardware/connect` — returns `{ ok, error? }`.
 
-def on_job_progress(completed: int, total: int, current_well: str):
-    print(f"Completed {completed}/{total} wells")
-    print(f"Currently processing: {current_well}")
+The server responds with HTTP 202 immediately; actual connection progress is
+reflected in `telemetry.state`:
 
-def on_job_completed():
-    print("Job finished successfully!")
-
-def on_error(error_msg: str):
-    print(f"Error: {error_msg}")
-
-# Create ViewModel with all callbacks
-view_model = JubileeViewModel(
-    on_connection_changed=on_connection_changed,
-    on_weight_changed=on_weight_changed,
-    on_status_changed=lambda s: print(s),
-    on_job_progress=on_job_progress,
-    on_job_completed=on_job_completed,
-    on_error=on_error
-)
+```
+disconnected → homing → idle    (success)
+disconnected → homing → error   (failure)
 ```
 
-### Checking Dispenser Status
-
-```python
-# Get status of all dispensers
-status = view_model.get_dispenser_status()
-
-for dispenser in status:
-    print(f"Dispenser {dispenser['index']}: "
-          f"{dispenser['pistons_remaining']} pistons")
+```js
+const { ok, error } = await store.connectHardware({
+  num_dispensers:        2,
+  pistons_per_dispenser: 10,
+  machine_address:       'jubilee.local',  // null to read from system_config.json
+  scale_port:            '/dev/ttyUSB0',
+})
 ```
 
-### Updating Piston Counts
+#### `disconnectHardware()`
 
-```python
-# User manually reloaded dispenser 0 with 20 pistons
-success = view_model.update_dispenser_pistons(
-    dispenser_index=0,
-    num_pistons=20
-)
+`POST /api/hardware/disconnect` — returns `{ ok, error? }`. Also stops any
+running job server-side. Calls `loadStatus()` after a successful disconnect to
+refresh the REST snapshot.
 
-if success:
-    print("Dispenser piston count updated")
+### Job Actions
+
+#### `submitJob(jobType, items)`
+
+`POST /api/job/start` — returns `{ ok, error? }`.
+
+```js
+// Powder dispensing
+const { ok } = await store.submitJob('dispensing', [
+  { well_id: '0', target_weight: 50.0 },
+  { well_id: '3', target_weight: 45.0 },
+])
+
+// Hardness testing
+const { ok } = await store.submitJob('hardness', [
+  { sample_id: '0', mode: 'shore_a' },
+  { sample_id: '1', mode: 'shore_d' },
+])
 ```
 
-### Stopping a Job
+The server validates the machine state (`idle`) and job constraints before
+accepting. HTTP 422 is returned for invalid payloads (Pydantic validation).
 
-```python
-# User wants to stop the current job
-view_model.stop_job()
+#### `stopJob()`
 
-# Job will stop after current well completes
-# Status update via on_status_changed callback
+`POST /api/job/stop` — returns `{ ok, error? }`. The machine finishes the current
+well/sample then exits the job loop and returns to `idle`.
+
+#### `cancelJob()`
+
+`POST /api/job/cancel` — returns `{ ok, error? }`. Finish the current mold, stow
+the active tool, return to `idle`. Functionally equivalent to `stopJob()` from the
+server's perspective; the distinction is user-facing (cancel implies intentional
+early termination).
+
+#### `abortJob()`
+
+`POST /api/job/abort` — returns `{ ok, error? }`. Emergency stop. Sends M112 to
+the Duet controller (real hardware) and immediately sets machine state to `error`.
+Hardware must be restarted and reconnected before starting a new job.
+
+#### `fetchJobLog()`
+
+`GET /api/job/log` — returns `{ ok, error? }`. Updates `jobLog` in the store.
+
+### Level Camera
+
+#### `startLevelCamera()`
+
+`POST /api/camera/start` — returns `{ ok, error? }`. Sets `levelCameraActive: true`
+on success. The MJPEG stream is then available at `GET /api/camera/stream`.
+
+#### `stopLevelCamera()`
+
+`POST /api/camera/stop` — returns `{ ok, error? }`. Sets `levelCameraActive: false`.
+
+---
+
+## Data Flow
+
+### WebSocket Path (high-frequency, 4 Hz)
+
+```
+Server telemetry_loop()
+    → ws.send_json(frame)
+        → ws.onmessage in jubileeStore.connectWs()
+            → set({ telemetry: { weight, state, connected, ... } })
+                → All subscribed components re-render
 ```
 
-## Callback System
+### REST Path (on-demand)
 
-The ViewModel uses callbacks to notify the GUI of changes. This allows the GUI to remain responsive while operations run in background threads.
+Every action follows the same pattern:
 
-### Available Callbacks
-
-| Callback | Parameters | When Called |
-|----------|-----------|-------------|
-| `on_connection_changed` | `connected: bool` | Connection state changes |
-| `on_weight_changed` | `weight: float` | Scale weight updates (500ms) |
-| `on_status_changed` | `status: str` | Status message changes |
-| `on_job_progress` | `completed: int, total: int, current_well: str` | Job progress updates |
-| `on_job_completed` | None | Job finishes successfully |
-| `on_error` | `error_msg: str` | Error occurs |
-
-### Thread Safety
-
-All callbacks are called from background threads. GUI frameworks typically require updates to happen on the main thread. Use your framework's thread-safe update mechanism:
-
-**Kivy Example:**
-```python
-from kivy.clock import Clock
-
-def on_status_changed(status: str):
-    # Schedule update on main thread
-    def update(dt):
-        self.status_label.text = status
-    Clock.schedule_once(update, 0)
+```js
+async actionName(args) {
+  try {
+    const data = await apiFunction(args)
+    // optionally update store state
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
 ```
 
-## Design Notes
+Errors from the server's `detail` field are automatically extracted by the
+`request()` helper in `jubileeApi.js` and surfaced as the `err.message`.
 
-### Hardware Configuration
+### WebSocket Reconnect
 
-Hardware configuration (dispensers, pistons) is set in the ViewModel **before** connection. When `connect()` is called, the ViewModel creates a JubileeManager with these settings. The actual hardware state is then stored in the JubileeManager.
+```
+ws.onclose / ws.onerror
+    → set({ wsConnected: false })
+    → setTimeout(connectWs, 1500)
+```
 
-### Job Execution
+---
 
-Jobs are executed systematically in a background thread:
+## `jubileeApi.js`
 
-1. Validate piston availability
-2. For each well in order:
-   - Call `JubileeManager.dispense_to_well()`
-   - Update progress via callback
-   - Check for stop flag
-3. Notify completion via callback
+Thin HTTP wrapper consumed by the store. All functions return the parsed JSON body
+on success and throw an `Error` with the server's `detail` string on non-2xx
+responses. The Vite dev-server proxy forwards `/api/*` to `http://localhost:8000`,
+so the same `BASE = '/api'` URL works identically in development and production.
 
-### Error Handling
+Key exported functions:
 
-Errors are caught and reported via the `on_error` callback. Jobs stop on first error to prevent cascading failures.
+| Function              | Method | Path                       |
+|-----------------------|--------|----------------------------|
+| `fetchStatus()`       | GET    | `/api/status`              |
+| `connectHardware(c)`  | POST   | `/api/hardware/connect`    |
+| `disconnectHardware()`| POST   | `/api/hardware/disconnect` |
+| `startJob(body)`      | POST   | `/api/job/start`           |
+| `stopJob()`           | POST   | `/api/job/stop`            |
+| `cancelJob()`         | POST   | `/api/job/cancel`          |
+| `abortJob()`          | POST   | `/api/job/abort`           |
+| `fetchJobLog()`       | GET    | `/api/job/log`             |
+| `fetchDispensers()`   | GET    | `/api/dispensers`          |
+| `updateDispenser(i,n)`| PUT    | `/api/dispensers/{index}`  |
+| `startLevelCamera()`  | POST   | `/api/camera/start`        |
+| `stopLevelCamera()`   | POST   | `/api/camera/stop`         |
+
+---
 
 ## See Also
 
-- [JubileeManager](../jubilee-manager.md) - Hardware operations layer
-- [GUI Application](jubilee-gui.md) - Full GUI application
-- [Using the GUI](../../how-to/using-gui.md) - GUI user guide
+- [Web Frontend Reference](jubilee-gui.md) — FastAPI server, REST API, and React screens
+- [Using the Automation UI](../../how-to/using-gui.md) — User guide
+- [Architecture](../../concepts/architecture.md) — System architecture overview
