@@ -321,9 +321,7 @@ def main():
             print_step(piston_count, f"Piston {piston_count} - Move to dispenser 0 ready position")
             
             wait_for_user_confirmation("Move to dispenser 0 ready position")
-            result = state_machine.validated_move_to_dispenser(
-                piston_dispenser=piston_dispenser_0
-            )
+            result = state_machine.validated_move_to_dispenser()
             if not result.valid:
                 raise TestError(f"Failed to move to dispenser 0: {result.reason}")
             
@@ -343,7 +341,6 @@ def main():
             
             wait_for_user_confirmation("Retrieve piston from dispenser 0 (manipulator will move)")
             result = state_machine.validated_retrieve_piston(
-                piston_dispenser=piston_dispenser_0,
                 manipulator_config=manipulator._get_config_dict()
             )
             if not result.valid:

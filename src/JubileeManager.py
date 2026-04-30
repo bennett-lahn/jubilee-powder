@@ -80,8 +80,6 @@ class JubileeManager:
         - Use `machine_read_only` only for queries, never for movements
     """
     
-    # TODO: make dispensers configurable from UI
-    # TODO: make position checks case insensitive, e.g. ("GLOBAL_READY" and "global_ready" should be the same)
     # TODO: Improve soft fail for scale tare, add functionality for if a communication failure occurs when mold is on scale it is automatically returned
     def __init__(
         self, 
@@ -571,15 +569,8 @@ class JubileeManager:
             self.manipulator.pick_mold_from_scale()
             self.manipulator.tamp(tamp_depth=3.0, tamp_speed=500)
             self.move_to_global_ready()
-            dispenser_index = -1
-            for dispenser in self.piston_dispensers:
-                if dispenser.num_pistons > 0:
-                    dispenser_index = dispenser.index
-                    break
-            if dispenser_index == -1:
-                raise ToolStateError("No dispenser with pistons found.")
-            self.move_to_dispenser(dispenser_index)
-            self.get_piston_from_dispenser(dispenser_index)
+            self.move_to_dispenser()
+            self.get_piston_from_dispenser()
             self.move_to_global_ready()
             self.move_to_mold_slot(well_id)
             self.manipulator.place_mold(well_id)
@@ -591,46 +582,32 @@ class JubileeManager:
             print(f"Error filling mold: {e}")
             return False
 
-    def move_to_dispenser(self, dispenser_index: int) -> bool:
+    def move_to_dispenser(self) -> bool:
         """
-        Move to the ready position for a specific piston dispenser.
+        Move to the ready position of the next available piston dispenser.
         
-        Moves the manipulator to the position where it can retrieve a piston
-        from the specified dispenser. Movement is validated through the state machine.
-        
-        Args:
-            dispenser_index: Index of the target dispenser (0-based). Must be less
-                than the number of configured dispensers.
+        The state machine selects the first dispenser that still has pistons and
+        moves to its ready position. All dispenser tracking and selection is
+        handled by the state machine.
         
         Returns:
-            True if movement succeeded, False if not connected, no dispensers, or
-            movement validation failed.
+            True if movement succeeded, False if not connected or movement failed.
         
         Raises:
             RuntimeError: If state machine is not configured or movement validation fails.
-            ValueError: If dispenser_index is out of range.
         
         Note:
             - Typically called by `dispense_to_well()`
-            - Movement is validated against current state (tool, payload, position)
             - Does not retrieve the piston, only positions for retrieval
         """
-        if not self.connected or not self.piston_dispensers:
+        if not self.connected:
             return False
         
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         
-        if dispenser_index >= len(self.piston_dispensers):
-            raise ValueError(f"Invalid dispenser index: {dispenser_index}")
-        
         try:
-            piston_dispenser = self.piston_dispensers[dispenser_index]
-            
-            # Move to dispenser position through state machine
-            result = self.state_machine.validated_move_to_dispenser(
-                piston_dispenser=piston_dispenser
-            )
+            result = self.state_machine.validated_move_to_dispenser()
             
             if not result.valid:
                 raise RuntimeError(f"Failed to move to dispenser position: {result.reason}")
@@ -640,59 +617,46 @@ class JubileeManager:
             print(f"Error moving to dispenser: {e}")
             return False
 
-    def get_piston_from_dispenser(self, dispenser_index: int) -> bool:
+    def get_piston_from_dispenser(self) -> bool:
         """
-        Retrieve the top piston from a specific dispenser.
+        Retrieve a piston from the current dispenser position.
         
-        Retrieves a piston from the specified dispenser and places it into the
-        mold currently held by the manipulator. The operation is validated through
-        the state machine to ensure safety.
-        
-        Args:
-            dispenser_index: Index of the dispenser to retrieve from (0-based).
-                Must be less than the number of configured dispensers.
+        The state machine derives which dispenser to use from the current position
+        and executes the retrieval. All dispenser tracking and validation is
+        handled by the state machine.
         
         Returns:
-            True if piston was successfully retrieved, False if not connected,
-            no dispensers available, or retrieval failed.
+            True if piston was successfully retrieved, False if not connected
+            or retrieval failed.
         
         Raises:
-            RuntimeError: If state machine is not configured or retrieval validation fails.
-            ValueError: If dispenser_index is out of range.
+            RuntimeError: If state machine is not configured or retrieval fails.
         
         Example:
             ```python
             # Manually retrieve piston (typically done by dispense_to_well)
-            if manager.move_to_dispenser(0):
-                if manager.get_piston_from_dispenser(0):
+            if manager.move_to_dispenser():
+                if manager.get_piston_from_dispenser():
                     print("Piston retrieved successfully")
             ```
         
         Note:
-            - Must already be at the dispenser ready position (call `move_to_dispenser()` first)
+            - Must already be at a dispenser_ready position (call `move_to_dispenser()` first)
             - Requires mold to be held by manipulator
-            - Automatically decrements piston count in the dispenser
-            - Validation ensures proper state before and after retrieval
+            - State machine decrements piston count on success
         
         Warning:
             Calling this method without first moving to the dispenser position
             will fail validation. Always call `move_to_dispenser()` first.
         """
-        if not self.connected or not self.piston_dispensers:
+        if not self.connected:
             return False
         
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         
-        if dispenser_index >= len(self.piston_dispensers):
-            raise ValueError(f"Invalid dispenser index: {dispenser_index}")
-        
         try:
-            piston_dispenser = self.piston_dispensers[dispenser_index]
-            
-            # Retrieve piston through state machine
             result = self.state_machine.validated_retrieve_piston(
-                piston_dispenser=piston_dispenser,
                 manipulator_config=self.manipulator._get_config_dict()
             )
             
@@ -783,6 +747,31 @@ class JubileeManager:
             raise RuntimeError(f"Move to scale failed: {result.reason}")
         
         return True
+
+    def set_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
+        """
+        Set the piston count for a specific dispenser.
+        
+        Allows reloading a dispenser while the machine remains connected
+        and idle. Delegates to the state machine, which owns all dispenser state.
+        
+        Args:
+            index: Zero-based dispenser index.
+            num_pistons: New piston count (must be >= 0).
+        
+        Returns:
+            True on success, False if the state machine is not initialized or
+            the index is out of range.
+        
+        Example:
+            ```python
+            # Reload dispenser 0 with 10 pistons
+            manager.set_dispenser_pistons(0, 10)
+            ```
+        """
+        if not self.state_machine:
+            return False
+        return self.state_machine.set_dispenser_pistons(index, num_pistons)
 
     def abort(self) -> None:
         """

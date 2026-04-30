@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, TYPE_CHECKING
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
@@ -38,6 +38,9 @@ class ZHeightPolicy:
 
     def validate(self, z_height_id: Optional[str]) -> Optional[str]:
         """Return a human readable error message if the policy is not satisfied."""
+        if not self.required and not self.allowed:
+            return "No z-height is permitted for this position."
+
         if (self.required or self.allowed) and z_height_id is None:
             return "Current z-height is not set."
 
@@ -150,19 +153,21 @@ class MoveValidationResult:
     reason: Optional[str] = None
 
 
+@dataclass
+class _ResolvedPositionResult:
+    """Internal result for ready-position coordinate resolution."""
+
+    error: Optional[MoveValidationResult] = None
+    coords: Optional[Tuple[float, float, float, float]] = None  # (x, y, z, v)
+
+
 class PositionRegistry:
     """Utility container for known platform positions."""
-    # TODO: Update coordinate tolerance to remove hard coded values
     def __init__(self, positions: Iterable[PositionDescriptor]) -> None:
         self._positions: Dict[str, PositionDescriptor] = {}
         self._actions: Dict[str, ActionDescriptor] = {}
         self._z_heights: Dict[str, object] = {}
-        self._coordinate_tolerance: Dict[str, float] = {
-            "x": 0.2,
-            "y": 0.2,
-            "z": 0.2,
-            "v": 0.2,
-        }
+        self._coordinate_tolerance: Dict[str, float] = {}
 
         for position in positions:
             self.add_position(position)
@@ -183,8 +188,8 @@ class PositionRegistry:
             except KeyError as exc:
                 raise KeyError(f"Unknown position type '{raw['type']}'") from exc
 
-            position_id = raw["id"]
-            type_name = raw["type"]
+            position_id = raw["id"].lower()
+            type_name = raw["type"].lower()
             
             if type_name not in type_to_ids:
                 type_to_ids[type_name] = set()
@@ -276,15 +281,12 @@ class PositionRegistry:
         }
         registry._z_heights = dict(payload.get("z_heights", {}))
         
-        # Load coordinate tolerance if present
-        if "coordinate_tolerance" in payload:
-            tolerance_cfg = payload["coordinate_tolerance"]
-            registry._coordinate_tolerance = {
-                "x": tolerance_cfg.get("x", 0.2),
-                "y": tolerance_cfg.get("y", 0.2),
-                "z": tolerance_cfg.get("z", 0.2),
-                "v": tolerance_cfg.get("v", 0.2),
-            }
+        tolerance_cfg = payload.get("coordinate_tolerance", {})
+        registry._coordinate_tolerance = {
+            axis: value
+            for axis, value in tolerance_cfg.items()
+            if axis != "description" and isinstance(value, (int, float))
+        }
         
         return registry
 
@@ -576,6 +578,26 @@ class MotionPlatformStateMachine(StateMachine):
         ]
 
     
+    def set_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
+        """
+        Set the piston count for a specific dispenser.
+
+        Allows the piston count to be updated (e.g. after reloading a tray)
+        without disconnecting from the machine.
+
+        Args:
+            index: Zero-based dispenser index.
+            num_pistons: New piston count (must be >= 0).
+
+        Returns:
+            True on success, False if the index is out of range.
+        """
+        dispensers = self.context.piston_dispensers
+        if index < 0 or index >= len(dispensers):
+            return False
+        dispensers[index].num_pistons = num_pistons
+        return True
+
     def get_mold_from_deck(self, well_id: str) -> Optional[object]:
         """
         Get a mold object from the deck by mold slot ID.
@@ -688,69 +710,11 @@ class MotionPlatformStateMachine(StateMachine):
         
         # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
-        
-        if not self._registry.has(ready_position_id):
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' not defined in configuration"
-            )
-        
-        well_ready_pos = self._registry.get(ready_position_id)
-        
-        if not well_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' does not have coordinates defined"
-            )
-        
-        ready_coords = well_ready_pos.coordinates
-        
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing Z coordinate"
-            )
-        
+        pos_result = self._resolve_ready_position_coords(ready_position_id)
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="pick_up_mold",
@@ -758,10 +722,10 @@ class MotionPlatformStateMachine(StateMachine):
             well_id=well_id,
             deck=self.context.deck,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
         
         # Update state machine state if successful
@@ -802,79 +766,21 @@ class MotionPlatformStateMachine(StateMachine):
         
         # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
-        
-        if not self._registry.has(ready_position_id):
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' not defined in configuration"
-            )
-        
-        well_ready_pos = self._registry.get(ready_position_id)
-        
-        if not well_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' does not have coordinates defined"
-            )
-        
-        ready_coords = well_ready_pos.coordinates
-        
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{ready_position_id}' missing Z coordinate"
-            )
-        
+        pos_result = self._resolve_ready_position_coords(ready_position_id)
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="put_down_mold",
             execution_func=self._executor.execute_place_mold,
             well_id=well_id,
             deck=self.context.deck,
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
         
         # Update state machine state if successful
@@ -917,78 +823,21 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Mold is already on scale"
             )
         
-        # Get ready position coordinates from SCALE_READY position
-        try:
-            scale_ready_pos = self._registry.get("scale_ready")
-        except KeyError:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position not defined in configuration"
-            )
-        
-        if not scale_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position does not have coordinates defined"
-            )
-        
-        ready_coords = scale_ready_pos.coordinates
-        
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position missing Z coordinate"
-            )
-        
+        # Get ready position coordinates from scale_ready position
+        pos_result = self._resolve_ready_position_coords("scale_ready")
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="place_mold_on_scale",
             execution_func=self._executor.execute_place_mold_on_scale,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
         
         # Update state machine state if successful
@@ -1030,78 +879,21 @@ class MotionPlatformStateMachine(StateMachine):
                 reason="Mold is not on scale"
             )
         
-        # Get ready position coordinates from SCALE_READY position
-        try:
-            scale_ready_pos = self._registry.get("scale_ready")
-        except KeyError:
-            return MoveValidationResult(
-                valid=False,
-                reason="scale_ready position not defined in configuration"
-            )
-        
-        if not scale_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position does not have coordinates defined"
-            )
-        
-        ready_coords = scale_ready_pos.coordinates
-        
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason="SCALE_READY position missing Z coordinate"
-            )
-        
+        # Get ready position coordinates from scale_ready position
+        pos_result = self._resolve_ready_position_coords("scale_ready")
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="pick_mold_from_scale",
             execution_func=self._executor.execute_pick_mold_from_scale,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
 
         # Typically, state changes happen during _validate_and_execute,
@@ -1155,69 +947,11 @@ class MotionPlatformStateMachine(StateMachine):
         
         # Get ready position coordinates for this dispenser
         dispenser_ready_id = f"dispenser_ready_{piston_dispenser.index}"
-        
-        if not self._registry.has(dispenser_ready_id):
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' not defined in configuration"
-            )
-        
-        dispenser_ready_pos = self._registry.get(dispenser_ready_id)
-        
-        if not dispenser_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' does not have coordinates defined"
-            )
-        
-        ready_coords = dispenser_ready_pos.coordinates
-        
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing Z coordinate"
-            )
-        
+        pos_result = self._resolve_ready_position_coords(dispenser_ready_id)
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Execute through generic validation framework
         result = self._validate_and_execute(
             action_id="retrieve_piston",
@@ -1225,10 +959,10 @@ class MotionPlatformStateMachine(StateMachine):
             piston_dispenser=piston_dispenser,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
             dispenser_safe_z=manipulator_config.get('dispenser_safe_z', 254.0),
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
         
         # Update state machine state if successful
@@ -1314,7 +1048,51 @@ class MotionPlatformStateMachine(StateMachine):
     # ---------------------------------------------------------------------
     # Generic Validation and Execution
     # ---------------------------------------------------------------------
-    
+
+    def _resolve_ready_position_coords(self, position_id: str) -> _ResolvedPositionResult:
+        """
+        Validate that a named position exists, has all required coordinates defined,
+        and resolve the Z axis (handling USE_Z_HEIGHT_POLICY via context).
+
+        Returns a _ResolvedPositionResult with either:
+          - error set to a failed MoveValidationResult, or
+          - coords set to (x, y, z, v) floats ready for use.
+        """
+        def _fail(reason: str) -> _ResolvedPositionResult:
+            return _ResolvedPositionResult(error=MoveValidationResult(valid=False, reason=reason))
+
+        if not self._registry.has(position_id):
+            return _fail(f"Ready position '{position_id}' not defined in configuration")
+
+        pos = self._registry.get(position_id)
+
+        if not pos.coordinates:
+            return _fail(f"Ready position '{position_id}' does not have coordinates defined")
+
+        c = pos.coordinates
+
+        for axis, value in [("X", c.x), ("Y", c.y), ("V", c.v)]:
+            if value is None:
+                return _fail(f"Ready position '{position_id}' missing {axis} coordinate")
+
+        # Resolve Z
+        if c.z == "USE_Z_HEIGHT_POLICY":
+            if not self.context.z_height_id:
+                return _fail("Z height policy required but z_height_id not set in context")
+            z_heights = self._registry.z_heights
+            if self.context.z_height_id not in z_heights:
+                return _fail(f"Z height '{self.context.z_height_id}' not found in configuration")
+            z_config = z_heights[self.context.z_height_id]
+            ready_z = z_config.get("z_coordinate") if isinstance(z_config, dict) else None
+            if ready_z is None:
+                return _fail(f"Z coordinate not defined for z_height '{self.context.z_height_id}'")
+        elif c.z is not None:
+            ready_z = c.z
+        else:
+            return _fail(f"Ready position '{position_id}' missing Z coordinate")
+
+        return _ResolvedPositionResult(coords=(c.x, c.y, ready_z, c.v))
+
     def _validate_and_execute(
         self,
         target_position_id: Optional[str] = None,
@@ -1791,38 +1569,47 @@ class MotionPlatformStateMachine(StateMachine):
             ready_v=ready_coords.v
         )
     
-    def validated_move_to_dispenser(
-        self,
-        piston_dispenser
-    ) -> MoveValidationResult:
+    def validated_move_to_dispenser(self) -> MoveValidationResult:
         """
-        Validate and execute movement to a dispenser ready position.
-        
-        Args:
-            piston_dispenser: PistonDispenser object with ready_pos attribute
-            
+        Validate and execute movement to the next available dispenser ready position.
+
+        Selects the first configured dispenser that still has pistons remaining
+        and moves to its ready position. All dispenser tracking lives here,
+        callers do not choose dispenser.
+
         Returns:
             MoveValidationResult with outcome
         """
+        # Find the first dispenser with pistons remaining
+        piston_dispenser = next(
+            (d for d in self.context.piston_dispensers if d.num_pistons > 0),
+            None
+        )
+        if piston_dispenser is None:
+            return MoveValidationResult(
+                valid=False,
+                reason="No pistons available in any dispenser"
+            )
+
         # Get target position from dispenser's ready_pos
         target_position = piston_dispenser.ready_pos
-        
+
         # Get coordinates from registry
         if not self._registry.has(target_position):
             return MoveValidationResult(
                 valid=False,
                 reason=f"Dispenser ready position '{target_position}' not defined in configuration"
             )
-        
+
         position_descriptor = self._registry.get(target_position)
         if not position_descriptor.coordinates:
             return MoveValidationResult(
                 valid=False,
                 reason=f"Position '{target_position}' has no coordinates defined"
             )
-        
+
         coords = position_descriptor.coordinates
-        
+
         # Execute move using coordinates from motion_platform_positions.json
         return self._validate_and_execute_move(
             target_position_id=target_position,
@@ -2137,127 +1924,85 @@ class MotionPlatformStateMachine(StateMachine):
     
     def validated_retrieve_piston(
         self,
-        piston_dispenser,
         manipulator_config: Dict[str, object]
     ) -> MoveValidationResult:
         """
-        Validate and execute retrieving a piston from a dispenser.
-        This action retrieves the piston, partially inserts it, and then returns
-        to ready position.
-        
+        Validate and execute retrieving a piston from the current dispenser position.
+
+        Derives which dispenser to use from the current position id
+        (e.g. ``dispenser_ready_0`` → dispenser 0). This means the caller must
+        have already moved to a dispenser ready position via
+        ``validated_move_to_dispenser()``. On success the dispenser's piston
+        count is decremented and the mold's top-piston flag is set.
+
         Requires:
         - Manipulator tool to be active
         - Mold without top piston (payload_state: mold_without_top_piston)
-        - Must start from the corresponding dispenser_ready position for that dispenser
-        
+        - Current position must be a dispenser_ready_N position
+
         Args:
-            piston_dispenser: The PistonDispenser object to retrieve from
-            manipulator_config: Configuration dict for the manipulator
-            
+            manipulator_config: Configuration dict for the manipulator.
+
         Returns:
             MoveValidationResult with outcome
         """
-        # Validate that we're at the correct dispenser position
-        expected_position = f"dispenser_ready_{piston_dispenser.index}"
-        if self.context.position_id != expected_position:
+        # Derive which dispenser we're at from the current position id
+        pos_id = self.context.position_id
+        prefix = "dispenser_ready_"
+        if not pos_id.startswith(prefix):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Must be at {expected_position} to retrieve piston from dispenser {piston_dispenser.index}. Current position: {self.context.position_id}"
+                reason=f"Must be at a dispenser_ready position to retrieve a piston. Current: {pos_id}"
             )
-        
+        try:
+            dispenser_index = int(pos_id[len(prefix):])
+        except ValueError:
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Cannot determine dispenser index from position '{pos_id}'"
+            )
+
+        dispensers = self.context.piston_dispensers
+        if dispenser_index < 0 or dispenser_index >= len(dispensers):
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Dispenser index {dispenser_index} derived from position '{pos_id}' is out of range"
+            )
+        piston_dispenser = dispensers[dispenser_index]
+
         if self.context.current_well is None:
             return MoveValidationResult(
                 valid=False,
                 reason="Not carrying a mold"
             )
-        
+
         mold = self.context.current_well
-        
+
         if mold.has_top_piston:
             return MoveValidationResult(
                 valid=False,
                 reason="Mold already has a top piston"
             )
-        
+
         if piston_dispenser.num_pistons == 0:
             return MoveValidationResult(
                 valid=False,
                 reason="No pistons available in dispenser"
             )
-        
+
         if self.context.mold_on_scale:
             return MoveValidationResult(
                 valid=False,
                 reason="Cannot add top piston when mold is on scale"
             )
-        
-        # Get ready position coordinates for this dispenser
+
+        # Resolve the dispenser ready position coordinates
         dispenser_ready_id = f"dispenser_ready_{piston_dispenser.index}"
-        
-        # Try to get the specific dispenser's ready position
-        if not self._registry.has(dispenser_ready_id):
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' not defined in configuration"
-            )
-        
-        dispenser_ready_pos = self._registry.get(dispenser_ready_id)
-        
-        if not dispenser_ready_pos.coordinates:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' does not have coordinates defined"
-            )
-        
-        ready_coords = dispenser_ready_pos.coordinates
-        
-        # Validate required coordinates exist
-        if ready_coords.x is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing X coordinate"
-            )
-        if ready_coords.y is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing Y coordinate"
-            )
-        if ready_coords.v is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing V coordinate"
-            )
-        
-        # Resolve z coordinate if needed
-        ready_z = None
-        if ready_coords.z == "USE_Z_HEIGHT_POLICY":
-            if not self.context.z_height_id:
-                return MoveValidationResult(
-                    valid=False,
-                    reason="Z height policy required but z_height_id not set in context"
-                )
-            z_heights = self._registry.z_heights
-            if self.context.z_height_id not in z_heights:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z height '{self.context.z_height_id}' not found in configuration"
-                )
-            z_config = z_heights[self.context.z_height_id]
-            if isinstance(z_config, dict):
-                ready_z = z_config.get("z_coordinate")
-            if ready_z is None:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
-                )
-        elif ready_coords.z is not None:
-            ready_z = ready_coords.z
-        else:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Ready position '{dispenser_ready_id}' missing Z coordinate"
-            )
-        
+        pos_result = self._resolve_ready_position_coords(dispenser_ready_id)
+        if pos_result.error:
+            return pos_result.error
+        ready_x, ready_y, ready_z, ready_v = pos_result.coords
+
         # Validate and execute the action through the state machine
         result = self._validate_and_execute(
             action_id="retrieve_piston",
@@ -2265,16 +2010,16 @@ class MotionPlatformStateMachine(StateMachine):
             piston_dispenser=piston_dispenser,
             tamper_axis=manipulator_config.get('tamper_axis', 'V'),
             dispenser_safe_z=manipulator_config.get('dispenser_safe_z', 254.0),
-            ready_x=ready_coords.x,
-            ready_y=ready_coords.y,
+            ready_x=ready_x,
+            ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_coords.v
+            ready_v=ready_v
         )
-        
+
         if result.valid:
             mold.has_top_piston = True
             piston_dispenser.remove_piston()
-        
+
         return result
 
     # ---------------------------------------------------------------------
