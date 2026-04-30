@@ -1,28 +1,31 @@
 """
 FastAPI server for the Jubilee Automation system.
 
-Architecture
-------------
-  Model       — HardwareManager / MockHardwareManager (hardware state + operations)
-  ViewModel   — Zustand store in the React frontend (current state, derived views)
-  View        — React components (purely reactive, reads from Zustand)
+This module is the API gateway between the React frontend and the hardware layer.
 
-This server is the API gateway between the two layers:
-  REST endpoints  — discrete, low-frequency commands (connect, start job, stop job…)
-  WebSocket /ws   — continuous 4 Hz telemetry pushed to every connected browser
+Architecture:
+    Model     - HardwareManager / MockHardwareManager (hardware state + operations)
+    ViewModel - Zustand store in the React frontend (current state, derived views)
+    View      - React components (purely reactive, reads from Zustand)
 
-Switching between mock and real hardware
------------------------------------------
-Set MOCK_HARDWARE = True  to use MockHardwareManager (UI development, no physical hardware).
-Set MOCK_HARDWARE = False to use HardwareManager      (production, real Jubilee + scale).
+Transport:
+    REST endpoints - discrete, low-frequency commands (connect, start job, stop job...)
+    WebSocket /ws  - continuous 4 Hz telemetry pushed to every connected browser
 
-Both classes expose an identical public API so no other code needs to change.
+Switching between mock and real hardware:
+    Set ``MOCK_HARDWARE = True`` to use ``MockHardwareManager`` (UI development, no
+    physical hardware required). Set ``MOCK_HARDWARE = False`` to use
+    ``HardwareManager`` (production, real Jubilee + scale). Both classes expose an
+    identical public API so no other code needs to change.
 
-Usage (from the frontend directory):
-    uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+Example:
+    From the frontend directory::
 
-Usage (from the project root):
-    uvicorn frontend.server:app --host 0.0.0.0 --port 8000 --reload
+        uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+
+    From the project root::
+
+        uvicorn frontend.server:app --host 0.0.0.0 --port 8000 --reload
 """
 
 import asyncio
@@ -39,9 +42,9 @@ _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-# Add frontend/src/ directly so that models, hardware_manager, and level_camera
-# can be imported by their bare module names without colliding with the
-# project-root src/ package (which contains JubileeManager, Scale, etc.).
+# Add frontend/src/ directly so that models and hardware_manager can be imported
+# by their bare module names without colliding with the project-root src/ package
+# (which contains JubileeManager, Scale, etc.).
 _backend_src = Path(__file__).parent / "src"
 if str(_backend_src) not in sys.path:
     sys.path.insert(0, str(_backend_src))
@@ -51,17 +54,15 @@ _FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 from hardware_manager import HardwareManager, MockHardwareManager
-from level_camera import LevelCameraStreamer, MockLevelCameraStreamer, _BaseLevelCameraStreamer
 
 # ---------------------------------------------------------------------------
 # Toggle — flip to False when deploying on real hardware.
 # ---------------------------------------------------------------------------
-MOCK_HARDWARE: bool = False
+MOCK_HARDWARE: bool = True
 
 
 # =============================================================================
@@ -104,24 +105,48 @@ JobRequest = Annotated[
 # =============================================================================
 
 class ConnectionManager:
-    """Tracks every live browser WebSocket client."""
+    """Tracks every live browser WebSocket client.
+
+    Maintains the list of active connections and provides broadcast helpers.
+    Dead connections (clients that have closed their tab) are detected during
+    broadcast and removed automatically.
+    """
 
     def __init__(self) -> None:
         self.active: list[WebSocket] = []
 
     async def connect(self, ws: WebSocket) -> None:
+        """Accept a new WebSocket connection and register it.
+
+        Args:
+            ws: The WebSocket instance from FastAPI.
+        """
         await ws.accept()
         self.active.append(ws)
 
     def disconnect(self, ws: WebSocket) -> None:
+        """Remove a WebSocket from the active list.
+
+        Args:
+            ws: The WebSocket instance to remove. No-op if not registered.
+        """
         if ws in self.active:
             self.active.remove(ws)
 
     @property
     def client_count(self) -> int:
+        """Number of currently active WebSocket clients."""
         return len(self.active)
 
     async def broadcast(self, data: dict) -> None:
+        """Send a JSON payload to every active client.
+
+        Any client whose send raises an exception is assumed to have
+        disconnected and is removed from ``self.active``.
+
+        Args:
+            data: JSON-serialisable dict to broadcast.
+        """
         dead: list[WebSocket] = []
         for ws in list(self.active):
             try:
@@ -141,9 +166,6 @@ hw:        MockHardwareManager | HardwareManager = (
 )
 ws_mgr   = ConnectionManager()
 progress = JobProgress()
-level_cam: _BaseLevelCameraStreamer = (
-    MockLevelCameraStreamer() if MOCK_HARDWARE else LevelCameraStreamer()
-)
 
 
 # =============================================================================
@@ -151,12 +173,11 @@ level_cam: _BaseLevelCameraStreamer = (
 # =============================================================================
 
 async def telemetry_loop() -> None:
-    """
-    Runs continuously at 4 Hz.
+    """Broadcast a unified telemetry frame to every connected browser at 4 Hz.
 
-    Broadcasts a unified telemetry frame to every connected browser.
-    Weight is only queried when hardware is connected.
-    Skips broadcast entirely when no browser clients are open.
+    Runs indefinitely as an ``asyncio.Task`` created in the app lifespan.
+    Weight is only queried when hardware is connected. The broadcast is skipped
+    entirely when no browser tabs are open (``ws_mgr.client_count == 0``).
     """
     while True:
         if ws_mgr.client_count > 0:
@@ -182,7 +203,6 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(telemetry_loop())
     yield
     task.cancel()
-    level_cam.stop()
 
 
 app = FastAPI(title="Jubilee Automation API", lifespan=lifespan)
@@ -202,7 +222,12 @@ app.add_middleware(
 
 @app.get("/api/status")
 async def get_status():
-    """Full machine snapshot: state, job progress, dispenser status, client count."""
+    """Return a full machine snapshot.
+
+    Returns:
+        dict: Connected flag, machine state, Jubilee IP, current job progress,
+        dispenser statuses, and active WebSocket client count.
+    """
     return {
         "connected":   hw.connected,
         "state":       hw.state.value,
@@ -215,13 +240,19 @@ async def get_status():
 
 @app.post("/api/hardware/connect", status_code=202)
 async def hardware_connect(config: HardwareConfig):
-    """
-    Begin hardware connection with the supplied configuration.
+    """Begin hardware connection with the supplied configuration.
 
-    Returns HTTP 202 immediately; the connection runs in the background.
-    Monitor the WebSocket state field for transitions:
-      DISCONNECTED → HOMING → IDLE   (success)
-      DISCONNECTED → HOMING → ERROR  (failure — check job.error for reason)
+    Returns HTTP 202 immediately; the connection runs in the background as an
+    ``asyncio.Task``. Monitor the WebSocket ``state`` field for transitions::
+
+        DISCONNECTED → HOMING → IDLE   (success)
+        DISCONNECTED → HOMING → ERROR  (failure — check job.error for reason)
+
+    Args:
+        config: Hardware configuration (dispensers, pistons, IP, serial port).
+
+    Raises:
+        HTTPException: 400 if already connected or a connection is in progress.
     """
     if hw.connected:
         raise HTTPException(status_code=400, detail="Already connected to hardware.")
@@ -233,11 +264,10 @@ async def hardware_connect(config: HardwareConfig):
 
 @app.post("/api/hardware/disconnect", status_code=200)
 async def hardware_disconnect():
-    """
-    Stop any running job and disconnect from hardware.
+    """Stop any running job and disconnect from hardware.
 
-    Awaits disconnect completion (fast — just closes serial/HTTP sessions).
-    After this returns the WebSocket will broadcast state=disconnected.
+    Awaits disconnect completion synchronously (fast — just closes serial/HTTP
+    sessions). After this returns, the WebSocket broadcasts ``state=disconnected``.
     """
     if progress.running:
         progress.running = False   # signal job loop to exit cleanly
@@ -251,15 +281,19 @@ async def hardware_disconnect():
 
 @app.post("/api/job/start", status_code=202)
 async def start_job(body: JobRequest):
-    """
-    Enqueue a powder-dispensing or hardness-testing job.
+    """Enqueue a powder-dispensing or hardness-testing job.
 
-    State guards (HTTP 400 if violated):
-      - Machine must be in the IDLE state.
-      - No job may already be in progress.
+    The job type is selected by the ``job_type`` discriminator field in the
+    request body. Pydantic validates all field constraints before this function
+    is called; invalid payloads return HTTP 422 automatically.
 
-    Pydantic validates all field constraints before this function is called;
-    invalid request bodies return HTTP 422 automatically.
+    Args:
+        body: A ``StartPowderJobRequest`` or ``StartHardnessJobRequest`` instance,
+            selected by the ``job_type`` discriminator.
+
+    Raises:
+        HTTPException: 400 if the machine is not in the IDLE state or a job is
+            already in progress.
     """
     if hw.state != MachineState.IDLE:
         raise HTTPException(
@@ -304,9 +338,13 @@ async def start_job(body: JobRequest):
 
 @app.post("/api/job/stop", status_code=200)
 async def stop_job():
-    """
-    Signal the running job to stop after the current well/sample completes.
-    The job does not stop immediately — it exits at the next iteration check.
+    """Signal the running job to stop after the current well/sample completes.
+
+    The job does not stop immediately — it exits at the next iteration boundary
+    when it checks ``progress.running``.
+
+    Raises:
+        HTTPException: 400 if no job is currently running.
     """
     if not progress.running:
         raise HTTPException(status_code=400, detail="No job is currently running.")
@@ -316,12 +354,14 @@ async def stop_job():
 
 @app.post("/api/job/cancel", status_code=200)
 async def cancel_job():
-    """
-    Graceful cancel: finish the current mold/sample, then stop and stow the tool.
+    """Graceful cancel: finish the current mold/sample, then stow the tool.
 
-    The job exits at the next iteration boundary (same as stop).  On real
-    hardware the manager will home/stow the active tool before releasing IDLE.
-    The machine returns to IDLE when the current operation completes.
+    The job exits at the next iteration boundary (same mechanism as ``stop``).
+    On real hardware the manager homes and stows the active tool before
+    releasing the IDLE state.
+
+    Raises:
+        HTTPException: 400 if no job is currently running.
     """
     if not progress.running:
         raise HTTPException(status_code=400, detail="No job is currently running.")
@@ -331,14 +371,12 @@ async def cancel_job():
 
 @app.post("/api/job/abort", status_code=200)
 async def abort_job():
-    """
-    Emergency stop: immediately halt all motion.
+    """Emergency stop: immediately halt all motion.
 
-    Signals the job loop to exit, then delegates to the hardware manager's
-    abort() method, which sends M112 to the Duet controller on real hardware.
-    Sets machine state to ERROR so the job finally-block cannot silently
-    reset it back to IDLE.  The hardware must be restarted before starting
-    a new job.
+    Signals the job loop to exit, then calls ``hw.abort()``, which sends M112
+    to the Duet controller on real hardware. Sets machine state to ERROR so the
+    job ``finally`` block cannot silently reset it back to IDLE. Hardware must
+    be fully reconnected before starting a new job.
     """
     progress.running = False
     await hw.abort()
@@ -347,15 +385,18 @@ async def abort_job():
 
 @app.get("/api/job/log")
 async def get_job_log():
-    """
-    Return the most recent job log in the normalised live-progress format.
+    """Return the most recent job log in the normalised live-progress format.
 
     Priority order:
-      1. If a job ran in this server session (progress has data), synthesise
-         from in-memory state so the home screen updates in real-time.
-      2. Otherwise read the most recent file from _FILES_DIR — this is the
-         path taken after a server restart, since in-memory state is lost.
-    Returns {"log": null} when neither source has data.
+
+    1. If a job ran in this server session (``progress`` has data), synthesise
+       from in-memory state so the home screen updates in real time.
+    2. Otherwise read the most recent file from ``_FILES_DIR`` — the path taken
+       after a server restart when in-memory state is lost.
+
+    Returns:
+        dict: ``{"log": <normalised job dict>}`` or ``{"log": null}`` when
+        neither source has data.
     """
     if progress.job_type is not None:
         return {"log": _build_progress_log()}
@@ -371,7 +412,12 @@ async def get_job_log():
 
 
 def _build_progress_log() -> dict:
-    """Synthesise a job log dict from the current in-memory JobProgress."""
+    """Synthesise a normalised job log dict from the current in-memory ``JobProgress``.
+
+    Returns:
+        dict: Job log in the normalised live-progress shape understood by the
+        frontend store and HomeScreen.
+    """
     items_with_status = []
     for i, item in enumerate(progress.items):
         item_id = item.get("well_id") or item.get("sample_id")
@@ -398,16 +444,25 @@ def _build_progress_log() -> dict:
 
 
 def _normalize_file_log(raw: dict) -> dict:
-    """
-    Convert a persisted job JSON file to the normalised live-progress shape
-    that the frontend store and HomeScreen already understand.
+    """Convert a persisted job JSON file to the normalised live-progress shape.
 
-    File shape  →  normalised shape
-    ────────────────────────────────────────────────────────────────────────
-    metadata.job_type  "powder"/"hardness"  →  job_type  "dispensing"/"hardness"
-    metadata.date                           →  date
-    metadata.outcome                        →  status
-    state.molds / state.samples             →  items  (already in correct shape)
+    Maps the on-disk file format to the shape understood by the frontend store
+    and HomeScreen:
+
+    +--------------------------+---------------------------+
+    | File field               | Normalised field          |
+    +==========================+===========================+
+    | metadata.job_type        | job_type                  |
+    | metadata.date            | date                      |
+    | metadata.outcome         | status                    |
+    | state.molds / state.samples | items                 |
+    +--------------------------+---------------------------+
+
+    Args:
+        raw: Parsed JSON content of a job log file.
+
+    Returns:
+        dict: Normalised job log dict compatible with the frontend store.
     """
     meta  = raw.get("metadata", {})
     state = raw.get("state", {})
@@ -435,15 +490,26 @@ def _normalize_file_log(raw: dict) -> dict:
 
 @app.get("/api/dispensers")
 async def get_dispensers():
-    """Return the current status of all configured piston dispensers."""
+    """Return the current status of all configured piston dispensers.
+
+    Returns:
+        dict: ``{"dispensers": [{"index": int, "pistons_remaining": int}, ...]}``
+    """
     return {"dispensers": [d.model_dump() for d in hw.get_dispensers()]}
 
 
 @app.put("/api/dispensers/{index}", status_code=200)
 async def update_dispenser(index: int, body: UpdateDispenserRequest):
-    """
-    Update the remaining piston count for a specific dispenser.
-    Used after the user manually reloads a dispenser tray.
+    """Update the remaining piston count for a specific dispenser.
+
+    Called after the user manually reloads a dispenser tray.
+
+    Args:
+        index: Zero-based dispenser index.
+        body: New piston count (``num_pistons >= 0``).
+
+    Raises:
+        HTTPException: 400 if the index is out of range or hardware is not connected.
     """
     success = hw.update_dispenser_pistons(index, body.num_pistons)
     if not success:
@@ -460,12 +526,14 @@ async def update_dispenser(index: int, body: UpdateDispenserRequest):
 
 @app.get("/api/files")
 async def list_job_files():
-    """
-    Return metadata for all job log JSON files in the files directory.
+    """Return metadata for all job log JSON files in the files directory.
 
-    Each entry contains the fields expected by the DataScreen:
-      name, size, modified (ISO-8601), type ("file").
-    Files are returned newest-first (by filename, which encodes a sequential ID).
+    Files are returned newest-first by filename, which encodes a sequential ID.
+
+    Returns:
+        list[dict]: Each entry has ``name``, ``path``, ``size``, ``modified``
+        (ISO-8601 UTC), and ``type`` fields matching the shape expected by the
+        DataScreen.
     """
     entries = []
     for f in sorted(_FILES_DIR.glob("*.json"), reverse=True):
@@ -482,11 +550,19 @@ async def list_job_files():
 
 @app.get("/api/files/{filename}")
 async def get_job_file(filename: str):
-    """
-    Return the full JSON content of a single job log file.
+    """Return the full JSON content of a single job log file.
 
-    filename must match exactly (e.g. "0001_2026-03-31_powder_5.json").
-    Returns HTTP 404 if the file does not exist.
+    Args:
+        filename: Exact filename including extension, e.g.
+            ``"0001_2026-03-31_dispensing_5.json"``. Only ``.json`` files are
+            served.
+
+    Returns:
+        dict: Parsed JSON content of the log file.
+
+    Raises:
+        HTTPException: 404 if the file does not exist or has the wrong extension.
+        HTTPException: 500 if the file cannot be read or parsed.
     """
     path = _FILES_DIR / filename
     if not path.exists() or path.suffix != ".json":
@@ -498,52 +574,21 @@ async def get_job_file(filename: str):
 
 
 # =============================================================================
-# REST — level camera
-# =============================================================================
-
-@app.post("/api/camera/start", status_code=200)
-async def start_level_camera():
-    """Start the bubble-level camera stream."""
-    if level_cam.active:
-        return {"active": True, "message": "Camera already running."}
-    try:
-        await asyncio.to_thread(level_cam.start)
-        return {"active": True, "message": "Camera started."}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.post("/api/camera/stop", status_code=200)
-async def stop_level_camera():
-    """Stop the bubble-level camera stream."""
-    await asyncio.to_thread(level_cam.stop)
-    return {"active": False, "message": "Camera stopped."}
-
-
-@app.get("/api/camera/stream")
-async def level_camera_stream():
-    """MJPEG stream of the bubble-level camera."""
-    if not level_cam.active:
-        raise HTTPException(
-            status_code=503,
-            detail="Camera is not running. POST /api/camera/start first.",
-        )
-    return StreamingResponse(
-        level_cam.frame_generator(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-# =============================================================================
 # Background task helpers
 # =============================================================================
 
 def _make_job_log(job_type: str, items: list[dict]):
-    """
-    Instantiate a JobLog.
+    """Instantiate a ``JobLog`` for the current job.
 
-    In mock mode the manager reference is None; in real mode we pass the
-    underlying JubileeManager so the log can pull weight data from it.
+    In mock mode the manager reference is ``None``; in real mode the underlying
+    ``JubileeManager`` is passed so the log can pull actual weight data from it.
+
+    Args:
+        job_type: ``"dispensing"`` or ``"hardness"``.
+        items: Ordered list of item dicts from the job request (wells or samples).
+
+    Returns:
+        JobLog | None: A ``JobLog`` instance, or ``None`` if the import fails.
     """
     try:
         from src.JobLog import JobLog
@@ -555,6 +600,14 @@ def _make_job_log(job_type: str, items: list[dict]):
 
 
 async def _run_connect(config: HardwareConfig) -> None:
+    """Run hardware connection in the background.
+
+    Errors are recorded in ``progress.error``; the hardware state is already
+    set to ERROR inside each manager's ``connect()`` implementation.
+
+    Args:
+        config: Hardware configuration forwarded to ``hw.connect()``.
+    """
     try:
         await hw.connect(config)
     except BaseException as exc:
@@ -563,6 +616,11 @@ async def _run_connect(config: HardwareConfig) -> None:
 
 
 async def _run_dispensing(items: list[dict]) -> None:
+    """Execute a dispensing job in the background and finalise the log on completion.
+
+    Args:
+        items: Ordered list of well dicts (``well_id``, ``target_weight``).
+    """
     job_log = _make_job_log("dispensing", items)
     outcome = "cancelled"
     try:
@@ -585,6 +643,11 @@ async def _run_dispensing(items: list[dict]) -> None:
 
 
 async def _run_hardness(items: list[dict]) -> None:
+    """Execute a hardness testing job in the background and finalise the log on completion.
+
+    Args:
+        items: Ordered list of sample dicts (``sample_id``, ``mode``).
+    """
     job_log = _make_job_log("hardness", items)
     outcome = "cancelled"
     try:
@@ -612,9 +675,14 @@ async def _run_hardness(items: list[dict]) -> None:
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
-    """
-    Register a browser client.  The telemetry_loop pushes frames to all
-    registered clients; this coroutine just keeps the connection alive.
+    """Register a browser client and keep its connection alive.
+
+    The ``telemetry_loop`` pushes 4 Hz frames to all registered clients.
+    This coroutine discards any messages sent by the client (the protocol is
+    server-push only) and deregisters the client on disconnect.
+
+    Args:
+        ws: The incoming WebSocket connection from FastAPI.
     """
     await ws_mgr.connect(ws)
     try:

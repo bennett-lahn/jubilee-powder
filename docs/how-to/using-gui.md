@@ -11,7 +11,6 @@ The Jubilee Automation UI is a browser-based interface that provides:
 - Powder dispensing job setup and real-time monitoring
 - Hardness testing job setup and monitoring
 - Historical job log browsing
-- Scale bubble-level camera view
 
 ## Starting the UI
 
@@ -20,7 +19,7 @@ The Jubilee Automation UI is a browser-based interface that provides:
 Install the backend dependencies and Node.js packages:
 
 ```bash
-pip install fastapi uvicorn pydantic turbojpeg opencv-python
+pip install fastapi uvicorn pydantic
 cd frontend && npm install
 ```
 
@@ -251,9 +250,6 @@ the file list from the server.
 | Pistons per Dispenser        | 10              | Pistons per tray                        |
 | Jubilee IP / Hostname        | `jubilee.local` | Machine network address                 |
 | Scale Serial Port            | `/dev/ttyUSB0`  | Serial port for the A&D FX-120i scale   |
-
-The **Scale Level Camera** button opens a live MJPEG view of the bubble level mounted
-on the scale. Use this to verify the scale is level before running a job.
 
 ---
 

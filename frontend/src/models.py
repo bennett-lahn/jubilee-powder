@@ -1,8 +1,10 @@
 """
 Shared data models for the Jubilee Automation server.
 
-Imported by both server.py and hardware_manager.py so neither file depends
-on the other at import time.
+Imported by both ``server.py`` and ``hardware_manager.py`` so neither file
+depends on the other at import time. All Pydantic models here are used for
+request validation and serialisation; ``JobProgress`` is a plain Python class
+shared as mutable state between server endpoints and the hardware manager.
 """
 
 from enum import Enum
@@ -16,6 +18,13 @@ from pydantic import BaseModel, Field
 # =============================================================================
 
 class MachineState(str, Enum):
+    """String enum representing the five possible hardware states.
+
+    Serialised as a lowercase string in WebSocket telemetry frames and REST
+    responses so the React frontend can compare states without importing this
+    enum.
+    """
+
     IDLE         = "idle"
     HOMING       = "homing"       # connection / homing in progress
     RUNNING      = "running"      # job executing
@@ -36,6 +45,8 @@ class HardwareConfig(BaseModel):
 
 
 class DispenserStatus(BaseModel):
+    """Per-dispenser status reported in telemetry frames and REST responses."""
+
     index:             int
     pistons_remaining: int
 
@@ -45,6 +56,24 @@ class DispenserStatus(BaseModel):
 # =============================================================================
 
 class JobProgress:
+    """Mutable in-memory job state shared between server endpoints and the hardware manager.
+
+    A single instance is created at module level in ``server.py`` and passed by
+    reference to the hardware manager's ``run_dispensing_job`` /
+    ``run_hardness_job`` methods so that both the job loop and REST endpoints
+    can read and mutate progress atomically.
+
+    Attributes:
+        running: ``True`` while the job loop is executing.
+        job_type: ``"dispensing"`` or ``"hardness"``, set at job start.
+        completed: Number of wells/samples successfully processed.
+        total: Total wells/samples in the current job.
+        current_item: ID of the well/sample currently being processed.
+        error: Error message string if the job failed, otherwise ``None``.
+        started_at: ISO-8601 UTC timestamp set when the job starts.
+        items: Ordered list of item dicts from the original job request.
+    """
+
     def __init__(self) -> None:
         self.running:      bool          = False
         self.job_type:     Optional[str] = None
@@ -56,9 +85,15 @@ class JobProgress:
         self.items:        list          = []      # ordered list of item dicts from the job request
 
     def reset(self) -> None:
+        """Reset all fields to their initial defaults."""
         self.__init__()
 
     def to_dict(self) -> dict:
+        """Serialise all fields to a JSON-compatible dict for WebSocket telemetry.
+
+        Returns:
+            dict: All progress fields suitable for inclusion in a telemetry frame.
+        """
         return {
             "running":      self.running,
             "job_type":     self.job_type,

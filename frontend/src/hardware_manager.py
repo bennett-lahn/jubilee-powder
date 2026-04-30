@@ -331,11 +331,7 @@ class HardwareManager:
         """
         if not (self._manager and self._manager.connected):
             return False
-        dispensers = self._manager.piston_dispensers
-        if index >= len(dispensers):
-            return False
-        dispensers[index].num_pistons = num_pistons
-        return True
+        return self._manager.set_dispenser_pistons(index, num_pistons)
 
     # ── Job execution ─────────────────────────────────────────────────────────
 

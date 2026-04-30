@@ -12,7 +12,6 @@ The frontend provides:
   browser, manual control, and settings
 - A 4 Hz WebSocket telemetry feed keeping every screen up to date without polling
 - REST API endpoints for discrete commands (connect, start job, stop, abort)
-- An MJPEG camera stream for the scale bubble-level view
 - A mock hardware mode (`MOCK_HARDWARE = True`) for UI development without physical hardware
 
 ## Technology Stack
@@ -208,14 +207,6 @@ File names follow the pattern `{id}_{date}_{job_type}_{n}.json`,
 e.g. `0012_2026-04-12_dispensing_1.json`. Files are stored in
 `frontend/api/files/`.
 
-### Level Camera
-
-| Method | Path                 | Description                              |
-|--------|----------------------|------------------------------------------|
-| `POST` | `/api/camera/start`  | Start the bubble-level MJPEG stream      |
-| `POST` | `/api/camera/stop`   | Stop the stream                          |
-| `GET`  | `/api/camera/stream` | MJPEG stream (`multipart/x-mixed-replace`) |
-
 ---
 
 ## WebSocket Protocol
@@ -280,7 +271,7 @@ FastAPI application entry point. Responsible for:
 - Defining all REST and WebSocket endpoints
 - Running the 4 Hz `telemetry_loop` background task
 - Instantiating `HardwareManager` (or `MockHardwareManager`), `ConnectionManager`,
-  `JobProgress`, and `LevelCameraStreamer` as module-level singletons
+  and `JobProgress` as module-level singletons
 - Writing and reading job log files in `frontend/api/files/`
 
 ### `hardware_manager.py`
@@ -305,18 +296,6 @@ Shared Pydantic models and enums imported by both `server.py` and
 - **`DispenserStatus`** — per-dispenser index and remaining piston count
 - **`JobProgress`** — mutable in-memory job state threaded through server endpoints
   and hardware managers
-
-### `level_camera.py`
-
-Three-stage MJPEG streaming pipeline for the scale bubble-level camera:
-
-1. **Capture thread** (30 fps) — reads frames from camera or generates synthetic ones
-2. **ThreadPoolExecutor encode pool** (3 workers) — TurboJPEG compression
-3. **Async frame generator** — consumed by `GET /api/camera/stream`
-
-`MockLevelCameraStreamer` draws a synthetic bubble level using NumPy (no physical
-camera required). `LevelCameraStreamer` reads from a real USB camera via OpenCV and
-encodes with TurboJPEG.
 
 ---
 
