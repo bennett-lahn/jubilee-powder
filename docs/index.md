@@ -13,6 +13,7 @@ Jubilee Powder is a Python-based system that enables programmatic control of the
 If you're looking to **use** the Jubilee system for your laboratory work:
 
 - **Start here:** [Quick Start Guide](getting-started/quickstart.md)
+- **Safety and best practices:** [Best Practices](concepts/best-practices.md)
 - **Learn concepts:** [Architecture Overview](concepts/architecture.md)
 - **Follow recipes:** [How-To Guides](how-to/run-new-data.md)
 - **Use the GUI:** [GUI User Guide](how-to/using-gui.md)

@@ -1,15 +1,30 @@
-# Using the Jubilee Web UI
+# Using the Jubilee Web Interfaces
 
-This guide explains how to use the Jubilee's web interface
+This guide explains the two web interfaces available for the Jubilee system.
 
 ## Overview
 
-There are two web interfaces available:
+There are two web interfaces:
 
-1. **Duet Web Control** (DWC): The built-in Jubilee controller interface
-2. **Jubilee GUI**: Custom Python GUI application for high-level operations. See [GUI User Guide](using-gui.md) for more details.
+1. **Jubilee Automation UI** — the custom React browser application for running automated
+   dispensing and hardness testing jobs. This is the primary interface for day-to-day
+   operation. See [Using the Automation UI](using-gui.md) for the full user guide.
+
+2. **Duet Web Control (DWC)** — the built-in Jubilee controller interface for low-level
+   manual control. Use this for troubleshooting, manual jogs, and G-code commands.
+
+!!! warning "Manual control invalidates automation state"
+    Any manual movements made through DWC move the machine outside the positions tracked
+    by the automation state machine. Always disconnect and reconnect the automation system
+    after using DWC before running automated jobs.
 
 ## Duet Web Control (DWC)
+
+The Jubilee Automation UI provides a **Manual Control** screen that safely disconnects
+the automation system before opening DWC in a new browser tab. This is the recommended
+way to access DWC — see [Using the Automation UI](using-gui.md#manual-control) for
+details. The steps below cover direct DWC access when the automation server is not
+running.
 
 ### Accessing DWC
 
@@ -146,6 +161,7 @@ if manager.connect():
 
 ## Next Steps
 
+- [Using the Automation UI](using-gui.md) — primary interface for dispensing and hardness jobs
 - [Configure your system](configuration.md) for custom operations
 - [Run automated operations](run-new-data.md) using Python scripts
 - [Interpret results](results.md) from dispense operations

@@ -175,6 +175,7 @@ pip install -r requirements.txt
 
 - **For GUI users:** Follow the [GUI User Guide](../how-to/using-gui.md)
 - **For programmers:** Follow the [Quick Start Guide](quickstart.md)
+- **Before your first run:** Read [Best Practices](../concepts/best-practices.md) for hardware safety rules
 - Learn about key concepts in the [Architecture Guide](../concepts/architecture.md)
 - Explore [How-To Guides](../how-to/run-new-data.md) for common tasks
 

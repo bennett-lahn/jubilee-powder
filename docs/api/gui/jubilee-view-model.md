@@ -19,7 +19,7 @@ The store is not a thin data cache. It also:
 
 - Owns the single `WebSocket` instance and handles reconnect logic
 - Normalises REST error responses into a consistent `{ ok, error? }` return shape
-- Keeps UI-specific derived state (e.g. `levelCameraActive`, `wsConnected`)
+- Keeps UI-specific derived state (e.g. `wsConnected`)
 
 ## Usage
 
@@ -65,11 +65,6 @@ log files exist.
 
 `HomeScreen` uses `jobLog` to display the last completed job when no job is
 currently running.
-
-### `levelCameraActive`
-
-`true` when `POST /api/camera/start` has succeeded. Set back to `false` by
-`stopLevelCamera()`.
 
 ### `wsConnected`
 
@@ -188,17 +183,6 @@ Hardware must be restarted and reconnected before starting a new job.
 
 `GET /api/job/log` — returns `{ ok, error? }`. Updates `jobLog` in the store.
 
-### Level Camera
-
-#### `startLevelCamera()`
-
-`POST /api/camera/start` — returns `{ ok, error? }`. Sets `levelCameraActive: true`
-on success. The MJPEG stream is then available at `GET /api/camera/stream`.
-
-#### `stopLevelCamera()`
-
-`POST /api/camera/stop` — returns `{ ok, error? }`. Sets `levelCameraActive: false`.
-
 ---
 
 ## Data Flow
@@ -263,8 +247,6 @@ Key exported functions:
 | `fetchJobLog()`       | GET    | `/api/job/log`             |
 | `fetchDispensers()`   | GET    | `/api/dispensers`          |
 | `updateDispenser(i,n)`| PUT    | `/api/dispensers/{index}`  |
-| `startLevelCamera()`  | POST   | `/api/camera/start`        |
-| `stopLevelCamera()`   | POST   | `/api/camera/stop`         |
 
 ---
 

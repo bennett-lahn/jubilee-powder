@@ -43,32 +43,40 @@ graph LR
 
 ### Operational Workflow
 
-The diagram below shows the logical position states and the actions that connect them. The `Mold Slot` subgraph groups all N physical slots into a single logical region - the validation logic is identical for every slot. Payload state is encoded as three distinct nodes within that region, so pick/place operations become directed edges rather than self-loops. In-place operations that leave the position unchanged (`tamp`, `fill_powder`, `pickup_tool / park_tool`) are listed inside the node label. Scale Active is highlighted to indicate that the FSM's `Tool Engaged` control state is active while the mold is on the scale.
+The diagram below shows the logical position states and the actions that connect them. The `Mold Slot` subgraph groups all N physical slots into a single logical region - the validation logic is identical for every slot. Payload state is encoded as distinct nodes so pick/place and piston retrieval become directed edges rather than self-loops. In-place operations that leave the position unchanged (`tamp`, `fill_powder`, `pickup_tool / park_tool`) are listed inside the node label. Scale Active is highlighted to indicate that the FSM's `Tool Engaged` control state is active while the mold is on the scale.
 
 ```mermaid
-graph LR
+graph TD
     classDef pos fill:#dbeafe,stroke:#3b82f6,color:#1e293b
     classDef hot fill:#fef3c7,stroke:#f59e0b,color:#1e293b
 
     s(( )) -->|home_all| GR["Global Ready<br>pickup_tool / park_tool"]
 
     subgraph Slots["Mold Slot — same logic for all N slots"]
+        direction LR
         MS_E(["empty"])
         MS_M(["mold, no piston"])
-        MS_P(["mold + piston"])
         MS_E -->|pick_mold| MS_M
-        MS_P -->|place_mold| MS_E
     end
 
     GR -->|move_to_mold_slot| MS_E
     MS_M -->|move_to_scale| SR["Scale Ready<br>tamp"]
-    SR -->|place_mold_on_scale| SA["Scale Active<br>tool engaged · fill_powder"]
+
+    subgraph Ops["Dispensing Operations"]
+        direction LR
+        SA["Scale Active<br>tool engaged · fill_powder"]
+        D["Dispenser<br>any of M"]
+        MS_P(["mold + piston"])
+        D -->|retrieve_piston| MS_P
+    end
+
+    SR -->|place_mold_on_scale| SA
+    SR -->|move_to_dispenser| D
     SA -->|pick_mold_from_scale| SR
-    SR -->|move_to_dispenser| D["Dispenser<br>any of M"]
-    D -->|retrieve_piston| MS_P
+    MS_P -->|place_mold| MS_E
     SR -->|move_to_mold_slot| MS_M
 
-    class GR,MS_E,MS_M,MS_P,SR,D pos
+    class GR,MS_E,MS_M,SR,D,MS_P pos
     class SA hot
 ```
 
