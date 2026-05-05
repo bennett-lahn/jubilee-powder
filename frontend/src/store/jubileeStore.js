@@ -48,6 +48,43 @@ function wsUrl() {
 
 const RECONNECT_DELAY_MS = 1500
 
+const DISPENSING_ROWS = 4
+const DISPENSING_COLS = 6
+const HARDNESS_ROWS = 5
+const HARDNESS_COLS = 5
+const HARDNESS_TRAY_COUNT = 2
+
+function initDispensingWells(rows, cols) {
+  const wells = {}
+  for (let i = 0; i < rows * cols; i++) {
+    wells[String(i)] = {
+      selected: false,
+      targetWeight: 0,
+      currentWeight: 0,
+      mode: 'none',
+    }
+  }
+  return wells
+}
+
+function hardnessSampleKey(trayIndex, sampleId) {
+  return `${trayIndex}:${sampleId}`
+}
+
+function initHardnessSamples(rows, cols, trayCount) {
+  const samples = {}
+  const trayCapacity = rows * cols
+  for (let trayIndex = 0; trayIndex < trayCount; trayIndex++) {
+    for (let sampleIndex = 0; sampleIndex < trayCapacity; sampleIndex++) {
+      samples[hardnessSampleKey(trayIndex, sampleIndex)] = {
+        selected: false,
+        mode: 'none',
+      }
+    }
+  }
+  return samples
+}
+
 export const useJubileeStore = create((set, get) => ({
 
   // -------------------------------------------------------------------------
@@ -74,6 +111,22 @@ export const useJubileeStore = create((set, get) => ({
   // -------------------------------------------------------------------------
   jobLog:     null,
   jobLogError: null,
+
+  // -------------------------------------------------------------------------
+  // UI prep state (persists across route navigation)
+  // -------------------------------------------------------------------------
+  dispensingGrid: {
+    rows: DISPENSING_ROWS,
+    cols: DISPENSING_COLS,
+    wells: initDispensingWells(DISPENSING_ROWS, DISPENSING_COLS),
+  },
+
+  hardnessGrid: {
+    rows: HARDNESS_ROWS,
+    cols: HARDNESS_COLS,
+    trayCount: HARDNESS_TRAY_COUNT,
+    samples: initHardnessSamples(HARDNESS_ROWS, HARDNESS_COLS, HARDNESS_TRAY_COUNT),
+  },
 
   // -------------------------------------------------------------------------
   // WebSocket connection state
@@ -302,6 +355,190 @@ export const useJubileeStore = create((set, get) => ({
     } catch (err) {
       return { ok: false, error: err.message }
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // UI prep actions - dispensing
+  // -------------------------------------------------------------------------
+  toggleDispensingWell(id) {
+    set((state) => ({
+      dispensingGrid: {
+        ...state.dispensingGrid,
+        wells: {
+          ...state.dispensingGrid.wells,
+          [id]: {
+            ...state.dispensingGrid.wells[id],
+            selected: !state.dispensingGrid.wells[id].selected,
+          },
+        },
+      },
+    }))
+  },
+
+  selectAllDispensingWells() {
+    set((state) => {
+      const nextWells = {}
+      for (const id in state.dispensingGrid.wells) {
+        nextWells[id] = { ...state.dispensingGrid.wells[id], selected: true }
+      }
+      return {
+        dispensingGrid: {
+          ...state.dispensingGrid,
+          wells: nextWells,
+        },
+      }
+    })
+  },
+
+  clearDispensingSelection() {
+    set((state) => {
+      const nextWells = {}
+      for (const id in state.dispensingGrid.wells) {
+        nextWells[id] = { ...state.dispensingGrid.wells[id], selected: false }
+      }
+      return {
+        dispensingGrid: {
+          ...state.dispensingGrid,
+          wells: nextWells,
+        },
+      }
+    })
+  },
+
+  selectDispensingRow(rowIndex) {
+    set((state) => {
+      const { rows, cols, wells } = state.dispensingGrid
+      if (rowIndex < 0 || rowIndex >= rows) return {}
+      const ids = Array.from({ length: cols }, (_, c) => String(rowIndex * cols + c))
+      const allSelected = ids.every((id) => wells[id].selected)
+      const nextWells = { ...wells }
+      for (const id of ids) nextWells[id] = { ...nextWells[id], selected: !allSelected }
+      return {
+        dispensingGrid: {
+          ...state.dispensingGrid,
+          wells: nextWells,
+        },
+      }
+    })
+  },
+
+  selectDispensingCol(colIndex) {
+    set((state) => {
+      const { rows, cols, wells } = state.dispensingGrid
+      if (colIndex < 0 || colIndex >= cols) return {}
+      const ids = Array.from({ length: rows }, (_, r) => String(r * cols + colIndex))
+      const allSelected = ids.every((id) => wells[id].selected)
+      const nextWells = { ...wells }
+      for (const id of ids) nextWells[id] = { ...nextWells[id], selected: !allSelected }
+      return {
+        dispensingGrid: {
+          ...state.dispensingGrid,
+          wells: nextWells,
+        },
+      }
+    })
+  },
+
+  setDispensingWeightForSelected(targetWeight) {
+    set((state) => {
+      const nextWells = {}
+      for (const id in state.dispensingGrid.wells) {
+        const well = state.dispensingGrid.wells[id]
+        nextWells[id] = well.selected ? { ...well, targetWeight } : well
+      }
+      return {
+        dispensingGrid: {
+          ...state.dispensingGrid,
+          wells: nextWells,
+        },
+      }
+    })
+  },
+
+  resetDispensingGrid() {
+    set((state) => ({
+      dispensingGrid: {
+        ...state.dispensingGrid,
+        wells: initDispensingWells(state.dispensingGrid.rows, state.dispensingGrid.cols),
+      },
+    }))
+  },
+
+  // -------------------------------------------------------------------------
+  // UI prep actions - hardness
+  // -------------------------------------------------------------------------
+  toggleHardnessSample(id) {
+    set((state) => ({
+      hardnessGrid: {
+        ...state.hardnessGrid,
+        samples: {
+          ...state.hardnessGrid.samples,
+          [id]: {
+            ...state.hardnessGrid.samples[id],
+            selected: !state.hardnessGrid.samples[id].selected,
+          },
+        },
+      },
+    }))
+  },
+
+  selectAllHardnessSamples() {
+    set((state) => {
+      const nextSamples = {}
+      for (const id in state.hardnessGrid.samples) {
+        nextSamples[id] = { ...state.hardnessGrid.samples[id], selected: true }
+      }
+      return {
+        hardnessGrid: {
+          ...state.hardnessGrid,
+          samples: nextSamples,
+        },
+      }
+    })
+  },
+
+  clearHardnessSelection() {
+    set((state) => {
+      const nextSamples = {}
+      for (const id in state.hardnessGrid.samples) {
+        nextSamples[id] = { ...state.hardnessGrid.samples[id], selected: false }
+      }
+      return {
+        hardnessGrid: {
+          ...state.hardnessGrid,
+          samples: nextSamples,
+        },
+      }
+    })
+  },
+
+  setHardnessModeForSelected(mode) {
+    set((state) => {
+      const nextSamples = {}
+      for (const id in state.hardnessGrid.samples) {
+        const sample = state.hardnessGrid.samples[id]
+        nextSamples[id] = sample.selected ? { ...sample, mode } : sample
+      }
+      return {
+        hardnessGrid: {
+          ...state.hardnessGrid,
+          samples: nextSamples,
+        },
+      }
+    })
+  },
+
+  resetHardnessGrid() {
+    set((state) => ({
+      hardnessGrid: {
+        ...state.hardnessGrid,
+        samples: initHardnessSamples(
+          state.hardnessGrid.rows,
+          state.hardnessGrid.cols,
+          state.hardnessGrid.trayCount,
+        ),
+      },
+    }))
   },
 
 }))

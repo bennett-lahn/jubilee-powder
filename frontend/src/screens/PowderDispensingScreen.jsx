@@ -4,13 +4,10 @@
  * Ports the Kivy PowderDispensingScreen + BedVisualization.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
-import WellGrid, { useWellGrid } from '../components/WellGrid'
+import WellGrid from '../components/WellGrid'
 import { Button, Card, TextInput, Dialog } from '../components/ui'
-
-const ROWS = 4
-const COLS = 6
 
 function isValidWeight(v) {
   const n = parseFloat(v)
@@ -20,16 +17,27 @@ function isValidWeight(v) {
 export default function PowderDispensingScreen() {
   const telemetry   = useJubileeStore((s) => s.telemetry)
   const submitJob   = useJubileeStore((s) => s.submitJob)
+  const dispensingGrid = useJubileeStore((s) => s.dispensingGrid)
+  const toggleDispensingWell = useJubileeStore((s) => s.toggleDispensingWell)
+  const selectAllDispensingWells = useJubileeStore((s) => s.selectAllDispensingWells)
+  const clearDispensingSelection = useJubileeStore((s) => s.clearDispensingSelection)
+  const selectDispensingRow = useJubileeStore((s) => s.selectDispensingRow)
+  const selectDispensingCol = useJubileeStore((s) => s.selectDispensingCol)
+  const setDispensingWeightForSelected = useJubileeStore((s) => s.setDispensingWeightForSelected)
   // Machine is ready when the state machine reports idle
   const machineIdle = telemetry.state === 'idle' || telemetry.state === null
 
-  const grid = useWellGrid(ROWS, COLS)
-
-  // Derived selection state — recomputed each render, cheap for 24 wells
-  const { selectedIds } = grid
+  const { rows, cols, wells } = dispensingGrid
+  const selectedIds = useMemo(
+    () => Object.entries(wells).filter(([, w]) => w.selected).map(([id]) => id),
+    [wells],
+  )
+  const eligibleIds = useMemo(
+    () => Object.entries(wells).filter(([, w]) => (w.targetWeight ?? 0) > 0).map(([id]) => id),
+    [wells],
+  )
   const selectedCount   = selectedIds.length
-  const allHaveWeights  = selectedCount > 0 &&
-    selectedIds.every((id) => (grid.wells[id]?.targetWeight ?? 0) > 0)
+  const eligibleCount = eligibleIds.length
 
   // Weight dialog
   const [weightOpen,  setWeightOpen]  = useState(false)
@@ -47,7 +55,7 @@ export default function PowderDispensingScreen() {
 
   function applyWeight() {
     const w = parseFloat(weightInput)
-    grid.setWeightForSelected(w)
+    setDispensingWeightForSelected(w)
     setWeightOpen(false)
     setStatusText(`Target weight set to ${w} g for ${selectedCount} wells.`)
   }
@@ -56,9 +64,9 @@ export default function PowderDispensingScreen() {
 
   async function startJob() {
     if (!machineIdle) { setStatusText(`Cannot start: machine is ${telemetry.state}.`); return }
-    const items = selectedIds.map((id) => ({
+    const items = eligibleIds.map((id) => ({
       well_id:       id,
-      target_weight: grid.wells[id].targetWeight,
+      target_weight: wells[id].targetWeight,
     }))
     setStatusText('Submitting job…')
     const { ok, error } = await submitJob('dispensing', items)
@@ -70,10 +78,10 @@ export default function PowderDispensingScreen() {
 
       {/* ── Slim action toolbar ───────────────────────────────────────── */}
       <Card className="flex items-center gap-2 py-2 px-3 shrink-0">
-        <Button size="sm" variant="outlined" onClick={grid.selectAll}>
+        <Button size="sm" variant="outlined" onClick={selectAllDispensingWells}>
           Select All
         </Button>
-        <Button size="sm" variant="ghost" onClick={grid.clearSelection} disabled={selectedCount === 0}>
+        <Button size="sm" variant="ghost" onClick={clearDispensingSelection} disabled={selectedCount === 0}>
           Clear
         </Button>
 
@@ -94,11 +102,11 @@ export default function PowderDispensingScreen() {
           Set Weights
         </Button>
 
-        {/* Start Job: enabled only when machine idle + wells selected + weights set */}
+        {/* Start Job: enabled only when machine idle + at least one configured target weight */}
         <Button
           size="sm"
           onClick={startJob}
-          disabled={!machineIdle || selectedCount === 0 || !allHaveWeights}
+          disabled={!machineIdle || eligibleCount === 0}
         >
           Start Job
         </Button>
@@ -107,12 +115,12 @@ export default function PowderDispensingScreen() {
       {/* ── Bed visualisation — fills remaining height ────────────────── */}
       <Card className="flex-1 p-4 min-h-0">
         <WellGrid
-          wells={grid.wells}
-          rows={grid.rows}
-          cols={grid.cols}
-          toggleWell={grid.toggleWell}
-          selectRow={grid.selectRow}
-          selectCol={grid.selectCol}
+          wells={wells}
+          rows={rows}
+          cols={cols}
+          toggleWell={toggleDispensingWell}
+          selectRow={selectDispensingRow}
+          selectCol={selectDispensingCol}
           variant="dispensing"
           className="h-full"
         />

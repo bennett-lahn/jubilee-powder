@@ -4,14 +4,10 @@
  * Ports the Kivy HardnessTestingScreen + HardnessSampleGrid.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
-import SampleTrayGrid, { useSampleTrayGrid } from '../components/SampleTrayGrid'
+import SampleTrayGrid from '../components/SampleTrayGrid'
 import { Button, Card } from '../components/ui'
-
-const TRAY_ROWS = 5
-const TRAY_COLS = 5
-const TRAY_COUNT = 2
 
 const MODES = [
   { key: 'none',      label: 'None',    variant: 'ghost'    },
@@ -23,29 +19,42 @@ const MODES = [
 export default function HardnessTestingScreen() {
   const telemetry  = useJubileeStore((s) => s.telemetry)
   const submitJob  = useJubileeStore((s) => s.submitJob)
+  const hardnessGrid = useJubileeStore((s) => s.hardnessGrid)
+  const toggleHardnessSample = useJubileeStore((s) => s.toggleHardnessSample)
+  const selectAllHardnessSamples = useJubileeStore((s) => s.selectAllHardnessSamples)
+  const clearHardnessSelection = useJubileeStore((s) => s.clearHardnessSelection)
+  const setHardnessModeForSelected = useJubileeStore((s) => s.setHardnessModeForSelected)
   const machineIdle = telemetry.state === 'idle' || telemetry.state === null
 
-  const grid = useSampleTrayGrid(TRAY_ROWS, TRAY_COLS, TRAY_COUNT)
-  const { selectedIds } = grid
+  const { rows, cols, trayCount, samples } = hardnessGrid
+  const selectedIds = useMemo(
+    () => Object.entries(samples).filter(([, sample]) => sample.selected).map(([id]) => id),
+    [samples],
+  )
+  const eligibleIds = useMemo(
+    () => Object.entries(samples).filter(([, sample]) => sample.mode !== 'none').map(([id]) => id),
+    [samples],
+  )
   const selectedCount = selectedIds.length
+  const eligibleCount = eligibleIds.length
 
   const [statusText, setStatusText] = useState('Select samples and assign a test mode.')
 
   function assignMode(mode) {
     if (selectedCount === 0) { setStatusText('Select at least one sample first.'); return }
-    grid.setModeForSelected(mode)
+    setHardnessModeForSelected(mode)
     const label = MODES.find((m) => m.key === mode)?.label ?? mode
     setStatusText(`"${label}" assigned to ${selectedCount} ${selectedCount === 1 ? 'sample' : 'samples'}.`)
   }
 
   async function startTest() {
     if (!machineIdle) { setStatusText(`Cannot start: machine is ${telemetry.state}.`); return }
-    const items = selectedIds.map((id) => {
+    const items = eligibleIds.map((id) => {
       const [trayIndex, localSampleIndex] = id.split(':')
       return {
         tray_index: Number(trayIndex),
         sample_id: String(localSampleIndex),
-        mode:      grid.samples[id].mode,
+        mode:      samples[id].mode,
       }
     })
     setStatusText('Submitting test…')
@@ -58,10 +67,10 @@ export default function HardnessTestingScreen() {
 
       {/* ── Slim action toolbar ───────────────────────────────────────── */}
       <Card className="flex items-center gap-2 py-2 px-3 shrink-0">
-        <Button size="sm" variant="outlined" onClick={grid.selectAll}>
+        <Button size="sm" variant="outlined" onClick={selectAllHardnessSamples}>
           Select All
         </Button>
-        <Button size="sm" variant="ghost" onClick={grid.clearSelection} disabled={selectedCount === 0}>
+        <Button size="sm" variant="ghost" onClick={clearHardnessSelection} disabled={selectedCount === 0}>
           Clear
         </Button>
 
@@ -83,11 +92,11 @@ export default function HardnessTestingScreen() {
 
         <div className="flex-1" />
 
-        {/* Start Test: enabled only when machine idle and samples with modes selected */}
+        {/* Start Test: enabled only when machine idle and samples with assigned modes exist */}
         <Button
           size="sm"
           onClick={startTest}
-          disabled={!machineIdle || selectedCount === 0}
+          disabled={!machineIdle || eligibleCount === 0}
         >
           Start Test
         </Button>
@@ -96,12 +105,12 @@ export default function HardnessTestingScreen() {
       {/* ── Sample grid — fills remaining height ──────────────────────── */}
       <Card className="flex-1 p-4 min-h-0">
         <SampleTrayGrid
-          samples={grid.samples}
-          rows={grid.rows}
-          cols={grid.cols}
-          toggleSample={grid.toggleSample}
+          samples={samples}
+          rows={rows}
+          cols={cols}
+          toggleSample={toggleHardnessSample}
           variant="hardness"
-          trayCount={grid.trayCount}
+          trayCount={trayCount}
           className="h-full"
         />
       </Card>

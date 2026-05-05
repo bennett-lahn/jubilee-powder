@@ -12,7 +12,7 @@
  *   - Unlocked only when DISCONNECTED or ERROR.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
 import { Button, Card, TextInput, StatusBadge } from '../components/ui'
 
