@@ -88,22 +88,23 @@ nav:
   - How-To Guides:
     - Running on New Data: how-to/run-new-data.md
     - Configuration: how-to/configuration.md
-    - Using the GUI: how-to/using-gui.md
-    - Using the Web UI: how-to/web-ui.md
+    - Using the Automation UI: how-to/using-gui.md
+    - Using the Jubilee Web UI: how-to/web-ui.md
     - Reading LCD Displays: how-to/reading-lcd-displays.md
     - Interpreting Results: how-to/results.md
   - API Reference:
     - Core:
       - JubileeManager: api/jubilee-manager.md
       - MotionPlatformStateMachine: api/motion-platform.md
+      - Position Configuration: api/position-config.md
       - Manipulator: api/manipulator.md
       - PistonDispenser: api/piston-dispenser.md
       - Scale: api/scale.md
       - HardnessTester: api/hardness-tester.md
       - ConfigLoader: api/config-loader.md
-    - GUI:
-      - JubileeViewModel: api/gui/jubilee-view-model.md
-      - GUI Application: api/gui/jubilee-gui.md
+    - Frontend:
+      - Web Application: api/gui/jubilee-gui.md
+      - Jubilee Store: api/gui/jubilee-view-model.md
 
 extra:
   social:

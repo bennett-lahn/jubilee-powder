@@ -8,11 +8,65 @@
         "default_feedrate": 600,
         "tamper_travel_position": 30
     },
+    "tools": {
+        "manipulator": {
+            "index": 0,
+            "name": "manipulator",
+            "default_offset": "manipulator"
+        },
+        "shore_a_hardness_tester": {
+            "index": 1,
+            "name": "shore_a_hardness_tester",
+            "default_offset": "durometer"
+        },
+        "shore_d_hardness_tester": {
+            "index": 2,
+            "name": "shore_d_hardness_tester",
+            "default_offset": "durometer"
+        }
+    },
+    "tool_offsets": {
+        "manipulator": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+        },
+        "durometer": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 10.0
+        },
+        "durometer_z_probe": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -5.0
+        }
+    },
     "manipulator": {
         "tamper_axis": "V",
         "tamp_depth_min": 0.0,
         "tamp_depth_max": 9.0,
         "tamp_speed_min": 500,
         "tamp_speed_max": 5000
+    },
+    "hardness_testers": {
+        "shore_a": {
+            "tool": {
+                "index": 1,
+                "name": "shore_a_hardness_tester"
+            },
+            "lcd_calibration_path": "jubilee_api_config/lcd_calibration_shore_a.json",
+            "tip_length_mm": 2.0,
+            "button_servo": "S1"
+        },
+        "shore_d": {
+            "tool": {
+                "index": 2,
+                "name": "shore_d_hardness_tester"
+            },
+            "lcd_calibration_path": "jubilee_api_config/lcd_calibration_shore_d.json",
+            "tip_length_mm": 3.0,
+            "button_servo": "S2"
+        }
     }
 }
