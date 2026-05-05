@@ -6,12 +6,9 @@ from science_jubilee.tools.Tool import (
 from src.trickler_labware import Mold
 from src.PistonDispenser import PistonDispenser
 import time
-from typing import List, Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union
 from pathlib import Path
 import json
-import os
-from src.ConfigLoader import config
-from functools import wraps
 
 # Re-export ToolStateError for documentation purposes
 class ToolStateError(_ExternalToolStateError):
@@ -27,103 +24,6 @@ class ToolStateError(_ExternalToolStateError):
         - Operating at wrong position for the requested action
     """
     pass
-
-def requires_safe_z_manipulator(func):
-    """
-    Decorator for Manipulator methods that require safe Z height.
-    Assumes the decorated method belongs to a class with:
-    - self.machine_connection (Machine object)
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if not self.machine_connection:
-            raise RuntimeError("Machine connection not available")
-        
-        # Get current Z position
-        current_z = float(self.machine_connection.get_position()["Z"])
-        
-        # Get safe Z height from config
-        safe_z = config.get_safe_z()
-        
-        # Move to safe height if needed
-        if current_z < safe_z:
-            safe_height = safe_z + config.get_safe_z_offset()
-            self.machine_connection.move_to(z=safe_height)
-        
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-def requires_carrying_mold(func):
-    """
-    Decorator for methods that require carrying a mold.
-    Checks that self.current_well is not None.
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if self.current_well is None:
-            raise ToolStateError("Must be carrying a mold to perform this operation.")
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-def requires_not_carrying_mold(func):
-    """
-    Decorator for methods that require NOT carrying a mold.
-    Checks that self.current_well is None.
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if self.current_well is not None:
-            raise ToolStateError("Already carrying a mold. Place current mold before performing this operation.")
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-def requires_mold_without_piston(func):
-    """
-    Decorator for methods that require the current mold to not have a top piston.
-    Checks that self.current_well.has_top_piston is False.
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if self.current_well is None:
-            raise ToolStateError("Must be carrying a mold to perform this operation.")
-        if self.current_well.has_top_piston:
-            raise ToolStateError("Cannot perform operation on mold that already has a top piston.")
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-def requires_valid_mold(func):
-    """
-    Decorator for methods that require a valid mold parameter.
-    Checks that the first argument (mold) is valid.
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if args and hasattr(args[0], 'valid'):
-            mold = args[0]
-            if not mold.valid:
-                raise ToolStateError("Cannot perform operation on an invalid mold.")
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-def requires_machine_connection(func):
-    """
-    Decorator for methods that require a machine connection.
-    Checks that self.machine_connection is available.
-    """
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if not self.machine_connection:
-            raise RuntimeError("Machine connection not available for this operation.")
-        return func(self, *args, **kwargs)
-    
-    return wrapper
-
-# Error checks have been moved into decorators above
 
 class Manipulator(Tool):
     """
@@ -232,25 +132,11 @@ class Manipulator(Tool):
         }
     
     @property
-    def machine(self):
-        """Access to machine through state machine for read-only queries."""
-        if self.state_machine:
-            return self.state_machine.machine
-        return None
-    
-    @property
     def current_well(self):
         """Access to current well through state machine."""
         if self.state_machine:
             return self.state_machine.context.current_well
         return None
-    
-    @property
-    def placed_mold_on_scale(self):
-        """Access to mold_on_scale state through state machine."""
-        if self.state_machine:
-            return self.state_machine.context.mold_on_scale
-        return False
 
     def home_tamper(self, machine_connection: Optional[Any] = None):
         """
@@ -355,15 +241,6 @@ class Manipulator(Tool):
             status['current_well'] = None
             
         return status
-
-    def get_current_mold(self) -> Optional[Mold]:
-        """
-        Get the current mold being carried.
-        
-        Returns:
-            Mold object if carrying a mold, None otherwise
-        """
-        return self.current_well
 
     def is_carrying_mold(self) -> bool:
         """

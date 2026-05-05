@@ -4,7 +4,10 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
+from typing import Optional
 import numpy as np
+from science_jubilee.tools.Tool import Tool
 
 # Try to import Picamera2 for Raspberry Pi
 try:
@@ -57,7 +60,7 @@ Phase 3: Recognition via Lookup Table
     - Map segment patterns to digits using predefined lookup table
 """
 
-class HardnessTester:
+class HardnessTester(Tool):
     """
     LCD 7-Segment Display Reader using segment detection instead of OCR.
     """
@@ -78,7 +81,19 @@ class HardnessTester:
     }
     SEGMENT_ORDER = ('top', 'top_left', 'top_right', 'middle', 'bottom_left', 'bottom_right', 'bottom')
 
-    def __init__(self, num_digits=4, cam_id=0, use_camera=True):
+    def __init__(
+        self,
+        num_digits=4,
+        cam_id=0,
+        use_camera=True,
+        index: int = 1,
+        name: Optional[str] = None,
+        tester_mode: str = "shore_a",
+        calibration_path: str = DEFAULT_CALIBRATION_PATH,
+        tip_length_mm: Optional[float] = None,
+        power_servo: Optional[str] = None,
+        zero_servo: Optional[str] = None,
+    ):
         """
         Initialize the LCD reader.
         
@@ -86,10 +101,23 @@ class HardnessTester:
             num_digits: Number of digits in the display (default: 4)
             cam_id: Camera device ID (default: 0)
             use_camera: Whether to initialize and use a camera device
+            index: Jubilee tool index for this tester
+            name: Jubilee tool name for this tester
+            tester_mode: Shore tester mode ("shore_a" or "shore_d")
+            calibration_path: Path to the LCD calibration json for this tester
+            tip_length_mm: Physical tip length for this tester
+            power_servo: Servo identifier used for power button actuation
+            zero_servo: Servo identifier used for zero button actuation
         """
+        super().__init__(index, name)
         self.num_digits = num_digits
         self.cam_id = cam_id
         self.use_camera = use_camera
+        self.tester_mode = tester_mode
+        self.calibration_path = calibration_path
+        self.tip_length_mm = tip_length_mm
+        self.power_servo = power_servo
+        self.zero_servo = zero_servo
         
         # Camera objects
         self.picamera = None
@@ -113,6 +141,197 @@ class HardnessTester:
         # Initialize camera only when requested
         if self.use_camera:
             self._init_camera()
+
+    @classmethod
+    def from_system_config(
+        cls,
+        tester_mode: str,
+        config_payload: dict,
+        num_digits: int = 4,
+        cam_id: int = 0,
+        use_camera: bool = True,
+    ) -> "HardnessTester":
+        """Build a configured Shore tester instance from system config."""
+        testers_cfg = config_payload.get("hardness_testers", {})
+        if tester_mode not in testers_cfg:
+            raise KeyError(f"Unknown hardness tester mode '{tester_mode}' in system config")
+
+        tester_cfg = testers_cfg[tester_mode]
+        calibration_path = tester_cfg.get("lcd_calibration_path", DEFAULT_CALIBRATION_PATH)
+        if calibration_path and not os.path.isabs(calibration_path):
+            project_root = Path(__file__).resolve().parent.parent
+            calibration_path = str(project_root / calibration_path)
+
+        button_servos = tester_cfg.get("button_servos", {})
+        tool_cfg = tester_cfg.get("tool", {})
+        return cls(
+            num_digits=num_digits,
+            cam_id=cam_id,
+            use_camera=use_camera,
+            index=tool_cfg.get("index", 1),
+            name=tool_cfg.get("name", f"{tester_mode}_hardness_tester"),
+            tester_mode=tester_mode,
+            calibration_path=calibration_path,
+            tip_length_mm=tester_cfg.get("tip_length_mm"),
+            power_servo=button_servos.get("power"),
+            zero_servo=button_servos.get("zero"),
+        )
+
+    def load_assigned_calibration(self) -> bool:
+        """Load the calibration configured for this Shore tester."""
+        return self.load_calibration(self.calibration_path)
+
+    def turn_on(self, state_machine) -> bool:
+        """
+        Actuate the tester power button via the state machine action framework.
+        """
+        if state_machine is None:
+            raise ValueError("state_machine is required for turn_on()")
+        result = state_machine.validated_hardness_turn_on(mode=self.tester_mode)
+        if not result.valid:
+            raise RuntimeError(result.reason or "Hardness turn-on action failed")
+        return True
+
+    def turn_off(self, state_machine) -> bool:
+        """
+        Actuate the tester power button for shutdown via the state machine action framework.
+        """
+        if state_machine is None:
+            raise ValueError("state_machine is required for turn_off()")
+        result = state_machine.validated_hardness_turn_off(mode=self.tester_mode)
+        if not result.valid:
+            raise RuntimeError(result.reason or "Hardness turn-off action failed")
+        return True
+
+    def zero(self, state_machine) -> bool:
+        """
+        Actuate the tester zero button via the state machine action framework.
+        """
+        if state_machine is None:
+            raise ValueError("state_machine is required for zero()")
+        result = state_machine.validated_hardness_zero(mode=self.tester_mode)
+        if not result.valid:
+            raise RuntimeError(result.reason or "Hardness zero action failed")
+        return True
+
+    def _resolve_sample_target(
+        self,
+        state_machine,
+        tray_index: str | int,
+        sample_id: str | int,
+    ):
+        """
+        Resolve tray-local sample id to target coordinates using tray metadata.
+        """
+        try:
+            tray_index_int = int(str(tray_index))
+        except (TypeError, ValueError):
+            raise ValueError(f"Tray index '{tray_index}' must be a non-negative integer")
+
+        if tray_index_int < 0:
+            raise ValueError("Tray index must be non-negative")
+
+        try:
+            sample_index = int(str(sample_id))
+        except (TypeError, ValueError):
+            raise ValueError(f"Sample id '{sample_id}' must be a zero-based integer")
+
+        if sample_index < 0:
+            raise ValueError("Sample id must be non-negative")
+
+        tray_position = next(
+            (
+                position
+                for position in state_machine._registry._positions.values()
+                if position.type.name == "HARDNESS_SAMPLE_READY"
+                and position.metadata.get("tray_index") == tray_index_int
+            ),
+            None,
+        )
+        if tray_position is None:
+            raise ValueError(f"Sample tray with tray_index={tray_index_int} is not configured")
+
+        metadata = tray_position.metadata
+        rows = metadata.get("rows")
+        columns = metadata.get("columns")
+        if not isinstance(rows, int) or not isinstance(columns, int) or rows <= 0 or columns <= 0:
+            raise ValueError(
+                f"Sample tray '{tray_position.identifier}' has invalid rows/columns metadata"
+            )
+
+        tray_capacity = rows * columns
+        if sample_index >= tray_capacity:
+            raise ValueError(
+                f"Sample id '{sample_id}' is outside tray {tray_index_int} capacity ({tray_capacity})"
+            )
+
+        sample_start_x = metadata.get("sample_start_x")
+        sample_start_y = metadata.get("sample_start_y")
+        x_offset = metadata.get("sample_spacing_x")
+        y_offset = metadata.get("sample_spacing_y")
+        if not isinstance(sample_start_x, (int, float)) or not isinstance(sample_start_y, (int, float)):
+            raise ValueError(
+                f"Sample tray '{tray_position.identifier}' missing numeric metadata: sample_start_x, sample_start_y"
+            )
+        if not isinstance(x_offset, (int, float)) or not isinstance(y_offset, (int, float)):
+            raise ValueError(
+                f"Sample tray '{tray_position.identifier}' missing numeric metadata: sample_spacing_x/sample_spacing_y"
+            )
+
+        tray_result = state_machine._resolve_ready_position_coords(
+            tray_position.identifier,
+            require_v=False,
+        )
+        if tray_result.error:
+            raise ValueError(tray_result.error.reason)
+        tray_xyz = tray_result.coords
+        if tray_xyz is None:
+            raise ValueError(f"Sample tray '{tray_position.identifier}' coordinates could not be resolved")
+
+        row = sample_index // columns
+        column = sample_index % columns
+        target_x = sample_start_x + column * x_offset
+        target_y = sample_start_y + row * y_offset
+        target_z = metadata.get("test_z", tray_xyz[2])
+        if target_z == "USE_Z_HEIGHT_POLICY":
+            target_z = tray_xyz[2]
+
+        if not isinstance(target_z, (int, float)):
+            raise ValueError(
+                f"Sample tray '{tray_position.identifier}' has non-numeric target Z for testing"
+            )
+
+        return target_x, target_y, target_z
+
+    def test_sample(self, tray_index: str | int, sample_id: str | int, state_machine) -> bool:
+        """
+        Execute one hardness sample operation via the state machine action path.
+        """
+        if state_machine is None:
+            raise ValueError("state_machine is required for test_sample()")
+
+        self.load_assigned_calibration()
+        tray_result = state_machine.validated_move_to_sample_tray(tray_index)
+        if not tray_result.valid:
+            raise RuntimeError(tray_result.reason or "Move to sample tray failed")
+
+        target_x, target_y, target_z = self._resolve_sample_target(
+            state_machine,
+            tray_index,
+            sample_id,
+        )
+        result = state_machine.validated_test_sample(
+            tray_index=tray_index,
+            sample_id=sample_id,
+            mode=self.tester_mode,
+            target_x=target_x,
+            target_y=target_y,
+            target_z=target_z,
+        )
+        if not result.valid:
+            raise RuntimeError(result.reason or "Sample action failed")
+        return True
+
 
     def _default_segment_templates(self):
         """
@@ -547,17 +766,38 @@ class HardnessTester:
     
     def calibrate(self, frame=None, image_path=None, save_calibration=True, calibration_path=DEFAULT_CALIBRATION_PATH):
         """
-        Interactive calibration to manually set digit ROIs.
-        
+        Interactive GUI calibration using an OpenCV popup window.
+
+        ROI phase
+        ---------
+        Click and drag on the image to draw a bounding rectangle around each
+        digit.  Release the mouse button to set the pending ROI (shown in cyan).
+        Press Enter to confirm that digit's ROI and advance to the next digit.
+        You can re-drag before pressing Enter to redo the current digit.
+
+        Segment phase
+        -------------
+        For each segment of each digit the default polygon vertices are
+        pre-loaded.  Click anywhere on the image to append a point; the polygon
+        preview updates live.  Controls:
+            d       - reset to default vertices
+            c       - clear all vertices
+            Backspace / Delete - remove last vertex
+            Enter   - confirm vertices and advance to next segment
+            q / Esc - cancel and discard all changes
+
         Args:
             frame: Input BGR frame (if None, uses image_path or captures from camera)
             image_path: Path to an existing image for calibration (optional)
             save_calibration: Whether to save calibration to file
             calibration_path: Path where calibration JSON should be saved
-            
+
         Returns:
-            True if calibration successful
+            True if calibration was completed and saved successfully
         """
+        import json
+
+        # --- 1. Acquire frame -----------------------------------------------
         if frame is None:
             if image_path is not None:
                 frame = cv2.imread(image_path)
@@ -569,82 +809,248 @@ class HardnessTester:
                 if frame is None:
                     print("Failed to capture image for calibration")
                     return False
-        
-        # Preprocess
-        binary = self.preprocess_frame(frame, debug=True, debug_prefix="calibration")
-        self._save_debug_gif("calibration")
-        
-        print("\n" + "=" * 60)
-        print("CALIBRATION MODE")
-        print("=" * 60)
-        print("Please check the debug images:")
-        print("  - calibration_step6_cleaned.png (final binary image)")
-        print("\nCalibration requires:")
-        print("  1) Digit ROI boundaries")
-        print("  2) Every polygon point for every segment of every digit")
-        print("Use an image viewer to find pixel coordinates.\n")
-        
-        rois = []
-        for i in range(self.num_digits):
-            print(f"Digit {i}:")
-            x1 = int(input("  x1 (left): "))
-            y1 = int(input("  y1 (top): "))
-            x2 = int(input("  x2 (right): "))
-            y2 = int(input("  y2 (bottom): "))
-            rois.append((x1, y1, x2, y2))
-        
-        self.set_digit_rois(rois)
-        default_segment_points = self._build_default_segment_points(rois)
 
-        segment_points = []
-        print("\nNow enter segment polygon points.")
-        print("For each point, type: x,y")
-        print("Press Enter to accept the shown default.\n")
-        for digit_idx in range(self.num_digits):
-            print(f"Digit {digit_idx} segment points:")
-            digit_segments = {}
-            for segment_name in self.SEGMENT_ORDER:
-                default_points = default_segment_points[digit_idx][segment_name]
-                print(f"  Segment '{segment_name}' ({len(default_points)} points):")
-                points = []
-                for point_idx, (dx, dy) in enumerate(default_points):
-                    raw = input(f"    p{point_idx} [{dx},{dy}]: ").strip()
-                    if raw == "":
-                        points.append((dx, dy))
-                        continue
-                    try:
-                        sx, sy = raw.split(",")
-                        points.append((int(sx.strip()), int(sy.strip())))
-                    except ValueError:
-                        print("      Invalid input, using default.")
-                        points.append((dx, dy))
-                digit_segments[segment_name] = points
-            segment_points.append(digit_segments)
-        self.segment_points = segment_points
-        
+        self.preprocess_frame(frame, debug=True, debug_prefix="calibration")
+        self._save_debug_gif("calibration")
+
+        # --- 2. Display scaling ---------------------------------------------
+        MAX_DIM = 1200
+        img_h, img_w = frame.shape[:2]
+        scale = min(MAX_DIM / img_w, MAX_DIM / img_h, 1.0)
+        disp_w = max(int(img_w * scale), 1)
+        disp_h = max(int(img_h * scale), 1)
+        STATUS_H = 44  # pixels reserved for the status bar
+
+        def to_img(dx, dy):
+            return int(round(dx / scale)), int(round(dy / scale))
+
+        def to_disp(ix, iy):
+            return int(round(ix * scale)), int(round(iy * scale))
+
+        # --- 3. Segment colours ---------------------------------------------
+        SEG_COLORS = {
+            'top':          (0,   255, 255),
+            'top_left':     (0,   165, 255),
+            'top_right':    (0,   255,   0),
+            'middle':       (255,   0, 255),
+            'bottom_left':  (255, 165,   0),
+            'bottom_right': (0,     0, 255),
+            'bottom':       (255,   0,   0),
+        }
+
+        # --- 4. Mutable state dict ------------------------------------------
+        s = {
+            'phase':       'roi',
+            'digit_idx':   0,
+            'segment_idx': 0,
+            'rois':        [],
+            'pending_roi': None,   # (x1,y1,x2,y2) image-coords, not yet confirmed
+            'drag_origin': None,   # display (x,y) of mouse-down
+            'all_segs':    [],     # [{seg_name: [(x,y),...]}] per digit
+            'cur_pts':     [],     # working vertices for the active segment
+            'default_segs': None, # populated after ROI phase
+            'mouse':       [0, 0],
+            'done':        False,
+            'cancelled':   False,
+        }
+
+        # --- 5. Mouse callback ----------------------------------------------
+        def on_mouse(event, x, y, flags, _param):
+            s['mouse'] = [x, y]
+            if s['phase'] == 'roi':
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    s['drag_origin'] = (x, y)
+                    s['pending_roi'] = None
+                elif event == cv2.EVENT_MOUSEMOVE and s['drag_origin']:
+                    ox, oy = s['drag_origin']
+                    ix1, iy1 = to_img(min(ox, x), min(oy, y))
+                    ix2, iy2 = to_img(max(ox, x), max(oy, y))
+                    s['pending_roi'] = (ix1, iy1, ix2, iy2)
+                elif event == cv2.EVENT_LBUTTONUP and s['drag_origin']:
+                    ox, oy = s['drag_origin']
+                    s['drag_origin'] = None
+                    if abs(x - ox) > 5 and abs(y - oy) > 5:
+                        ix1, iy1 = to_img(min(ox, x), min(oy, y))
+                        ix2, iy2 = to_img(max(ox, x), max(oy, y))
+                        s['pending_roi'] = (ix1, iy1, ix2, iy2)
+            elif s['phase'] == 'segment':
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    s['cur_pts'].append(to_img(x, y))
+
+        # --- 6. Render function ---------------------------------------------
+        def render():
+            base = cv2.resize(frame, (disp_w, disp_h))
+            canvas = np.zeros((disp_h + STATUS_H, disp_w, 3), dtype=np.uint8)
+            canvas[:disp_h] = base
+
+            # Confirmed ROIs (green)
+            for i, (x1, y1, x2, y2) in enumerate(s['rois']):
+                dx1, dy1 = to_disp(x1, y1)
+                dx2, dy2 = to_disp(x2, y2)
+                cv2.rectangle(canvas, (dx1, dy1), (dx2, dy2), (0, 255, 0), 2)
+                cv2.putText(canvas, f"D{i}", (dx1 + 2, dy1 + 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+
+            if s['phase'] == 'roi':
+                # Pending ROI (cyan)
+                if s['pending_roi']:
+                    x1, y1, x2, y2 = s['pending_roi']
+                    dx1, dy1 = to_disp(x1, y1)
+                    dx2, dy2 = to_disp(x2, y2)
+                    cv2.rectangle(canvas, (dx1, dy1), (dx2, dy2), (0, 255, 255), 2)
+                    cv2.putText(canvas, f"D{s['digit_idx']}", (dx1 + 2, dy1 + 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+                # Live drag preview
+                if s['drag_origin']:
+                    ox, oy = s['drag_origin']
+                    mx, my = s['mouse']
+                    cv2.rectangle(canvas,
+                                  (min(ox, mx), min(oy, my)),
+                                  (max(ox, mx), max(oy, my)),
+                                  (0, 255, 255), 1)
+                status = (
+                    f"ROI  Digit {s['digit_idx'] + 1}/{self.num_digits} - "
+                    "drag to draw box | Enter=confirm | q=quit"
+                )
+
+            else:  # segment phase
+                seg_name = self.SEGMENT_ORDER[s['segment_idx']]
+                hi_color = SEG_COLORS[seg_name]
+                d_idx = s['digit_idx']
+                def_segs = s['default_segs']
+
+                # Faint outlines for all other segments of this digit
+                if def_segs and d_idx < len(def_segs):
+                    for sn in self.SEGMENT_ORDER:
+                        if sn == seg_name:
+                            continue
+                        pts = (s['all_segs'][d_idx].get(sn)
+                               if d_idx < len(s['all_segs']) else None)
+                        src = pts or def_segs[d_idx].get(sn, [])
+                        if len(src) >= 3:
+                            poly = np.array([to_disp(x, y) for x, y in src], dtype=np.int32)
+                            cv2.polylines(canvas, [poly], True, (60, 60, 60), 1)
+
+                # Confirmed preceding segments for this digit (their actual colors)
+                if d_idx < len(s['all_segs']):
+                    for prev_idx in range(s['segment_idx']):
+                        pn = self.SEGMENT_ORDER[prev_idx]
+                        pts = s['all_segs'][d_idx].get(pn, [])
+                        if len(pts) >= 3:
+                            poly = np.array([to_disp(x, y) for x, y in pts], dtype=np.int32)
+                            cv2.polylines(canvas, [poly], True, SEG_COLORS[pn], 1)
+
+                # Active segment being placed
+                cur = s['cur_pts']
+                if len(cur) >= 2:
+                    poly = np.array([to_disp(x, y) for x, y in cur], dtype=np.int32)
+                    cv2.polylines(canvas, [poly], len(cur) >= 3, hi_color, 2)
+                for px, py in cur:
+                    cv2.circle(canvas, to_disp(px, py), 5, hi_color, -1)
+                if cur:
+                    lx, ly = to_disp(*cur[-1])
+                    mx, my = s['mouse']
+                    cv2.line(canvas, (lx, ly), (mx, min(my, disp_h - 1)), hi_color, 1)
+
+                n_def = (len(def_segs[d_idx][seg_name])
+                         if def_segs and d_idx < len(def_segs) else '?')
+                status = (
+                    f"SEG  Digit {d_idx + 1}/{self.num_digits}  '{seg_name}'  "
+                    f"{len(cur)}/{n_def} pts - "
+                    "click=add | d=default | Bksp=undo | c=clear | Enter=confirm | q=quit"
+                )
+
+            # Status bar
+            cv2.rectangle(canvas, (0, disp_h), (disp_w, disp_h + STATUS_H), (20, 20, 20), -1)
+            cv2.putText(canvas, status, (6, disp_h + 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
+            return canvas
+
+        # --- 7. Event loop --------------------------------------------------
+        WIN = "Hardness Tester Calibration"
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WIN, disp_w, disp_h + STATUS_H)
+        cv2.setMouseCallback(WIN, on_mouse)
+
+        while not s['done'] and not s['cancelled']:
+            cv2.imshow(WIN, render())
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == ord('q') or key == 27:  # q or Esc
+                s['cancelled'] = True
+                break
+
+            # ROI phase keys
+            if s['phase'] == 'roi':
+                if key in (13, 10):  # Enter
+                    if s['pending_roi']:
+                        s['rois'].append(s['pending_roi'])
+                        s['pending_roi'] = None
+                        s['digit_idx'] += 1
+                        if s['digit_idx'] >= self.num_digits:
+                            self.set_digit_rois(s['rois'])
+                            s['default_segs'] = self._build_default_segment_points(s['rois'])
+                            s['all_segs'] = [{} for _ in range(self.num_digits)]
+                            s['phase'] = 'segment'
+                            s['digit_idx'] = 0
+                            s['segment_idx'] = 0
+                            s['cur_pts'] = list(s['default_segs'][0][self.SEGMENT_ORDER[0]])
+
+            # Segment phase keys
+            elif s['phase'] == 'segment':
+                seg_name = self.SEGMENT_ORDER[s['segment_idx']]
+                d_idx = s['digit_idx']
+
+                if key == ord('d'):
+                    s['cur_pts'] = list(s['default_segs'][d_idx][seg_name])
+
+                elif key == ord('c'):
+                    s['cur_pts'] = []
+
+                elif key in (8, 127):  # Backspace / Delete
+                    if s['cur_pts']:
+                        s['cur_pts'].pop()
+
+                elif key in (13, 10):  # Enter
+                    if s['cur_pts']:
+                        s['all_segs'][d_idx][seg_name] = list(s['cur_pts'])
+                        s['segment_idx'] += 1
+                        if s['segment_idx'] >= len(self.SEGMENT_ORDER):
+                            s['segment_idx'] = 0
+                            s['digit_idx'] += 1
+                            if s['digit_idx'] >= self.num_digits:
+                                s['done'] = True
+                                break
+                        next_seg = self.SEGMENT_ORDER[s['segment_idx']]
+                        s['cur_pts'] = list(s['default_segs'][s['digit_idx']][next_seg])
+
+        cv2.destroyWindow(WIN)
+
+        if s['cancelled'] or not s['done']:
+            print("Calibration cancelled.")
+            return False
+
+        self.segment_points = s['all_segs']
+
         if save_calibration:
-            import json
             calibration_dir = os.path.dirname(calibration_path)
             if calibration_dir:
                 os.makedirs(calibration_dir, exist_ok=True)
             with open(calibration_path, 'w', encoding='utf-8') as f:
                 json.dump(
                     {
-                        'digit_rois': rois,
+                        'digit_rois': s['rois'],
                         'segment_points': self.segment_points,
                     },
                     f,
                     indent=2,
                 )
-            print(f"\nCalibration saved to {calibration_path}")
-        
-        # Test the calibration
-        print("\n" + "=" * 60)
-        print("TESTING CALIBRATION")
-        print("=" * 60)
-        result = self.read_display(frame, debug=True, debug_prefix="test")
-        print(f"\nRead: {result}")
-        
+            print(f"Calibration saved to {calibration_path}")
+
+        print("Testing calibration...")
+        result = self.read_display(frame, debug=True, debug_prefix="calibration_test")
+        print(f"Calibration test read: {result}")
+
         return True
     
     def load_calibration(self, filepath=DEFAULT_CALIBRATION_PATH):
@@ -746,7 +1152,7 @@ def main():
         print("Image captured successfully")
 
     if reader.segment_points is None:
-        print("\nNo calibration found. Starting calibration process...")
+        print("\nNo calibration found. Opening calibration UI...")
         ok = reader.calibrate(
             frame=frame,
             save_calibration=True,

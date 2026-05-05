@@ -10,9 +10,10 @@ components, so all movements go through validation.
 """
 import time
 
-from typing import Optional, Union
+from typing import Optional
 from science_jubilee.Machine import Machine
 from src.Scale import Scale
+from src.HardnessTester import HardnessTester
 from src.PistonDispenser import PistonDispenser
 from src.MotionPlatformStateMachine import PositionType
 from jubilee_api_config.constants import FeedRate
@@ -403,11 +404,152 @@ class MovementExecutor:
         except Exception as e:
             print(f"Error executing basic move: {e}")
             return False
-    
-    
+
+    def execute_move_to_sample_tray(
+        self,
+        x: float,
+        y: float,
+        z: float
+    ) -> bool:
+        """
+        Move the hardness tester to a sample tray ready coordinate.
+
+        The state machine resolves tray and validates tool/position
+        requirements before this executor is called.
+        """
+        try:
+            feedrate = self._feedrate
+            print(f"Moving hardness tester to sample tray: x={x}, y={y}, z={z}")
+            self._machine.move_to(x=x, y=y, z=z, s=feedrate)
+            return True
+        except Exception as e:
+            print(f"Error moving to hardness sample tray: {e}")
+            return False
+
+    def execute_test_sample(
+        self,
+        tray_index: int,
+        sample_id: str,
+        mode: Optional[str] = None,
+        hardness_tester: HardnessTester = None,
+        target_x: float = None,
+        target_y: float = None,
+        target_z: float = None,
+        state_machine=None,
+    ) -> bool:
+        """
+        Sketch of the hardness sample sequence with z-probe offset transition.
+
+        Pre-condition (validated by the state machine before this is called):
+          - ``context.position_id`` is the relevant ``sample_tray_X_ready``.
+          - ``context.tool_offset_id == "durometer"`` (action's required_offset).
+          - target_x / target_y / target_z are resolved base machine coords
+            for the current logical sample-tray frame.
+
+        Sequence:
+          1. Move XY over the sample at the tray's safe (durometer) Z.
+          2. Switch to ``durometer_z_probe`` (transient) so the probe tip
+             is the active reference. Probe down to find the sample top.
+          3. ALWAYS restore the ``durometer`` offset before returning so the
+             action's required_offset post-condition is satisfied (try/finally).
+          4. Drive the durometer down for contact pressure, read the LCD via
+             the HardnessTester, then retract to the tray's safe Z.
+
+        The offset switches are issued via ``state_machine.apply_tool_offset``,
+        which both updates ``context.tool_offset_id`` and physically settles
+        the bed at the same logical position under the new offset frame.
+        """
+        if state_machine is None:
+            print("execute_test_sample requires a state_machine reference for offset switches")
+            return False
+        if target_x is None or target_y is None or target_z is None:
+            print("execute_test_sample requires fully-resolved target_x/y/z")
+            return False
+
+        feedrate = self._feedrate
+
+        # 1) Move XY over the sample at the durometer-offset safe Z.
+        try:
+            self._machine.move_to(x=target_x, y=target_y, z=target_z, s=feedrate)
+            self.wait_for_moves_to_finish()
+        except Exception as exc:
+            print(f"Error moving over sample {sample_id} on tray {tray_index}: {exc}")
+            return False
+
+        try:
+            # 2) Transient switch to the z-probe offset to find the sample
+            # surface. apply_tool_offset re-resolves the tray ready position
+            # under durometer_z_probe and moves the bed accordingly so the
+            # probe tip is at the same logical (base) Z. Probe logic is
+            # hardware-specific and is left as a stub.
+            zprobe_result = state_machine.apply_tool_offset("durometer_z_probe")
+            if not zprobe_result.valid:
+                print(f"Failed to switch to durometer_z_probe offset: {zprobe_result.reason}")
+                return False
+
+            # TODO: Issue the actual z-probe descent (e.g. G38.2 / vendor
+            # probe routine) and capture the contact Z. Until the probing
+            # hardware is wired up, this is a no-op placeholder.
+            probed_top_z = None  # Replace with real probe result.
+
+            # 4) Drive the durometer onto the sample and read the LCD. This
+            # belongs in the HardnessTester (which owns the camera / segment
+            # decoder); the executor only sequences motion + offset state.
+            # The HardnessTester can use ``probed_top_z`` to compute its
+            # final approach Z under the durometer offset.
+            print(
+                "Hardness sample motion stub "
+                f"(tray={tray_index}, sample={sample_id}, mode={mode}, "
+                f"probed_top_z={probed_top_z})"
+            )
+            return True
+        finally:
+            # 3) Always restore the durometer offset before returning so the
+            # action's required_offset post-condition holds even on failure.
+            restore_result = state_machine.apply_tool_offset("durometer")
+            if not restore_result.valid:
+                # Best-effort logging; we cannot raise from finally without
+                # masking an in-flight exception.
+                print(
+                    "WARNING: failed to restore durometer offset after "
+                    f"hardness sample: {restore_result.reason}"
+                )
+
+    def execute_hardness_turn_on(self, mode: Optional[str] = None) -> bool:
+        """
+        Placeholder for Shore tester power-button actuation.
+
+        Intentionally left as a stub for hardware-specific implementation.
+        """
+        # TODO: Implement Shore tester power-button servo actuation.
+        return False
+
+    def execute_hardness_turn_off(self, mode: Optional[str] = None) -> bool:
+        """
+        Placeholder for Shore tester power-button actuation.
+
+        Intentionally left as a stub for hardware-specific implementation.
+        """
+        # TODO: Implement Shore tester power-button servo actuation.
+        return False
+
+    def execute_hardness_zero(self, mode: Optional[str] = None) -> bool:
+        """
+        Placeholder for Shore tester zero-button actuation.
+
+        Intentionally left as a stub for hardware-specific implementation.
+        """
+        # TODO: Implement Shore tester zero-button servo actuation.
+        return False
+
+
     def execute_home_all(self, registry) -> bool:
         """Home all axes and return to global_ready position.
-        
+
+        After homing, the no-tool / manipulator (zero) offset frame is the
+        only valid frame, so the global_ready coordinates can be sent without
+        any offset adjustment.
+
         Returns:
             True if successful, False otherwise.
         """
@@ -426,14 +568,27 @@ class MovementExecutor:
                         z_config = z_heights["mold_transfer_safe"]
                         if isinstance(z_config, dict):
                             z_height = z_config.get("z_coordinate")
-                
-                # Move to global_ready coordinates
-                # Skip placeholders - they'll be handled by the state machine
-                x = coords.x if (coords.x is not None and (not isinstance(coords.x, str) or not coords.x.startswith("PLACEHOLDER"))) else None
-                y = coords.y if (coords.y is not None and (not isinstance(coords.y, str) or not coords.y.startswith("PLACEHOLDER"))) else None
-                z = z_height if (z_height is not None and (not isinstance(z_height, str) or not z_height.startswith("PLACEHOLDER"))) else None
+
+                # The manipulator offset is the zero/reference frame, so
+                # global_ready coordinates can be commanded directly. We
+                # query the registry for the offset to keep this honest if
+                # someone configures a non-zero manipulator offset later.
+                offset_x, offset_y, offset_z = registry.get_tool_offset("manipulator")
+
+                def _adjusted(value, offset):
+                    if value is None:
+                        return None
+                    if isinstance(value, str):
+                        if value.startswith("PLACEHOLDER"):
+                            return None
+                        return None
+                    return float(value) + offset
+
+                x = _adjusted(coords.x, offset_x)
+                y = _adjusted(coords.y, offset_y)
+                z = _adjusted(z_height, offset_z)
                 v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
-                
+
                 if x is not None or y is not None or z is not None or v is not None:
                     feedrate = self._feedrate
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
@@ -445,106 +600,85 @@ class MovementExecutor:
     def execute_pickup_tool(
         self,
         tool,
-        registry
+        global_ready_x: float,
+        global_ready_y: float,
+        global_ready_z: float,
+        global_ready_v: Optional[float] = None,
     ) -> bool:
         """
-        Pick up a tool and move to global_ready position.
-        
+        Pick up a tool and re-center on global_ready.
+
+        The state machine enforces that pickup is only valid from global_ready
+        with the manipulator (zero) offset active, and resolves the
+        offset-adjusted global_ready coordinates before calling this method.
+        After the firmware tpost macro completes, this method drives the
+        machine back to those coordinates so the pose is well-defined when
+        the state machine swaps in the new tool's default offset.
+
         Note: The machine's pickup_tool() method is decorated with @requires_safe_z,
         which automatically raises the bed height to deck.safe_z + 20 if it is not
         already at that height.
-        
+
         Args:
-            tool: The Tool object to pick up (must be manipulator for now)
-            registry: PositionRegistry to get global_ready coordinates
-            
+            tool: The Tool object to pick up
+            global_ready_x: Resolved global_ready X coordinate (manipulator offset)
+            global_ready_y: Resolved global_ready Y coordinate (manipulator offset)
+            global_ready_z: Resolved global_ready Z coordinate (manipulator offset)
+            global_ready_v: Resolved global_ready V coordinate (None to skip)
+
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Validate that only manipulator tool is supported
-            if not hasattr(tool, 'name') or tool.name != "manipulator":
-                raise ValueError(f"Only manipulator tool is supported. Attempted to pick up: {tool.name if hasattr(tool, 'name') else type(tool).__name__}")
-            
-            # Pick up the tool
             self._machine.pickup_tool(tool)
-            
-            # Move to global_ready position if not already there (tool macros should return to global ready)
-            global_ready_pos = registry.find_first_of_type(PositionType.GLOBAL_READY)
-            if global_ready_pos and global_ready_pos.coordinates:
-                coords = global_ready_pos.coordinates
-                # Get z height from z_heights if needed
-                z_height = None
-                if coords.z == "USE_Z_HEIGHT_POLICY":
-                    # Use mold_transfer_safe z height
-                    z_heights = registry.z_heights
-                    if "mold_transfer_safe" in z_heights:
-                        z_config = z_heights["mold_transfer_safe"]
-                        if isinstance(z_config, dict):
-                            z_height = z_config.get("z_coordinate")
-                
-                # Move to global_ready coordinates
-                # Skip placeholders - they'll be handled by the state machine
-                x = coords.x if (coords.x is not None and (not isinstance(coords.x, str) or not coords.x.startswith("PLACEHOLDER"))) else None
-                y = coords.y if (coords.y is not None and (not isinstance(coords.y, str) or not coords.y.startswith("PLACEHOLDER"))) else None
-                z = z_height if (z_height is not None and (not isinstance(z_height, str) or not z_height.startswith("PLACEHOLDER"))) else None
-                v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
-                
-                if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._feedrate
-                    self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
-            
+            self._machine.move_to(
+                x=global_ready_x,
+                y=global_ready_y,
+                z=global_ready_z,
+                v=global_ready_v,
+                s=self._feedrate,
+            )
             return True
         except Exception as e:
             print(f"Error picking up tool: {e}")
             return False
-    
+
     def execute_park_tool(
         self,
-        registry
+        global_ready_x: float,
+        global_ready_y: float,
+        global_ready_z: float,
+        global_ready_v: Optional[float] = None,
     ) -> bool:
         """
-        Park the current tool and move to global_ready position.
-        
+        Park the current tool and re-center on global_ready.
+
+        The state machine enforces that park is only valid from global_ready
+        and restores the manipulator (zero) offset before calling this
+        method, so the supplied coordinates are already in the correct frame.
+
         Note: The machine's park_tool() method is decorated with @requires_safe_z,
         which automatically raises the bed height to deck.safe_z + 20 if it is not
-        already at that height. 
-        
+        already at that height.
+
         Args:
-            registry: PositionRegistry to get global_ready coordinates
-            
+            global_ready_x: Resolved global_ready X coordinate (manipulator offset)
+            global_ready_y: Resolved global_ready Y coordinate (manipulator offset)
+            global_ready_z: Resolved global_ready Z coordinate (manipulator offset)
+            global_ready_v: Resolved global_ready V coordinate (None to skip)
+
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Park the tool
             self._machine.park_tool()
-            
-            # Move to global_ready position
-            global_ready_pos = registry.find_first_of_type(PositionType.GLOBAL_READY)
-            if global_ready_pos and global_ready_pos.coordinates:
-                coords = global_ready_pos.coordinates
-                # Get z height from z_heights if needed
-                z_height = None
-                if coords.z == "USE_Z_HEIGHT_POLICY":
-                    # Use mold_transfer_safe z height
-                    z_heights = registry.z_heights
-                    if "mold_transfer_safe" in z_heights:
-                        z_config = z_heights["mold_transfer_safe"]
-                        if isinstance(z_config, dict):
-                            z_height = z_config.get("z_coordinate")
-                
-                # Move to global_ready coordinates
-                # Skip placeholders - they'll be handled by the state machine
-                x = coords.x if (coords.x is not None and (not isinstance(coords.x, str) or not coords.x.startswith("PLACEHOLDER"))) else None
-                y = coords.y if (coords.y is not None and (not isinstance(coords.y, str) or not coords.y.startswith("PLACEHOLDER"))) else None
-                z = z_height if (z_height is not None and (not isinstance(z_height, str) or not z_height.startswith("PLACEHOLDER"))) else None
-                v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
-                
-                if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._feedrate
-                    self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
-            
+            self._machine.move_to(
+                x=global_ready_x,
+                y=global_ready_y,
+                z=global_ready_z,
+                v=global_ready_v,
+                s=self._feedrate,
+            )
             return True
         except Exception as e:
             print(f"Error parking tool: {e}")
@@ -568,97 +702,31 @@ class MovementExecutor:
         self,
         x: float,
         y: float,
-        z: Union[float, str, None] = None,
+        z: float,
         v: Optional[float] = None,
-        registry = None
     ) -> bool:
         """
-        Move to a specific mold slot position using coordinates from motion_platform_positions.json.
-        
+        Move to a specific mold slot position.
+
+        All coordinates must be fully resolved from the state machine's
+        position and z-height policy logic before calling this executor.
+
         Args:
-            x: X coordinate of mold slot ready position (required)
-            y: Y coordinate of mold slot ready position (required)
-            z: Z coordinate of mold slot ready position (optional, or "USE_Z_HEIGHT_POLICY")
-            v: V coordinate of mold slot ready position (optional)
-            registry: PositionRegistry to resolve z heights (required if z="USE_Z_HEIGHT_POLICY")
-            
+            x: Final X machine coordinate
+            y: Final Y machine coordinate
+            z: Final Z machine coordinate
+            v: V coordinate (None to skip)
+
         Returns:
             True if successful, False otherwise
-            
-        Note:
-            Z-height safety is enforced by state machine's z_height_policy validation.
-            MOLD_READY positions require z_height_policy: allowed=['dispenser_safe', 'mold_transfer_safe']
-            
-            When z="USE_Z_HEIGHT_POLICY", the method infers the correct z height based on
-            the current machine z position:
-            - If currently at transfer height (mold_transfer_safe), use that
-            - Otherwise use dispenser height (dispenser_safe)
         """
         try:
-            resolved_z = z
-            
-            # Handle USE_Z_HEIGHT_POLICY
-            if isinstance(z, str) and z == "USE_Z_HEIGHT_POLICY":
-                if registry is None:
-                    raise ValueError("Registry required when z=USE_Z_HEIGHT_POLICY")
-                
-                # Get current machine position
-                current_pos = self._machine.get_position()
-                current_z = float(current_pos.get('Z', 0.0))
-                
-                # Get z heights from registry
-                z_heights = registry.z_heights
-                tolerance = registry.coordinate_tolerance.get('z', 0.2)
-                
-                # Determine which z height we're currently at
-                inferred_z_height_id = None
-                
-                # Check each z height to see if current position matches
-                for z_height_id, z_config in z_heights.items():
-                    if isinstance(z_config, dict):
-                        z_coord = z_config.get("z_coordinate")
-                        if z_coord and isinstance(z_coord, (int, float)):
-                            if abs(current_z - z_coord) <= tolerance:
-                                inferred_z_height_id = z_height_id
-                                break
-                
-                # If we identified the current z height, use it
-                if inferred_z_height_id:
-                    z_config = z_heights[inferred_z_height_id]
-                    if isinstance(z_config, dict):
-                        resolved_z = z_config.get("z_coordinate")
-                        print(f"Inferred z height: {inferred_z_height_id} (z={resolved_z}mm) based on current z={current_z:.2f}mm")
-                else:
-                    # Default to dispenser_safe if we can't determine current height
-                    # This is the safer option (higher z)
-                    if "dispenser_safe" in z_heights:
-                        z_config = z_heights["dispenser_safe"]
-                        if isinstance(z_config, dict):
-                            resolved_z = z_config.get("z_coordinate")
-                            if isinstance(resolved_z, str):
-                                raise ValueError(f"dispenser_safe z_coordinate is a placeholder: '{resolved_z}'. Please configure a numeric value.")
-                            print(f"Could not infer z height from current z={current_z:.2f}mm, defaulting to dispenser_safe (z={resolved_z}mm)")
-                    elif "mold_transfer_safe" in z_heights:
-                        # Fallback to mold_transfer_safe if dispenser_safe not available
-                        z_config = z_heights["mold_transfer_safe"]
-                        if isinstance(z_config, dict):
-                            resolved_z = z_config.get("z_coordinate")
-                            if isinstance(resolved_z, str):
-                                raise ValueError(f"mold_transfer_safe z_coordinate is a placeholder: '{resolved_z}'. Please configure a numeric value.")
-                            print(f"Could not infer z height from current z={current_z:.2f}mm, defaulting to mold_transfer_safe (z={resolved_z}mm)")
-                    else:
-                        raise ValueError(f"No suitable z height found in registry for current z={current_z:.2f}mm")
-                
-                # Final validation that resolved_z is numeric
-                if not isinstance(resolved_z, (int, float)):
-                    raise ValueError(f"Resolved z coordinate is not numeric: {resolved_z} (type: {type(resolved_z).__name__})")
-            
             feedrate = self._feedrate
-            self._machine.move_to(x=x, y=y, z=resolved_z, v=v, s=feedrate)
+            self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
             return True
         except Exception as e:
             print(f"Error moving to well: {e}")
-            print (f"Coordinate: x={x}, y={y}, z={z}, v={v}")
+            print(f"Coordinate: x={x}, y={y}, z={z}, v={v}")
             return False
     
     def execute_move_to_scale(
@@ -699,7 +767,7 @@ class MovementExecutor:
     def get_machine_axes_homed(self) -> list:
         """Get list of which axes are homed."""
         return getattr(self._machine, 'axes_homed', [False, False, False, False])
-    
+
     def wait_for_moves_to_finish(self) -> None:
         """
         Wait for all buffered moves to complete execution.
@@ -710,6 +778,38 @@ class MovementExecutor:
         state of the Jubilee.
         """
         self._machine.gcode("M400")
+
+    def execute_apply_tool_offset(
+        self,
+        tool_index: int,
+        offset_x: float,
+        offset_y: float,
+        offset_z: float,
+    ) -> bool:
+        """
+        Apply a firmware tool-frame offset using G10.
+
+        Args:
+            tool_index: Firmware tool index (G10 P value)
+            offset_x: X offset in mm
+            offset_y: Y offset in mm
+            offset_z: Z offset in mm
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            self._machine.gcode(
+                f"G10 P{int(tool_index)} X{float(offset_x)} Y{float(offset_y)} Z{float(offset_z)}"
+            )
+            self._machine.gcode("M400")
+            return True
+        except Exception as e:
+            print(
+                "Error applying firmware tool offset "
+                f"(P{tool_index} X{offset_x} Y{offset_y} Z{offset_z}): {e}"
+            )
+            return False
     
     def execute_move_to_scale_location(
         self,

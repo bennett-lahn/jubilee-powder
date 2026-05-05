@@ -48,7 +48,7 @@ class JobLog:
     items:
         Ordered list of item dicts as sent from the UI.
         Powder:   [{"well_id": "0", "target_weight": 50.0}, ...]
-        Hardness: [{"sample_id": "0", "mode": "shore_a"}, ...]
+        Hardness: [{"tray_index": 0, "sample_id": "0", "mode": "shore_a"}, ...]
     manager:
         Optional reference to JubileeManager.  When provided, update methods
         can extract state (e.g. last dispensed weight) directly from it.
@@ -104,6 +104,7 @@ class JobLog:
     def update_sample(
         self,
         sample_id: str,
+        tray_index: int,
         result: Optional[float] = None,
     ) -> None:
         """
@@ -114,11 +115,18 @@ class JobLog:
         reading; for now it is passed in explicitly.
         """
         mode = next(
-            (i["mode"] for i in self._items if i["sample_id"] == sample_id),
+            (
+                i["mode"]
+                for i in self._items
+                if i["sample_id"] == sample_id
+                and i.get("tray_index") == tray_index
+            ),
             None,
         )
-        self._records[sample_id] = {
+        key = self._sample_record_key(sample_id, tray_index)
+        self._records[key] = {
             "sample_id": sample_id,
+            "tray_index": tray_index,
             "mode": mode,
             "result": result,
             "status": "complete",
@@ -176,11 +184,14 @@ class JobLog:
         samples = []
         for item in self._items:
             sid = item["sample_id"]
+            tray_index = item.get("tray_index")
+            key = self._sample_record_key(sid, tray_index)
             samples.append(
                 self._records.get(
-                    sid,
+                    key,
                     {
                         "sample_id": sid,
+                        "tray_index": tray_index,
                         "mode": item["mode"],
                         "result": None,
                         "status": "incomplete",
@@ -188,6 +199,9 @@ class JobLog:
                 )
             )
         return {"samples": samples}
+
+    def _sample_record_key(self, sample_id: str, tray_index: int) -> str:
+        return f"{tray_index}:{sample_id}"
 
     def _write(self) -> Path:
         job_id = self._next_id()

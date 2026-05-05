@@ -40,6 +40,7 @@ from science_jubilee.decks.Deck import Deck
 from src.Scale import Scale
 from src.PistonDispenser import PistonDispenser
 from src.Manipulator import Manipulator, ToolStateError
+from src.HardnessTester import HardnessTester
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 from jubilee_api_config.constants import FeedRate
 from src.ConfigLoader import config
@@ -118,6 +119,8 @@ class JubileeManager:
         """
         self.scale: Optional[Scale] = None
         self.manipulator: Optional[Manipulator] = None
+        self.hardness_tester_shore_a: Optional[HardnessTester] = None
+        self.hardness_tester_shore_d: Optional[HardnessTester] = None
         self.state_machine: Optional[MotionPlatformStateMachine] = None
         self.connected: bool = False
         self._num_piston_dispensers: int = num_piston_dispensers
@@ -240,8 +243,7 @@ class JubileeManager:
         4. Initialize deck layout and piston dispensers
         5. Create and configure manipulator tool
         6. Home all machine axes (X, Y, Z, U)
-        7. Pick up manipulator tool
-        8. Home manipulator axis (V)
+        7. Leave tools parked; pick up occurs on-demand per operation
         
         Args:
             machine_address: IP address of the Jubilee's Duet controller. If None,
@@ -260,7 +262,7 @@ class JubileeManager:
         
         Raises:
             FileNotFoundError: If state_machine_config file does not exist.
-            RuntimeError: If homing, tool pickup, or manipulator homing fails.
+            RuntimeError: If homing fails.
             ConnectionError: If unable to connect to machine or scale.
         
         Example:
@@ -318,12 +320,14 @@ class JubileeManager:
                     config_path = project_root / config_path
             if not config_path.exists():
                 raise FileNotFoundError(f"State machine config not found: {config_path}")
+            system_config_path = project_root / "jubilee_api_config" / "system_config.json"
             
             self.state_machine = MotionPlatformStateMachine.from_config_file(
                 config_path,
                 real_machine,
                 scale=self.scale,
-                feedrate=self._feedrate
+                feedrate=self._feedrate,
+                system_config_path=system_config_path,
             )
             
             # Initialize deck and dispensers in state machine
@@ -337,10 +341,23 @@ class JubileeManager:
 
             # Create manipulator with state machine reference
             # Config will default to system_config.json
+            manipulator_tool_cfg = config.get("tools.manipulator", {})
             self.manipulator = Manipulator(
-                index=0,
-                name="manipulator",
+                index=manipulator_tool_cfg.get("index", 0),
+                name=manipulator_tool_cfg.get("name", "manipulator"),
                 state_machine=self.state_machine
+            )
+            hardness_testers_cfg = config.get("hardness_testers", {})
+
+            self.hardness_tester_shore_a = HardnessTester.from_system_config(
+                tester_mode="shore_a",
+                config_payload={"hardness_testers": hardness_testers_cfg},
+                use_camera=False,
+            )
+            self.hardness_tester_shore_d = HardnessTester.from_system_config(
+                tester_mode="shore_d",
+                config_payload={"hardness_testers": hardness_testers_cfg},
+                use_camera=False,
             )
 
             # Ensure state machine context is set correctly for homing
@@ -360,12 +377,8 @@ class JubileeManager:
             
             # Load the manipulator tool (this registers it but doesn't pick it up)
             self.machine_read_only.load_tool(self.manipulator)
-            
-            # Pick up the tool through state machine
-            # This validates we're at a valid position, picks up the tool, and moves to global_ready
-            result = self.state_machine.validated_pickup_tool(self.manipulator)
-            if not result.valid:
-                raise RuntimeError(f"Failed to pick up tool: {result.reason}")
+            self.machine_read_only.load_tool(self.hardness_tester_shore_a)
+            self.machine_read_only.load_tool(self.hardness_tester_shore_d)
             
             self.connected = True
             return True
@@ -482,6 +495,72 @@ class JubileeManager:
             except:
                 return 0.0
         return 0.0
+
+    def park_active_tool(self) -> bool:
+        """Park the currently mounted tool if one is active."""
+        if not self.state_machine:
+            raise RuntimeError("State machine not configured")
+
+        if self.state_machine.context.position_id != "global_ready":
+            self.move_to_global_ready()
+
+        if self.state_machine.context.active_tool_id is None:
+            return True
+
+        park_result = self.state_machine.validated_park_tool()
+        if not park_result.valid:
+            raise RuntimeError(f"Failed to park active tool: {park_result.reason}")
+        return True
+
+    def pickup_tool(self, tool) -> bool:
+        """Pick up the requested tool without assuming current tool state."""
+        if not self.state_machine:
+            raise RuntimeError("State machine not configured")
+        if not tool:
+            raise ToolStateError("Requested tool is not configured")
+
+        if self.state_machine.context.position_id != "global_ready":
+            self.move_to_global_ready()
+
+        pickup_result = self.state_machine.validated_pickup_tool(tool)
+        if not pickup_result.valid:
+            raise RuntimeError(f"Failed to pick up tool '{tool.name}': {pickup_result.reason}")
+        return True
+
+    def ensure_tool_active(self, required_tool) -> bool:
+        """
+        Ensure the required tool is mounted.
+
+        If another tool is currently active, it is parked first. If no tool is
+        active, the required tool is picked up directly.
+        """
+        if not self.state_machine:
+            raise RuntimeError("State machine not configured")
+        if not required_tool:
+            raise ToolStateError("Required tool is not configured")
+
+        active_tool_id = self.state_machine.context.active_tool_id
+        if active_tool_id == required_tool.name:
+            return True
+
+        if active_tool_id is not None:
+            self.park_active_tool()
+
+        self.pickup_tool(required_tool)
+        return True
+    # TODO: This handles combined shore a+d testing inappropriately
+    def _resolve_hardness_tester(self, mode: Optional[str]) -> HardnessTester:
+        """Map hardness mode to the correct Shore tester/tool instance."""
+        normalized_mode = (mode or "shore_a").lower()
+        if normalized_mode == "shore_d":
+            if not self.hardness_tester_shore_d:
+                raise ToolStateError("Shore-D hardness tester is not configured.")
+            return self.hardness_tester_shore_d
+
+        # shore_a and shore_a_d default to Shore-A tool selection
+        if not self.hardness_tester_shore_a:
+            raise ToolStateError("Shore-A hardness tester is not configured.")
+        return self.hardness_tester_shore_a
     
     def dispense_to_well(self, well_id: str, target_weight: float) -> bool:
         """
@@ -560,6 +639,8 @@ class JubileeManager:
             
             if not self.state_machine:
                 raise RuntimeError("State machine not configured")
+
+            self.ensure_tool_active(self.manipulator)
             
             self.move_to_mold_slot(well_id)
             self.manipulator.pick_mold(well_id)
@@ -580,6 +661,77 @@ class JubileeManager:
             return True
         except Exception as e:
             print(f"Error filling mold: {e}")
+            return False
+
+    def test_sample(
+        self,
+        tray_index: int,
+        sample_id: str,
+        mode: Optional[str] = None,
+    ) -> bool:
+        """
+        Select a Shore tester and delegate sample testing to it.
+        """
+        if not self.connected:
+            return False
+        try:
+            if not self.state_machine:
+                raise RuntimeError("State machine not configured")
+
+            selected_tester = self._resolve_hardness_tester(mode)
+            self.ensure_tool_active(selected_tester)
+            selected_tester.test_sample(tray_index, sample_id, self.state_machine)
+
+            if self.active_job_log is not None:
+                self.active_job_log.update_sample(sample_id, tray_index=tray_index, result=None)
+            return True
+        except Exception as e:
+            print(f"Error testing hardness sample: {e}")
+            return False
+
+    def hardness_turn_on(self, mode: Optional[str] = None) -> bool:
+        """Select a Shore tester and delegate power-on to it."""
+        if not self.connected:
+            return False
+        try:
+            if not self.state_machine:
+                raise RuntimeError("State machine not configured")
+            selected_tester = self._resolve_hardness_tester(mode)
+            self.ensure_tool_active(selected_tester)
+            selected_tester.turn_on(self.state_machine)
+            return True
+        except Exception as e:
+            print(f"Error turning on hardness tester: {e}")
+            return False
+
+    def hardness_turn_off(self, mode: Optional[str] = None) -> bool:
+        """Select a Shore tester and delegate power-off to it."""
+        if not self.connected:
+            return False
+        try:
+            if not self.state_machine:
+                raise RuntimeError("State machine not configured")
+            selected_tester = self._resolve_hardness_tester(mode)
+            self.ensure_tool_active(selected_tester)
+            selected_tester.turn_off(self.state_machine)
+            return True
+        except Exception as e:
+            print(f"Error turning off hardness tester: {e}")
+            return False
+
+    def hardness_zero(self, mode: Optional[str] = None) -> bool:
+        """Select a Shore tester and delegate zeroing to it."""
+        if not self.connected:
+            return False
+        try:
+            if not self.state_machine:
+                raise RuntimeError("State machine not configured")
+            selected_tester = self._resolve_hardness_tester(mode)
+            self.ensure_tool_active(selected_tester)
+            selected_tester.zero(self.state_machine)
+            return True
+        except Exception as e:
+            print(f"Error zeroing hardness tester: {e}")
             return False
 
     def move_to_dispenser(self) -> bool:
