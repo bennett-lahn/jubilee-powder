@@ -18,10 +18,15 @@ import {
 } from 'lucide-react'
 import { Button, Card, StatusBadge } from '../components/ui'
 import WellGrid from '../components/WellGrid'
+import SampleTrayGrid, { sampleKeyForTray } from '../components/SampleTrayGrid'
 import ArcProgress from '../components/ArcProgress'
 
-const ROWS = 4
-const COLS = 6
+const DISPENSING_ROWS = 4
+const DISPENSING_COLS = 6
+const SAMPLE_TRAY_ROWS = 5
+const SAMPLE_TRAY_COLS = 5
+const SAMPLE_TRAY_COUNT = 2
+const HARDNESS_ROWS = SAMPLE_TRAY_ROWS
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors of HomeScreen equivalents)
@@ -37,19 +42,36 @@ function formatJobDate(job) {
   })
 }
 
-function buildResultWells(rows, cols, job) {
+function buildResultWells(rows, cols, job, jobType) {
   const total = rows * cols
   const wells = {}
-  for (let i = 0; i < total; i++) {
-    wells[String(i)] = {
-      selected: false, targetWeight: 0, currentWeight: 0,
-      mode: 'none', status: 'excluded', actualWeight: null,
+
+  if (jobType === 'hardness') {
+    for (let trayIndex = 0; trayIndex < SAMPLE_TRAY_COUNT; trayIndex++) {
+      for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
+        const id = sampleKeyForTray(trayIndex, sampleIndex)
+        wells[id] = {
+          selected: false, targetWeight: 0, currentWeight: 0,
+          mode: 'none', status: 'excluded', actualWeight: null,
+        }
+      }
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      wells[String(i)] = {
+        selected: false, targetWeight: 0, currentWeight: 0,
+        mode: 'none', status: 'excluded', actualWeight: null,
+      }
     }
   }
+
   const items = job?.items
   if (!items?.length) return wells
+
   items.forEach((item, idx) => {
-    const id = String(item.well_id ?? item.sample_id)
+    const id = item.well_id != null
+      ? String(item.well_id)
+      : sampleKeyForTray(item.tray_index, item.sample_id)
     if (!(id in wells)) return
     let status
     if (item.status) {
@@ -157,7 +179,9 @@ function JobResultView({ job, onBack }) {
   const jobDate      = formatJobDate(job)
   const badge        = OUTCOME_BADGE[job.status] ?? { status: 'idle', label: job.status ?? 'Unknown' }
   const arcColor     = completed === total && total > 0 ? '#16a34a' : '#334155'
-  const resultWells  = buildResultWells(ROWS, COLS, job)
+  const resultRows   = jobType === 'hardness' ? HARDNESS_ROWS : DISPENSING_ROWS
+  const resultCols   = jobType === 'hardness' ? SAMPLE_TRAY_COLS : DISPENSING_COLS
+  const resultWells  = buildResultWells(resultRows, resultCols, job, jobType)
   const unitLabel    = jobType === 'dispensing' ? 'molds' : 'samples'
 
   return (
@@ -205,16 +229,28 @@ function JobResultView({ job, onBack }) {
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 shrink-0">
             Results{jobDate ? ` \u2014 ${jobDate}` : ''}
           </p>
-          <WellGrid
-            wells={resultWells}
-            rows={ROWS}
-            cols={COLS}
-            toggleWell={() => {}}
-            selectRow={() => {}}
-            selectCol={() => {}}
-            variant="result"
-            className="flex-1 min-h-0"
-          />
+          {jobType === 'hardness' ? (
+            <SampleTrayGrid
+              samples={resultWells}
+              rows={resultRows}
+              cols={resultCols}
+              toggleSample={() => {}}
+              variant="result"
+              trayCount={SAMPLE_TRAY_COUNT}
+              className="flex-1 min-h-0"
+            />
+          ) : (
+            <WellGrid
+              wells={resultWells}
+              rows={resultRows}
+              cols={resultCols}
+              toggleWell={() => {}}
+              selectRow={() => {}}
+              selectCol={() => {}}
+              variant="result"
+              className="flex-1 min-h-0"
+            />
+          )}
         </Card>
 
       </div>

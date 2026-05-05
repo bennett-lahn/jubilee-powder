@@ -27,11 +27,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
 import WellGrid from '../components/WellGrid'
+import SampleTrayGrid, { sampleKeyForTray } from '../components/SampleTrayGrid'
 import ArcProgress from '../components/ArcProgress'
 import { Button, Card, Dialog } from '../components/ui'
 
-const ROWS = 4
-const COLS = 6
+const DISPENSING_ROWS = 4
+const DISPENSING_COLS = 6
+const SAMPLE_TRAY_ROWS = 5
+const SAMPLE_TRAY_COLS = 5
+const SAMPLE_TRAY_COUNT = 2
+const HARDNESS_ROWS = SAMPLE_TRAY_ROWS
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,17 +74,34 @@ function formatElapsed(totalSeconds) {
  * `job.items` are marked pending / active / complete based on the current
  * `job.completed` counter and `job.current_item`.
  */
-function buildResultWells(rows, cols, job) {
+function buildResultWells(rows, cols, job, jobType) {
   const total = rows * cols
   const wells = {}
-  for (let i = 0; i < total; i++) {
-    wells[String(i)] = {
-      selected:      false,
-      targetWeight:  0,
-      currentWeight: 0,
-      mode:          'none',
-      status:        'excluded',
-      actualWeight:  null,
+
+  if (jobType === 'hardness') {
+    for (let trayIndex = 0; trayIndex < SAMPLE_TRAY_COUNT; trayIndex++) {
+      for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
+        const id = sampleKeyForTray(trayIndex, sampleIndex)
+        wells[id] = {
+          selected:      false,
+          targetWeight:  0,
+          currentWeight: 0,
+          mode:          'none',
+          status:        'excluded',
+          actualWeight:  null,
+        }
+      }
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      wells[String(i)] = {
+        selected:      false,
+        targetWeight:  0,
+        currentWeight: 0,
+        mode:          'none',
+        status:        'excluded',
+        actualWeight:  null,
+      }
     }
   }
 
@@ -87,7 +109,9 @@ function buildResultWells(rows, cols, job) {
   if (!items?.length) return wells
 
   items.forEach((item, idx) => {
-    const id = String(item.well_id ?? item.sample_id)
+    const id = item.well_id != null
+      ? String(item.well_id)
+      : sampleKeyForTray(item.tray_index, item.sample_id)
     if (!(id in wells)) return
 
     let status
@@ -191,10 +215,11 @@ export default function HomeScreen() {
 
   async function handleCancelConfirm() {
     setCancelOpen(false)
-    setActionStatus('Cancelling after current mold…')
+    const itemName = jobType === 'hardness' ? 'sample' : 'mold'
+    setActionStatus(`Cancelling after current ${itemName}...`)
     const { ok, error } = await cancelJob()
     setActionStatus(ok
-      ? 'Cancelling — machine will stop after the current mold.'
+      ? `Cancelling - machine will stop after the current ${itemName}.`
       : `Error: ${error}`)
   }
 
@@ -205,6 +230,8 @@ export default function HomeScreen() {
   const jobTypeLabel = jobType === 'dispensing' ? 'Dispensing'
                      : jobType === 'hardness'   ? 'Hardness'
                      : 'Job'
+  const itemName = jobType === 'hardness' ? 'sample' : 'mold'
+  const itemNamePlural = jobType === 'hardness' ? 'samples' : 'molds'
 
   const displayJob = hasJobData ? job : jobLog
   const completed  = displayJob?.completed ?? 0
@@ -217,7 +244,9 @@ export default function HomeScreen() {
       ? '#16a34a' // green-600
       : '#334155' // slate-700
 
-  const resultWells = buildResultWells(ROWS, COLS, displayJob)
+  const resultRows = jobType === 'hardness' ? HARDNESS_ROWS : DISPENSING_ROWS
+  const resultCols = jobType === 'hardness' ? SAMPLE_TRAY_COLS : DISPENSING_COLS
+  const resultWells = buildResultWells(resultRows, resultCols, displayJob, jobType)
   const jobDate     = formatJobDate(displayJob)
 
   // ── Empty state ──────────────────────────────────────────────────────────
@@ -306,16 +335,28 @@ export default function HomeScreen() {
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 shrink-0">
             Results{jobDate ? ` \u2014 ${jobDate}` : ''}
           </p>
-          <WellGrid
-            wells={resultWells}
-            rows={ROWS}
-            cols={COLS}
-            toggleWell={() => {}}
-            selectRow={() => {}}
-            selectCol={() => {}}
-            variant="result"
-            className="flex-1 min-h-0"
-          />
+          {jobType === 'hardness' ? (
+            <SampleTrayGrid
+              samples={resultWells}
+              rows={resultRows}
+              cols={resultCols}
+              toggleSample={() => {}}
+              variant="result"
+              trayCount={SAMPLE_TRAY_COUNT}
+              className="flex-1 min-h-0"
+            />
+          ) : (
+            <WellGrid
+              wells={resultWells}
+              rows={resultRows}
+              cols={resultCols}
+              toggleWell={() => {}}
+              selectRow={() => {}}
+              selectCol={() => {}}
+              variant="result"
+              className="flex-1 min-h-0"
+            />
+          )}
         </Card>
 
       </div>
@@ -323,9 +364,9 @@ export default function HomeScreen() {
       {/* ── Status line ──────────────────────────────────────────────────── */}
       <p className="text-center text-sm text-slate-400 shrink-0 pb-1">
         {actionStatus || (isRunning
-          ? `${jobTypeLabel} job running — ${completed} of ${total} molds complete.`
+          ? `${jobTypeLabel} job running - ${completed} of ${total} ${itemNamePlural} complete.`
           : total > 0
-            ? `Last job: ${completed} / ${total} molds complete.`
+            ? `Last job: ${completed} / ${total} ${itemNamePlural} complete.`
             : ''
         )}
       </p>
@@ -347,7 +388,7 @@ export default function HomeScreen() {
         }
       >
         <p className="text-sm text-slate-300 mb-2">
-          The machine will finish the <span className="font-semibold text-slate-100">current mold</span>, then
+          The machine will finish the <span className="font-semibold text-slate-100">current {itemName}</span>, then
           stop and stow the tool.
         </p>
         <p className="text-sm text-slate-500">

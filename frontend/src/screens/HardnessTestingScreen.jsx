@@ -6,11 +6,12 @@
 
 import { useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
-import WellGrid, { useWellGrid } from '../components/WellGrid'
+import SampleTrayGrid, { useSampleTrayGrid } from '../components/SampleTrayGrid'
 import { Button, Card } from '../components/ui'
 
-const ROWS = 4
-const COLS = 6
+const TRAY_ROWS = 5
+const TRAY_COLS = 5
+const TRAY_COUNT = 2
 
 const MODES = [
   { key: 'none',      label: 'None',    variant: 'ghost'    },
@@ -24,7 +25,7 @@ export default function HardnessTestingScreen() {
   const submitJob  = useJubileeStore((s) => s.submitJob)
   const machineIdle = telemetry.state === 'idle' || telemetry.state === null
 
-  const grid = useWellGrid(ROWS, COLS)
+  const grid = useSampleTrayGrid(TRAY_ROWS, TRAY_COLS, TRAY_COUNT)
   const { selectedIds } = grid
   const selectedCount = selectedIds.length
 
@@ -39,10 +40,14 @@ export default function HardnessTestingScreen() {
 
   async function startTest() {
     if (!machineIdle) { setStatusText(`Cannot start: machine is ${telemetry.state}.`); return }
-    const items = selectedIds.map((id) => ({
-      sample_id: id,
-      mode:      grid.wells[id].mode,
-    }))
+    const items = selectedIds.map((id) => {
+      const [trayIndex, localSampleIndex] = id.split(':')
+      return {
+        tray_index: Number(trayIndex),
+        sample_id: String(localSampleIndex),
+        mode:      grid.samples[id].mode,
+      }
+    })
     setStatusText('Submitting test…')
     const { ok, error } = await submitJob('hardness', items)
     setStatusText(ok ? `Test started: ${items.length} samples.` : `Error: ${error}`)
@@ -90,14 +95,13 @@ export default function HardnessTestingScreen() {
 
       {/* ── Sample grid — fills remaining height ──────────────────────── */}
       <Card className="flex-1 p-4 min-h-0">
-        <WellGrid
-          wells={grid.wells}
+        <SampleTrayGrid
+          samples={grid.samples}
           rows={grid.rows}
           cols={grid.cols}
-          toggleWell={grid.toggleWell}
-          selectRow={grid.selectRow}
-          selectCol={grid.selectCol}
+          toggleSample={grid.toggleSample}
           variant="hardness"
+          trayCount={grid.trayCount}
           className="h-full"
         />
       </Card>

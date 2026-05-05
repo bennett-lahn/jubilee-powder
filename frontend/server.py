@@ -79,6 +79,7 @@ class PowderWell(BaseModel):
 
 
 class HardnessSample(BaseModel):
+    tray_index: int = Field(ge=0)
     sample_id: str = Field(min_length=1)
     mode:      Literal["shore_a", "shore_a_d", "shore_d"]
 
@@ -420,7 +421,10 @@ def _build_progress_log() -> dict:
     """
     items_with_status = []
     for i, item in enumerate(progress.items):
-        item_id = item.get("well_id") or item.get("sample_id")
+        if "well_id" in item:
+            item_id = item.get("well_id")
+        else:
+            item_id = f"{item['tray_index']}:{item['sample_id']}"
         if i < progress.completed:
             status = "complete"
         elif item_id == progress.current_item:
@@ -646,7 +650,7 @@ async def _run_hardness(items: list[dict]) -> None:
     """Execute a hardness testing job in the background and finalise the log on completion.
 
     Args:
-        items: Ordered list of sample dicts (``sample_id``, ``mode``).
+        items: Ordered list of sample dicts (``tray_index``, ``sample_id``, ``mode``).
     """
     job_log = _make_job_log("hardness", items)
     outcome = "cancelled"

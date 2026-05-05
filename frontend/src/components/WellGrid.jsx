@@ -2,11 +2,9 @@
  * WellGrid — interactive bed visualisation.
  *
  * Sizing strategy
- *   Wells are height-driven: each data row takes an equal share of the
- *   container height (flex-1), and each well button is h-full with
- *   aspectRatio:1 so it becomes a circle sized by its row's height.
- *   This means the grid fills whatever vertical space the parent gives it —
- *   typically most of the kiosk screen — without any hardcoded pixel sizes.
+ *   The default mold grid is height-driven: each data row takes an equal
+ *   share of the container height (flex-1), and each well button is h-full
+ *   with aspectRatio:1 so it becomes a circle sized by its row's height.
  *
  * Row / column axis buttons
  *   Clicking a row or column button toggles the entire row/column:

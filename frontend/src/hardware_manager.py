@@ -37,6 +37,14 @@ if str(_project_root) not in sys.path:
 from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 
 
+def _sample_display_id(sample: dict) -> str:
+    """Build a stable sample identifier for UI progress tracking."""
+    t_idx = sample.get('tray_index', 'UnknownTray')
+    s_id = sample.get('sample_id', 'UnknownID')
+    
+    return f"{t_idx}:{s_id}"
+
+
 # =============================================================================
 # MockHardwareManager
 # =============================================================================
@@ -187,8 +195,8 @@ class MockHardwareManager:
         Simulated hardness results are drawn from a uniform distribution.
 
         Args:
-            samples: Ordered list of sample dicts with ``sample_id`` and
-                ``mode`` keys.
+            samples: Ordered list of sample dicts with ``tray_index``,
+                ``sample_id``, and ``mode`` keys.
             progress: Shared ``JobProgress`` instance updated as samples complete.
             job_log: Optional ``JobLog`` instance for recording results.
         """
@@ -197,12 +205,14 @@ class MockHardwareManager:
             for i, sample in enumerate(samples):
                 if not progress.running:
                     break
-                progress.current_item = sample["sample_id"]
+                progress.current_item = _sample_display_id(sample)
                 await asyncio.sleep(1.5)
                 if job_log is not None:
                     simulated_result = round(random.uniform(30.0, 80.0), 1)
                     job_log.update_sample(
-                        sample["sample_id"], result=simulated_result
+                        sample["sample_id"],
+                        tray_index=sample["tray_index"],
+                        result=simulated_result,
                     )
                 progress.completed = i + 1
         finally:
@@ -381,27 +391,37 @@ class HardwareManager:
     async def run_hardness_job(
         self, samples: list[dict], progress: JobProgress, job_log=None
     ) -> None:
-        """Execute a hardness testing job (stub — integration pending).
+        """Execute a hardness testing job via ``JubileeManager``.
 
         Args:
-            samples: Ordered list of sample dicts with ``sample_id`` and
-                ``mode`` keys.
+            samples: Ordered list of sample dicts with ``tray_index``,
+                ``sample_id``, and ``mode`` keys.
             progress: Shared ``JobProgress`` instance updated as samples complete.
             job_log: Optional ``JobLog`` instance for recording results.
         """
-        pass # TODO: Remove when hardness testing is implemented
         self.state = MachineState.RUNNING
+        if job_log is not None and self._manager is not None:
+            self._manager.active_job_log = job_log
         try:
             for i, sample in enumerate(samples):
                 if not progress.running:
                     break
-                progress.current_item = sample["sample_id"]
-                # TODO: replace with asyncio.to_thread(hardness_tester.measure, ...) once integrated
-                await asyncio.sleep(1.5)
-                if job_log is not None:
-                    job_log.update_sample(sample["sample_id"], result=None)
+                progress.current_item = _sample_display_id(sample)
+                success = await asyncio.to_thread(
+                    self._manager.test_sample,
+                    sample["tray_index"],
+                    sample["sample_id"],
+                    sample.get("mode"),
+                )
+                if not success:
+                    raise RuntimeError(
+                        "Hardness test failed for "
+                        f"tray {sample['tray_index']} sample {sample['sample_id']!r}"
+                    )
                 progress.completed = i + 1
         finally:
+            if self._manager is not None:
+                self._manager.active_job_log = None
             if self.state == MachineState.RUNNING:
                 self.state = MachineState.IDLE
 
