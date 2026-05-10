@@ -2,8 +2,8 @@ import cv2
 import glob
 import os
 import re
-import threading
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -121,11 +121,6 @@ class HardnessTester(Tool):
         
         # Camera objects
         self.picamera = None
-        self._capture_thread = None
-        self._stop_capture_event = threading.Event()
-        self._frame_ready_event = threading.Event()
-        self._frame_lock = threading.Lock()
-        self._latest_frame = None
         
         # Digit ROI boundaries (will be set via calibration or manually)
         # Format: [(x1, y1, x2, y2), ...] for each digit
@@ -213,6 +208,41 @@ class HardnessTester(Tool):
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness zero action failed")
         return True
+
+    def is_display_zero(self, debug=False, debug_prefix="display_zero") -> bool:
+        """
+        Run a consensus display capture and check whether value is 0000-0005.
+        """
+        reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
+        if reading is None:
+            return False
+        if reading == "OFF":
+            return False
+        if not reading.isdigit():
+            return False
+
+        value = int(reading)
+        return 0 <= value <= 5
+
+    def is_display_on(self, debug=False, debug_prefix="display_on") -> bool:
+        """
+        Run a consensus display capture and classify display power state.
+
+        Returns:
+            False when all segments are off ("OFF")
+            True when a valid reading is displayed
+
+        Raises:
+            RuntimeError when capture succeeds but the reading is indeterminate
+        """
+        reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
+        if reading is None:
+            raise RuntimeError("Display state is indeterminate: no consensus reading available")
+        if reading == "OFF":
+            return False
+        if reading.isdigit():
+            return True
+        raise RuntimeError(f"Display state is indeterminate: unexpected reading '{reading}'")
 
     def _resolve_sample_target(
         self,
@@ -303,7 +333,29 @@ class HardnessTester(Tool):
 
         return target_x, target_y, target_z
 
-    def test_sample(self, tray_index: str | int, sample_id: str | int, state_machine) -> bool:
+    def _parse_hardness_reading(self, reading: Optional[str]) -> tuple[Optional[float], Optional[str]]:
+        """Convert a consensus LCD string to a hardness float."""
+        if reading is None:
+            return None, "No consensus OCR reading was captured."
+        if reading == "OFF":
+            return None, "Hardness tester display reported OFF."
+        if not reading.isdigit():
+            return None, f"OCR returned non-numeric reading '{reading}'."
+
+        # The display does not include a decimal point, so we apply the
+        # fixed one-decimal scaling used by existing hardness UI expectations.
+        if len(reading) == 3:
+            numeric_value = int(reading)
+        else:
+            numeric_value = int(reading) / 10.0
+        return numeric_value
+
+    def test_sample(
+        self,
+        tray_index: str | int,
+        sample_id: str | int,
+        state_machine,
+    ) -> dict[str, Optional[float | str]]:
         """
         Execute one hardness sample operation via the state machine action path.
         """
@@ -327,10 +379,16 @@ class HardnessTester(Tool):
             target_x=target_x,
             target_y=target_y,
             target_z=target_z,
+            hardness_tester=self,
         )
         if not result.valid:
             raise RuntimeError(result.reason or "Sample action failed")
-        return True
+        measured_value = getattr(state_machine._executor, "last_hardness_result", None)
+        sample_error = getattr(state_machine._executor, "last_hardness_error", None)
+        return {
+            "result": measured_value,
+            "sample_error": sample_error,
+        }
 
 
     def _default_segment_templates(self):
@@ -425,42 +483,11 @@ class HardnessTester(Tool):
             config = self.picamera.create_still_configuration()
             self.picamera.configure(config)
             self.picamera.start()
-            self._start_capture_thread()
             print("Picamera2 initialized successfully")
         except (RuntimeError, ValueError) as e:
             self.picamera = None
             raise RuntimeError(f"Failed to initialize Picamera2: {e}") from e
 
-    def _start_capture_thread(self):
-        """Start background thread that continuously captures latest frame."""
-        self._stop_capture_event.clear()
-        self._frame_ready_event.clear()
-        self._capture_thread = threading.Thread(target=self._capture_worker, daemon=True)
-        self._capture_thread.start()
-
-    def _capture_worker(self):
-        """Continuously capture frames and publish the newest frame."""
-        while not self._stop_capture_event.is_set():
-            if self.picamera is None:
-                time.sleep(0.1)
-                continue
-            try:
-                frame = self.picamera.capture_array()
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                with self._frame_lock:
-                    self._latest_frame = frame
-                self._frame_ready_event.set()
-            except (RuntimeError, ValueError) as e:
-                print(f"WARNING: Picamera2 background capture failed: {e}")
-                time.sleep(0.02)
-
-    def _stop_capture_thread(self):
-        """Stop background frame capture thread safely."""
-        self._stop_capture_event.set()
-        if self._capture_thread is not None and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=1.0)
-        self._capture_thread = None
-    
     def capture_image(self, save=False, output_path='lcd_capture.jpg'):
         """
         Capture an image from the camera.
@@ -480,18 +507,46 @@ class HardnessTester(Tool):
             print("WARNING: Picamera2 camera is not initialized")
             return None
 
-        if not self._frame_ready_event.wait(timeout=1.0):
-            print("WARNING: Timed out waiting for camera frame")
+        try:
+            raw_frame = self.picamera.capture_array()
+            frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+        except (RuntimeError, ValueError) as e:
+            print(f"WARNING: Camera capture failed: {e}")
             return None
-
-        with self._frame_lock:
-            frame = None if self._latest_frame is None else self._latest_frame.copy()
         
         if frame is not None and save:
             cv2.imwrite(output_path, frame)
             print(f"Image saved to {output_path}")
         
         return frame
+
+    def _collect_timed_frames(self, frame_count=10, total_duration_s=1.0):
+        """Capture frames over a fixed time window using capture_image()."""
+        if frame_count <= 0:
+            return []
+        if self.picamera is None:
+            return None
+
+        sample_interval = total_duration_s / float(frame_count)
+        next_capture_time = time.monotonic()
+        frames = []
+
+        for _ in range(frame_count):
+            now = time.monotonic()
+            if now < next_capture_time:
+                time.sleep(next_capture_time - now)
+
+            try:
+                raw_frame = self.picamera.capture_array()
+                frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
+            except (RuntimeError, ValueError) as e:
+                print(f"WARNING: Direct camera capture failed: {e}")
+                return None
+
+            frames.append(frame)
+            next_capture_time += sample_interval
+
+        return frames
 
     def preprocess_frame(self, frame, debug=False, debug_prefix="debug"):
         """
@@ -721,25 +776,11 @@ class HardnessTester(Tool):
         # Look up digit in lookup table
         return self.DIGITS_LOOKUP.get(segments, '?')
     
-    def read_display(self, frame=None, debug=False, debug_prefix="debug"):
-        """
-        Complete pipeline: Read all digits from LCD display.
-        
-        Args:
-            frame: Input BGR frame (if None, captures from camera)
-            debug: Whether to save debug images
-            debug_prefix: Prefix for debug image filenames
-            
-        Returns:
-            String with recognized digits or None if reading failed
-        """
-        # Capture frame if not provided
+    def _read_display_from_frame(self, frame, debug=False, debug_prefix="debug"):
+        """Decode the LCD value from a single BGR frame."""
         if frame is None:
-            frame = self.capture_image()
-            if frame is None:
-                print("Failed to capture image")
-                return None
-        
+            return None
+
         # Preprocess frame
         binary = self.preprocess_frame(frame, debug=debug, debug_prefix=debug_prefix)
         
@@ -763,6 +804,48 @@ class HardnessTester(Tool):
             self._save_debug_gif(debug_prefix)
 
         return ''.join(result)
+
+    def read_display(self, frame=None, debug=False, debug_prefix="debug"):
+        """
+        Complete pipeline: Read all digits from LCD display.
+        
+        Args:
+            frame: Input BGR frame. If provided, decode once and return result.
+                   If None, collect 10 readings and return strict majority.
+            debug: Whether to save debug images
+            debug_prefix: Prefix for debug image filenames
+            
+        Returns:
+            String with recognized digits or None if reading failed
+        """
+        if frame is not None:
+            return self._read_display_from_frame(frame, debug=debug, debug_prefix=debug_prefix)
+
+        frames = self._collect_timed_frames(frame_count=10, total_duration_s=1.0)
+        if frames is None:
+            print("Failed to capture 10 frames for consensus read")
+            return None
+
+        read_results = []
+        for idx, sample_frame in enumerate(frames):
+            sample_debug = debug and idx == 0
+            sample_result = self._read_display_from_frame(
+                sample_frame,
+                debug=sample_debug,
+                debug_prefix=debug_prefix,
+            )
+            if sample_result is None:
+                return None
+            read_results.append(sample_result)
+
+        consensus_counts = Counter(read_results)
+        consensus_result, consensus_count = consensus_counts.most_common(1)[0]
+        if debug:
+            print(f"Consensus candidates: {dict(consensus_counts)}")
+
+        if consensus_count > len(read_results) // 2:
+            return consensus_result
+        return None
     
     def calibrate(self, frame=None, image_path=None, save_calibration=True, calibration_path=DEFAULT_CALIBRATION_PATH):
         """
@@ -1084,7 +1167,6 @@ class HardnessTester(Tool):
     
     def __del__(self):
         """Clean up camera resources."""
-        self._stop_capture_thread()
         if self.picamera is not None:
             try:
                 self.picamera.stop()

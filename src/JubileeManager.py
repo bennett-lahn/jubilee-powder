@@ -128,6 +128,8 @@ class JubileeManager:
         self._feedrate: FeedRate = feedrate
         self.active_job_log: Optional["JobLog"] = None
         self.last_dispense_weight: Optional[float] = None
+        self.last_hardness_result: Optional[float] = None
+        self.last_hardness_error: Optional[str] = None
     
     @property
     def machine_read_only(self) -> Optional[Machine]:
@@ -677,13 +679,27 @@ class JubileeManager:
         try:
             if not self.state_machine:
                 raise RuntimeError("State machine not configured")
+            self.last_hardness_result = None
+            self.last_hardness_error = None
 
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
-            selected_tester.test_sample(tray_index, sample_id, self.state_machine)
+            measurement = selected_tester.test_sample(tray_index, sample_id, self.state_machine)
+            if isinstance(measurement, dict):
+                self.last_hardness_result = measurement.get("result")
+                self.last_hardness_error = measurement.get("sample_error")
+            else:
+                self.last_hardness_result = None
+                self.last_hardness_error = "Hardness tester did not return measurement metadata."
 
             if self.active_job_log is not None:
-                self.active_job_log.update_sample(sample_id, tray_index=tray_index, result=None)
+                self.active_job_log.update_sample(
+                    sample_id,
+                    tray_index=tray_index,
+                    result=self.last_hardness_result,
+                    sample_error=self.last_hardness_error,
+                    measurement_mode=selected_tester.tester_mode,
+                )
             return True
         except Exception as e:
             print(f"Error testing hardness sample: {e}")

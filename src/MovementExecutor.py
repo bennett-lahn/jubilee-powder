@@ -40,6 +40,8 @@ class MovementExecutor:
         self._scale = scale
         self._feedrate = feedrate.value
         self.last_fill_weight: Optional[float] = None
+        self.last_hardness_result: Optional[float] = None
+        self.last_hardness_error: Optional[str] = None
     
     @property
     def machine(self) -> Machine:
@@ -216,8 +218,14 @@ class MovementExecutor:
             self._machine.move_to(z=32.5, s=feedrate)
             self._machine.move(dy=19, s=feedrate)
             self._machine.gcode("M208 Z27:195")      # Move bed up so well is resting on scale, relax z-limit to do so
-            self._machine.move_to(z=27, s=feedrate)
-            self._machine.move(dy=-1, s= feedrate)   # Back off mold so tool isn't touching
+            self._machine.move_to(z=27, s=feedrate) # Place mold on scale
+
+            # Post-place retreat: move away from scale and mold.
+            self._machine.move(dy=-19, s= feedrate)   # Back off mold so tool isn't touching
+            # This sequence is intentionally undone in execute_pick_mold_from_scale.
+            self._machine.move_to(z=32.5, s=feedrate)
+            self._machine.move(dy=-7)
+            self._machine.move_to(z=34.5, s=feedrate)
             return True
         except Exception as e:
             print(f"Error placing mold on scale: {e}")
@@ -254,6 +262,13 @@ class MovementExecutor:
         try:
             print("Picking mold from scale...")
             feedrate = self._feedrate
+            # Phase 1: undo the post-place retreat exactly in reverse order.
+            self._machine.move_to(z=32.5, s=feedrate)
+            self._machine.move(dy=7, s=feedrate)
+            self._machine.move_to(z=27, s=feedrate)
+            self._machine.move(dy=19, s=feedrate)
+
+            # Phase 2: execute the existing pickup and retreat sequence.
             self._machine.move(dy=1, s=feedrate)          # Return to model position
             self._machine.move_to(z=32.5, s=feedrate)     # Pick up mold off scale
             self._machine.gcode("M208 Z34.5:195")         # Revert z-limit to protect tool
@@ -465,6 +480,8 @@ class MovementExecutor:
         if target_x is None or target_y is None or target_z is None:
             print("execute_test_sample requires fully-resolved target_x/y/z")
             return False
+        self.last_hardness_result = None
+        self.last_hardness_error = None
 
         feedrate = self._feedrate
 
@@ -502,6 +519,17 @@ class MovementExecutor:
                 f"(tray={tray_index}, sample={sample_id}, mode={mode}, "
                 f"probed_top_z={probed_top_z})"
             )
+            if hardness_tester is None:
+                self.last_hardness_error = "Hardness tester instance was not provided for OCR."
+                return True
+
+            reading = hardness_tester.read_display(
+                debug=False,
+                debug_prefix=f"hardness_{tray_index}_{sample_id}",
+            )
+            measured_value, sample_error = hardness_tester._parse_hardness_reading(reading)
+            self.last_hardness_result = measured_value
+            self.last_hardness_error = sample_error
             return True
         finally:
             # 3) Always restore the durometer offset before returning so the

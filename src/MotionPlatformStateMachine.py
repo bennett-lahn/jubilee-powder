@@ -1888,6 +1888,7 @@ class MotionPlatformStateMachine(StateMachine):
         target_x: Optional[float] = None,
         target_y: Optional[float] = None,
         target_z: Optional[float] = None,
+        hardness_tester=None,
     ) -> MoveValidationResult:
         """
         Validate and execute the hardness sample action.
@@ -1909,6 +1910,7 @@ class MotionPlatformStateMachine(StateMachine):
             target_x=target_x,
             target_y=target_y,
             target_z=target_z,
+            hardness_tester=hardness_tester,
             state_machine=self,
         )
 
