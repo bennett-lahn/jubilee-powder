@@ -314,25 +314,13 @@ async def start_job(body: JobRequest):
 
     if body.job_type == "dispensing":
         items = [w.model_dump() for w in body.wells]
-        progress.job_type   = "dispensing"
-        progress.total      = len(items)
-        progress.completed  = 0
-        progress.error      = None
-        progress.started_at = now
-        progress.items      = items
-        progress.running    = True
+        progress.start_job("dispensing", items, now)
         asyncio.create_task(_run_dispensing(items))
         return {"accepted": True, "job_type": "dispensing", "total": len(items)}
 
     else:  # hardness
         items = [s.model_dump() for s in body.samples]
-        progress.job_type   = "hardness"
-        progress.total      = len(items)
-        progress.completed  = 0
-        progress.error      = None
-        progress.started_at = now
-        progress.items      = items
-        progress.running    = True
+        progress.start_job("hardness", items, now)
         asyncio.create_task(_run_hardness(items))
         return {"accepted": True, "job_type": "hardness", "total": len(items)}
 
@@ -425,7 +413,9 @@ def _build_progress_log() -> dict:
             item_id = item.get("well_id")
         else:
             item_id = f"{item['tray_index']}:{item['sample_id']}"
-        if i < progress.completed:
+        if item.get("status"):
+            status = item.get("status")
+        elif i < progress.completed:
             status = "complete"
         elif item_id == progress.current_item:
             status = "active"
@@ -445,6 +435,13 @@ def _build_progress_log() -> dict:
         "error":      progress.error,
         "items":      items_with_status,
     }
+
+
+def _all_items_terminal(items: list[dict]) -> bool:
+    """Return True when every item reached a terminal status."""
+    if not items:
+        return False
+    return all(item.get("status") in {"complete", "error"} for item in items)
 
 
 def _normalize_file_log(raw: dict) -> dict:
@@ -629,7 +626,7 @@ async def _run_dispensing(items: list[dict]) -> None:
     outcome = "cancelled"
     try:
         await hw.run_dispensing_job(items, progress, job_log)
-        if progress.completed == progress.total:
+        if progress.completed == progress.total or _all_items_terminal(progress.items):
             outcome = "successful"
         elif hw.state == MachineState.ERROR:
             outcome = "aborted"
@@ -656,7 +653,7 @@ async def _run_hardness(items: list[dict]) -> None:
     outcome = "cancelled"
     try:
         await hw.run_hardness_job(items, progress, job_log)
-        if progress.completed == progress.total:
+        if progress.completed == progress.total or _all_items_terminal(progress.items):
             outcome = "successful"
         elif hw.state == MachineState.ERROR:
             outcome = "aborted"

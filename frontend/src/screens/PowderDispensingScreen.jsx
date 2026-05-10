@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
 import WellGrid from '../components/WellGrid'
+import { DISPENSING_LAYOUT } from '../constants/dispensingBed'
 import { Button, Card, TextInput, Dialog } from '../components/ui'
 
 function isValidWeight(v) {
@@ -122,6 +123,7 @@ export default function PowderDispensingScreen() {
           selectRow={selectDispensingRow}
           selectCol={selectDispensingCol}
           variant="dispensing"
+          physicalLayout={DISPENSING_LAYOUT}
           className="h-full"
         />
       </Card>

@@ -45,6 +45,81 @@ def _sample_display_id(sample: dict) -> str:
     return f"{t_idx}:{s_id}"
 
 
+def _safe_float(value):
+    """Convert a measurement to float when possible."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hardness_passes(sample_mode: str) -> list[str]:
+    """Return pass sequence required for the configured hardness mode."""
+    if sample_mode == "shore_a":
+        return ["shore_a"]
+    if sample_mode == "shore_d":
+        return ["shore_d"]
+    if sample_mode == "shore_a_d":
+        return ["shore_a", "shore_d"]
+    return []
+
+
+def _apply_hardness_progress_update(
+    progress: JobProgress,
+    index: int,
+    pass_mode: str,
+    measured_result: float | None,
+    sample_error: str | None,
+) -> None:
+    """Apply one pass result to a sample item in JobProgress."""
+    item = progress.items[index]
+    configured_mode = item.get("mode")
+    if sample_error:
+        progress.mark_item_error(
+            index,
+            sample_error=sample_error,
+            result=item.get("result"),
+            result_shore_a=item.get("result_shore_a"),
+            result_shore_d=item.get("result_shore_d"),
+        )
+        return
+
+    if configured_mode == "shore_a_d":
+        updates = {
+            "result": None,
+            "sample_error": None,
+        }
+        if pass_mode == "shore_a":
+            updates["result_shore_a"] = measured_result
+        elif pass_mode == "shore_d":
+            updates["result_shore_d"] = measured_result
+
+        item.update(updates)
+        has_a = item.get("result_shore_a") is not None
+        has_d = item.get("result_shore_d") is not None
+        if has_a and has_d:
+            progress.mark_item_complete(
+                index,
+                result=None,
+                result_shore_a=item.get("result_shore_a"),
+                result_shore_d=item.get("result_shore_d"),
+                sample_error=None,
+            )
+        else:
+            item["status"] = "pending"
+        return
+
+    progress.mark_item_complete(
+        index,
+        result=measured_result,
+        result_shore_a=measured_result if pass_mode == "shore_a" else None,
+        result_shore_d=measured_result if pass_mode == "shore_d" else None,
+        sample_error=None,
+    )
+
+
 # =============================================================================
 # MockHardwareManager
 # =============================================================================
@@ -171,8 +246,9 @@ class MockHardwareManager:
             for i, well in enumerate(wells):
                 if not progress.running:
                     break
-                progress.current_item = well["well_id"]
+                progress.mark_item_active(i)
                 await asyncio.sleep(2.0)
+                simulated_weight = None
                 if job_log is not None:
                     simulated_weight = well["target_weight"] * (
                         1 + random.gauss(0, 0.008)
@@ -180,7 +256,12 @@ class MockHardwareManager:
                     job_log.update_well(
                         well["well_id"], actual_weight=round(simulated_weight, 3)
                     )
-                progress.completed = i + 1
+                progress.mark_item_complete(
+                    i,
+                    actual_weight=round(simulated_weight, 3)
+                    if simulated_weight is not None
+                    else None,
+                )
         finally:
             # Do not overwrite ERROR set by an abort call
             if self.state == MachineState.RUNNING:
@@ -202,19 +283,33 @@ class MockHardwareManager:
         """
         self.state = MachineState.RUNNING
         try:
-            for i, sample in enumerate(samples):
-                if not progress.running:
-                    break
-                progress.current_item = _sample_display_id(sample)
-                await asyncio.sleep(1.5)
-                if job_log is not None:
+            for pass_mode in ("shore_a", "shore_d"):
+                for i, sample in enumerate(samples):
+                    if not progress.running:
+                        break
+                    required_passes = _hardness_passes(sample.get("mode", "none"))
+                    if pass_mode not in required_passes:
+                        continue
+                    if progress.items[i].get("status") == "error":
+                        continue
+
+                    progress.mark_item_active(i)
+                    await asyncio.sleep(1.5)
                     simulated_result = round(random.uniform(30.0, 80.0), 1)
-                    job_log.update_sample(
-                        sample["sample_id"],
-                        tray_index=sample["tray_index"],
-                        result=simulated_result,
+                    if job_log is not None:
+                        job_log.update_sample(
+                            sample["sample_id"],
+                            tray_index=sample["tray_index"],
+                            result=simulated_result,
+                            measurement_mode=pass_mode,
+                        )
+                    _apply_hardness_progress_update(
+                        progress,
+                        i,
+                        pass_mode,
+                        measured_result=simulated_result,
+                        sample_error=None,
                     )
-                progress.completed = i + 1
         finally:
             if self.state == MachineState.RUNNING:
                 self.state = MachineState.IDLE
@@ -371,7 +466,7 @@ class HardwareManager:
             for i, well in enumerate(wells):
                 if not progress.running:
                     break
-                progress.current_item = well["well_id"]
+                progress.mark_item_active(i)
                 success = await asyncio.to_thread(
                     self._manager.dispense_to_well,
                     well["well_id"],
@@ -381,7 +476,10 @@ class HardwareManager:
                     raise RuntimeError(
                         f"Dispense failed for well {well['well_id']!r}"
                     )
-                progress.completed = i + 1
+                progress.mark_item_complete(
+                    i,
+                    actual_weight=_safe_float(getattr(self._manager, "last_dispense_weight", None)),
+                )
         finally:
             if self._manager is not None:
                 self._manager.active_job_log = None
@@ -403,22 +501,43 @@ class HardwareManager:
         if job_log is not None and self._manager is not None:
             self._manager.active_job_log = job_log
         try:
-            for i, sample in enumerate(samples):
-                if not progress.running:
-                    break
-                progress.current_item = _sample_display_id(sample)
-                success = await asyncio.to_thread(
-                    self._manager.test_sample,
-                    sample["tray_index"],
-                    sample["sample_id"],
-                    sample.get("mode"),
-                )
-                if not success:
-                    raise RuntimeError(
-                        "Hardness test failed for "
-                        f"tray {sample['tray_index']} sample {sample['sample_id']!r}"
+            for pass_mode in ("shore_a", "shore_d"):
+                for i, sample in enumerate(samples):
+                    if not progress.running:
+                        break
+                    required_passes = _hardness_passes(sample.get("mode", "none"))
+                    if pass_mode not in required_passes:
+                        continue
+                    if progress.items[i].get("status") == "error":
+                        continue
+
+                    progress.mark_item_active(i)
+                    success = await asyncio.to_thread(
+                        self._manager.test_sample,
+                        sample["tray_index"],
+                        sample["sample_id"],
+                        pass_mode,
                     )
-                progress.completed = i + 1
+                    if not success:
+                        raise RuntimeError(
+                            "Hardness test failed for "
+                            f"tray {sample['tray_index']} sample {sample['sample_id']!r}"
+                        )
+
+                    measured_result = _safe_float(
+                        getattr(self._manager, "last_hardness_result", None)
+                    )
+                    sample_error = getattr(self._manager, "last_hardness_error", None)
+                    if measured_result is None:
+                        sample_error = sample_error or "OCR did not return a numeric hardness value."
+
+                    _apply_hardness_progress_update(
+                        progress,
+                        i,
+                        pass_mode,
+                        measured_result=measured_result,
+                        sample_error=sample_error,
+                    )
         finally:
             if self._manager is not None:
                 self._manager.active_job_log = None

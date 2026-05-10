@@ -344,52 +344,127 @@ export default function WellGrid({
   selectRow,
   selectCol,
   variant = 'dispensing',
+  physicalLayout = null,
   className = '',
 }) {
   const readOnly = variant === 'result'
+  const showTrickler = physicalLayout !== null
 
   return (
     // h-full fills whatever space the parent gives; min-h-0 lets it shrink
     // in a flex column without overflowing.
     <div className={['flex flex-col gap-2 h-full w-full min-h-0', className].join(' ')}>
 
-      {/* Column header row */}
+      {/* Column header row — width driven by the physical layout if provided */}
       <div className={['flex gap-2 shrink-0', HEADER_H].join(' ')}>
         <div className={[AXIS_W, 'shrink-0'].join(' ')} /> {/* top-left spacer */}
-        {Array.from({ length: cols }, (_, c) => (
-          <AxisButton
-            key={c}
-            label={c + 1}
-            onClick={() => !readOnly && selectCol(c)}
-            readOnly={readOnly}
-            className="flex-1 h-full"
-          />
-        ))}
+        {Array.from(
+          { length: physicalLayout ? physicalLayout[0].length : cols },
+          (_, c) => (
+            <AxisButton
+              key={c}
+              label={c + 1}
+              onClick={() => !readOnly && selectCol(c)}
+              readOnly={readOnly}
+              className="flex-1 h-full"
+            />
+          ),
+        )}
       </div>
 
       {/* Data rows — each takes an equal share of remaining height */}
-      {Array.from({ length: rows }, (_, r) => (
-        <div key={r} className="flex gap-2 flex-1 min-h-0">
-          <AxisButton
-            label={r + 1}
-            onClick={() => !readOnly && selectRow(r)}
-            readOnly={readOnly}
-            className={[AXIS_W, 'h-full shrink-0'].join(' ')}
-          />
-          {Array.from({ length: cols }, (_, c) => {
-            const id = String(r * cols + c)
-            return (
-              <WellCircle
-                key={id}
-                id={id}
-                well={wells[id]}
-                onClick={toggleWell}
-                variant={variant}
-              />
-            )
-          })}
+      {Array.from({ length: rows }, (_, r) => {
+        const rowLayout = physicalLayout ? physicalLayout[r] : null
+        return (
+          <div key={r} className="flex gap-2 flex-1 min-h-0">
+            <AxisButton
+              label={r + 1}
+              onClick={() => !readOnly && selectRow(r)}
+              readOnly={readOnly}
+              className={[AXIS_W, 'h-full shrink-0'].join(' ')}
+            />
+
+            {rowLayout ? (
+              // Irregular row: iterate layout array, coalesce null runs into a scale span
+              (() => {
+                const cells = []
+                let c = 0
+                while (c < rowLayout.length) {
+                  const id = rowLayout[c]
+                  if (id === null) {
+                    let span = 0
+                    while (c + span < rowLayout.length && rowLayout[c + span] === null) span++
+                    cells.push({ type: 'scale', span })
+                    c += span
+                  } else {
+                    cells.push({ type: 'well', id })
+                    c++
+                  }
+                }
+                return cells.map((cell, i) => {
+                  if (cell.type === 'scale') {
+                    return (
+                      <div
+                        key="scale"
+                        style={{ flex: cell.span }}
+                        className="flex items-center justify-center"
+                      >
+                        <div className="h-4/5 w-full rounded-sm bg-amber-400/10 border border-amber-400/50 flex items-center justify-center">
+                          <span className="text-[9px] font-medium text-amber-400/80 uppercase tracking-widest select-none">
+                            scale
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  }
+                  const sid = String(cell.id)
+                  return (
+                    <WellCircle
+                      key={sid}
+                      id={sid}
+                      well={wells[sid]}
+                      onClick={toggleWell}
+                      variant={variant}
+                    />
+                  )
+                })
+              })()
+            ) : (
+              Array.from({ length: cols }, (_, c) => {
+                const id = String(r * cols + c)
+                return (
+                  <WellCircle
+                    key={id}
+                    id={id}
+                    well={wells[id]}
+                    onClick={toggleWell}
+                    variant={variant}
+                  />
+                )
+              })
+            )}
+          </div>
+        )
+      })}
+
+      {/* Trickler indicator — down arrow at the physical bottom of the dispensing bed */}
+      {showTrickler && (
+        <div className="flex gap-2 shrink-0 items-center mt-0.5">
+          <div className={[AXIS_W, 'shrink-0'].join(' ')} />
+          <div className="flex-1 flex items-center justify-center gap-2">
+            <svg
+              width="10" height="8" viewBox="0 0 10 8"
+              className="fill-slate-500 shrink-0"
+              aria-hidden="true"
+            >
+              <polygon points="5,8 0,0 10,0" />
+            </svg>
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider select-none">
+              trickler
+            </span>
+          </div>
         </div>
-      ))}
+      )}
 
     </div>
   )

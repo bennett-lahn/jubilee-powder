@@ -84,6 +84,65 @@ class JobProgress:
         self.started_at:   Optional[str] = None   # ISO-8601 UTC string
         self.items:        list          = []      # ordered list of item dicts from the job request
 
+    @staticmethod
+    def item_id(item: dict) -> str:
+        """Return the stable display ID used by progress tracking."""
+        if "well_id" in item:
+            return str(item.get("well_id"))
+        return f"{item.get('tray_index')}:{item.get('sample_id')}"
+
+    def _normalize_item(self, item: dict, job_type: str) -> dict:
+        """Attach default progress/result fields for a job item."""
+        next_item = dict(item)
+        next_item.setdefault("status", "pending")
+        if job_type == "dispensing":
+            next_item.setdefault("actual_weight", None)
+        elif job_type == "hardness":
+            next_item.setdefault("result", None)
+            next_item.setdefault("result_shore_a", None)
+            next_item.setdefault("result_shore_d", None)
+            next_item.setdefault("sample_error", None)
+        return next_item
+
+    def start_job(self, job_type: str, items: list[dict], started_at: str) -> None:
+        """Initialize all progress fields at job start."""
+        self.job_type = job_type
+        self.total = len(items)
+        self.completed = 0
+        self.current_item = None
+        self.error = None
+        self.started_at = started_at
+        self.items = [self._normalize_item(item, job_type) for item in items]
+        self.running = True
+
+    def mark_item_active(self, index: int) -> None:
+        """Mark one item active and all untouched items pending."""
+        if index < 0 or index >= len(self.items):
+            return
+        self.current_item = self.item_id(self.items[index])
+        current_status = self.items[index].get("status")
+        if current_status not in {"complete", "error"}:
+            self.items[index]["status"] = "active"
+        for idx, item in enumerate(self.items):
+            if idx != index and item.get("status") == "active":
+                item["status"] = "pending"
+
+    def mark_item_complete(self, index: int, **updates) -> None:
+        """Mark one item complete and attach optional result fields."""
+        if index < 0 or index >= len(self.items):
+            return
+        self.items[index].update(updates)
+        self.items[index]["status"] = "complete"
+        self.completed += 1
+
+    def mark_item_error(self, index: int, sample_error: str, **updates) -> None:
+        """Mark one item as an error while leaving it not-complete."""
+        if index < 0 or index >= len(self.items):
+            return
+        self.items[index].update(updates)
+        self.items[index]["status"] = "error"
+        self.items[index]["sample_error"] = sample_error
+
     def reset(self) -> None:
         """Reset all fields to their initial defaults."""
         self.__init__()

@@ -52,7 +52,13 @@ function buildResultWells(rows, cols, job, jobType) {
         const id = sampleKeyForTray(trayIndex, sampleIndex)
         wells[id] = {
           selected: false, targetWeight: 0, currentWeight: 0,
-          mode: 'none', status: 'excluded', actualWeight: null,
+          mode: 'none',
+          status: 'excluded',
+          actualWeight: null,
+          result: null,
+          resultShoreA: null,
+          resultShoreD: null,
+          sampleError: null,
         }
       }
     }
@@ -60,7 +66,13 @@ function buildResultWells(rows, cols, job, jobType) {
     for (let i = 0; i < total; i++) {
       wells[String(i)] = {
         selected: false, targetWeight: 0, currentWeight: 0,
-        mode: 'none', status: 'excluded', actualWeight: null,
+        mode: 'none',
+        status: 'excluded',
+        actualWeight: null,
+        result: null,
+        resultShoreA: null,
+        resultShoreD: null,
+        sampleError: null,
       }
     }
   }
@@ -76,6 +88,8 @@ function buildResultWells(rows, cols, job, jobType) {
     let status
     if (item.status) {
       status = item.status
+    } else if (item.sample_error) {
+      status = 'error'
     } else if (idx < (job.completed ?? 0)) {
       status = 'complete'
     } else if (String(job.current_item) === id) {
@@ -87,6 +101,10 @@ function buildResultWells(rows, cols, job, jobType) {
       ...wells[id],
       targetWeight: item.target_weight ?? 0,
       actualWeight: item.actual_weight ?? null,
+      result:       item.result ?? null,
+      resultShoreA: item.result_shore_a ?? null,
+      resultShoreD: item.result_shore_d ?? null,
+      sampleError:  item.sample_error ?? null,
       mode:         item.mode ?? 'none',
       status,
     }

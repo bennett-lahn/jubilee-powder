@@ -30,6 +30,12 @@
 
 import { create } from 'zustand'
 import {
+  DISPENSING_LAYOUT,
+  DISPENSING_ROWS,
+  DISPENSING_COLS,
+  DISPENSING_WELL_COUNT,
+} from '../constants/dispensingBed'
+import {
   fetchStatus,
   connectHardware as apiConnectHardware,
   disconnectHardware as apiDisconnectHardware,
@@ -48,15 +54,13 @@ function wsUrl() {
 
 const RECONNECT_DELAY_MS = 1500
 
-const DISPENSING_ROWS = 4
-const DISPENSING_COLS = 6
 const HARDNESS_ROWS = 5
 const HARDNESS_COLS = 5
 const HARDNESS_TRAY_COUNT = 2
 
-function initDispensingWells(rows, cols) {
+function initDispensingWells() {
   const wells = {}
-  for (let i = 0; i < rows * cols; i++) {
+  for (let i = 0; i < DISPENSING_WELL_COUNT; i++) {
     wells[String(i)] = {
       selected: false,
       targetWeight: 0,
@@ -118,7 +122,7 @@ export const useJubileeStore = create((set, get) => ({
   dispensingGrid: {
     rows: DISPENSING_ROWS,
     cols: DISPENSING_COLS,
-    wells: initDispensingWells(DISPENSING_ROWS, DISPENSING_COLS),
+    wells: initDispensingWells(),
   },
 
   hardnessGrid: {
@@ -406,36 +410,30 @@ export const useJubileeStore = create((set, get) => ({
   },
 
   selectDispensingRow(rowIndex) {
+    const row = DISPENSING_LAYOUT[rowIndex]
+    if (!row) return
     set((state) => {
-      const { rows, cols, wells } = state.dispensingGrid
-      if (rowIndex < 0 || rowIndex >= rows) return {}
-      const ids = Array.from({ length: cols }, (_, c) => String(rowIndex * cols + c))
+      const { wells } = state.dispensingGrid
+      const ids = row.filter((id) => id !== null).map(String)
       const allSelected = ids.every((id) => wells[id].selected)
       const nextWells = { ...wells }
       for (const id of ids) nextWells[id] = { ...nextWells[id], selected: !allSelected }
-      return {
-        dispensingGrid: {
-          ...state.dispensingGrid,
-          wells: nextWells,
-        },
-      }
+      return { dispensingGrid: { ...state.dispensingGrid, wells: nextWells } }
     })
   },
 
   selectDispensingCol(colIndex) {
     set((state) => {
-      const { rows, cols, wells } = state.dispensingGrid
-      if (colIndex < 0 || colIndex >= cols) return {}
-      const ids = Array.from({ length: rows }, (_, r) => String(r * cols + colIndex))
+      const { wells } = state.dispensingGrid
+      const ids = DISPENSING_LAYOUT
+        .map((row) => row[colIndex])
+        .filter((id) => id !== null)
+        .map(String)
+      if (!ids.length) return {}
       const allSelected = ids.every((id) => wells[id].selected)
       const nextWells = { ...wells }
       for (const id of ids) nextWells[id] = { ...nextWells[id], selected: !allSelected }
-      return {
-        dispensingGrid: {
-          ...state.dispensingGrid,
-          wells: nextWells,
-        },
-      }
+      return { dispensingGrid: { ...state.dispensingGrid, wells: nextWells } }
     })
   },
 
@@ -459,7 +457,7 @@ export const useJubileeStore = create((set, get) => ({
     set((state) => ({
       dispensingGrid: {
         ...state.dispensingGrid,
-        wells: initDispensingWells(state.dispensingGrid.rows, state.dispensingGrid.cols),
+        wells: initDispensingWells(),
       },
     }))
   },

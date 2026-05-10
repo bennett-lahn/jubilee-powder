@@ -30,9 +30,12 @@ import WellGrid from '../components/WellGrid'
 import SampleTrayGrid, { sampleKeyForTray } from '../components/SampleTrayGrid'
 import ArcProgress from '../components/ArcProgress'
 import { Button, Card, Dialog } from '../components/ui'
+import {
+  DISPENSING_LAYOUT,
+  DISPENSING_ROWS,
+  DISPENSING_COLS,
+} from '../constants/dispensingBed'
 
-const DISPENSING_ROWS = 4
-const DISPENSING_COLS = 6
 const SAMPLE_TRAY_ROWS = 5
 const SAMPLE_TRAY_COLS = 5
 const SAMPLE_TRAY_COUNT = 2
@@ -75,10 +78,10 @@ function formatElapsed(totalSeconds) {
  * `job.completed` counter and `job.current_item`.
  */
 function buildResultWells(rows, cols, job, jobType) {
-  const total = rows * cols
   const wells = {}
 
   if (jobType === 'hardness') {
+    const total = rows * cols
     for (let trayIndex = 0; trayIndex < SAMPLE_TRAY_COUNT; trayIndex++) {
       for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
         const id = sampleKeyForTray(trayIndex, sampleIndex)
@@ -89,20 +92,29 @@ function buildResultWells(rows, cols, job, jobType) {
           mode:          'none',
           status:        'excluded',
           actualWeight:  null,
+          result:        null,
+          resultShoreA:  null,
+          resultShoreD:  null,
+          sampleError:   null,
         }
       }
     }
   } else {
-    for (let i = 0; i < total; i++) {
-      wells[String(i)] = {
+    // Use physical layout to init only real mold positions (skip scale placeholders).
+    DISPENSING_LAYOUT.flat().filter((id) => id !== null).forEach((id) => {
+      wells[String(id)] = {
         selected:      false,
         targetWeight:  0,
         currentWeight: 0,
         mode:          'none',
         status:        'excluded',
         actualWeight:  null,
+        result:        null,
+        resultShoreA:  null,
+        resultShoreD:  null,
+        sampleError:   null,
       }
-    }
+    })
   }
 
   const items = job?.items
@@ -117,6 +129,8 @@ function buildResultWells(rows, cols, job, jobType) {
     let status
     if (item.status) {
       status = item.status
+    } else if (item.sample_error) {
+      status = 'error'
     } else if (idx < (job.completed ?? 0)) {
       status = 'complete'
     } else if (String(job.current_item) === id) {
@@ -129,6 +143,10 @@ function buildResultWells(rows, cols, job, jobType) {
       ...wells[id],
       targetWeight: item.target_weight ?? 0,
       actualWeight: item.actual_weight ?? null,
+      result:       item.result ?? null,
+      resultShoreA: item.result_shore_a ?? null,
+      resultShoreD: item.result_shore_d ?? null,
+      sampleError:  item.sample_error ?? null,
       mode:         item.mode ?? 'none',
       status,
     }
@@ -354,6 +372,7 @@ export default function HomeScreen() {
               selectRow={() => {}}
               selectCol={() => {}}
               variant="result"
+              physicalLayout={DISPENSING_LAYOUT}
               className="flex-1 min-h-0"
             />
           )}

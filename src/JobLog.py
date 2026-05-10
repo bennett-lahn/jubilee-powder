@@ -106,6 +106,9 @@ class JobLog:
         sample_id: str,
         tray_index: int,
         result: Optional[float] = None,
+        sample_error: Optional[str] = None,
+        status: Optional[str] = None,
+        measurement_mode: Optional[str] = None,
     ) -> None:
         """
         Record the outcome of one hardness test sample.
@@ -114,6 +117,11 @@ class JobLog:
         integrated, the manager reference can be used here to extract the
         reading; for now it is passed in explicitly.
         """
+        if result is None and self._manager is not None:
+            result = getattr(self._manager, "last_hardness_result", None)
+        if sample_error is None and self._manager is not None:
+            sample_error = getattr(self._manager, "last_hardness_error", None)
+
         mode = next(
             (
                 i["mode"]
@@ -123,13 +131,49 @@ class JobLog:
             ),
             None,
         )
+        measured_mode = measurement_mode or mode
         key = self._sample_record_key(sample_id, tray_index)
+        existing_record = self._records.get(key, {})
+        result_shore_a = existing_record.get("result_shore_a")
+        result_shore_d = existing_record.get("result_shore_d")
+
+        if measured_mode == "shore_a":
+            result_shore_a = result
+        elif measured_mode == "shore_d":
+            result_shore_d = result
+        elif mode == "shore_a_d":
+            # For mixed mode fallback, infer pass from existing values.
+            if result_shore_a is None:
+                result_shore_a = result
+            else:
+                result_shore_d = result
+
+        result_value = result
+        if mode == "shore_a_d":
+            result_value = None
+
+        resolved_status = status
+        if resolved_status is None:
+            if sample_error:
+                resolved_status = "error"
+            elif mode == "shore_a_d":
+                if result_shore_a is not None and result_shore_d is not None:
+                    resolved_status = "complete"
+                else:
+                    resolved_status = "incomplete"
+            elif result is not None:
+                resolved_status = "complete"
+            else:
+                resolved_status = "incomplete"
         self._records[key] = {
             "sample_id": sample_id,
             "tray_index": tray_index,
             "mode": mode,
-            "result": result,
-            "status": "complete",
+            "result": result_value,
+            "result_shore_a": result_shore_a,
+            "result_shore_d": result_shore_d,
+            "sample_error": sample_error,
+            "status": resolved_status,
         }
 
     # ------------------------------------------------------------------
@@ -194,6 +238,9 @@ class JobLog:
                         "tray_index": tray_index,
                         "mode": item["mode"],
                         "result": None,
+                        "result_shore_a": None,
+                        "result_shore_d": None,
+                        "sample_error": None,
                         "status": "incomplete",
                     },
                 )
