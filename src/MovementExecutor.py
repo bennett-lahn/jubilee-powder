@@ -223,9 +223,8 @@ class MovementExecutor:
             # Post-place retreat: move away from scale and mold.
             self._machine.move(dy=-19, s= feedrate)   # Back off mold so tool isn't touching
             # This sequence is intentionally undone in execute_pick_mold_from_scale.
-            self._machine.move_to(z=32.5, s=feedrate)
-            self._machine.move(dy=-7)
             self._machine.move_to(z=34.5, s=feedrate)
+            self._machine.move(dy=-7)
             return True
         except Exception as e:
             print(f"Error placing mold on scale: {e}")
@@ -263,7 +262,6 @@ class MovementExecutor:
             print("Picking mold from scale...")
             feedrate = self._feedrate
             # Phase 1: undo the post-place retreat exactly in reverse order.
-            self._machine.move_to(z=32.5, s=feedrate)
             self._machine.move(dy=7, s=feedrate)
             self._machine.move_to(z=27, s=feedrate)
             self._machine.move(dy=19, s=feedrate)
@@ -277,7 +275,7 @@ class MovementExecutor:
             self._machine.move(dy=-7, s=feedrate)         # Move all the way back from under trickler
             self._machine.move_to(z=ready_z, s=feedrate)  # Move mold out from trickler
             self._machine.move_to(v=30, s=feedrate)       # Move tool to travel position
-            self._machine.move(dy=-38, s=feedrate)        # Restore y position to position before mold was placed
+            self._machine.move(dy=-39, s=feedrate)        # Restore y position to position before mold was placed
             return True
         except Exception as e:
             print(f"Error picking mold from scale: {e}")
@@ -893,13 +891,13 @@ class MovementExecutor:
             feedrate_str = str("F200")
             
             threshold_90_percent = 0.9 * target_weight
-            max_step_size = 4                           # Maximum step size when weight is very low
-            min_step_size = 0.2                         # Minimum step size when approaching 90% threshold
-            feedback_step_size = 0.05
+            max_step_size = 8                           # Maximum step size when weight is very low
+            min_step_size = 1.0                         # Minimum step size when approaching 90% threshold
+            feedback_step_size = 0.2
             
             # Track if threshold crossed
             threshold_crossed = False
-            time.sleep(2) # Wait 1 second to stabilize
+            time.sleep(2) # Wait 2 seconds to stabilize
             self._scale.tare()
             initial_weight = self._scale.get_weight(stable=True)
 
@@ -908,11 +906,14 @@ class MovementExecutor:
             self._machine.gcode("G91") # Set relative positioning mode
             
             iteration = 0
+            rolling_avg_alpha = 0.5 # Reactivity parameter for exponential rolling average
+            exp_rolling_avg = 0
             while True:
                 iteration += 1
                 
                 # Get current weight (unstable) to determine behavior
                 current_weight = self._scale.get_weight(stable=False)
+                exp_rolling_avg = (rolling_avg_alpha * current_weight + ((1 - rolling_avg_alpha) * exp_rolling_avg))
                 
                 if current_weight >= threshold_90_percent:
                     # Above 90% threshold: feedback loop mode
@@ -921,11 +922,14 @@ class MovementExecutor:
                         threshold_crossed = True
                         print(f"Crossed 90% threshold at {current_weight:.4f}g. Entering feedback loop mode.")
                     
-                    # Keep vibration off
+                    # Keep vibration off unless powder dispensing has slowed
+                    if exp_rolling_avg < 0.05:
+                        self._machine.gcode("M42 P0 S0.5 F20000") # Turn on vibration
                     # Move -> unstable weight -> move
                     self._machine.gcode(f"G1 W{feedback_step_size} {feedrate_str}")
                     self._machine.gcode("M400")
-                    time.sleep(0.2)                         # Small sleep to promote scale settling
+                    self._machine.gcode("M42 P0 S0.0 F20000") # Turn off vibration
+                    time.sleep(0.2) # Small sleep to promote scale settling
                     
                     # Get unstable weight readin
                     try:
@@ -934,12 +938,12 @@ class MovementExecutor:
                         # Check if within 1% of target weight or above target
                         threshold_99_percent = 0.99 * target_weight
                         if unstable_weight >= threshold_99_percent:
-                            # Wait 4 seconds to confirm actually over threshold
+                            # Wait 2 seconds to confirm actually over threshold
                             if unstable_weight >= target_weight:
                                 print(f"Unstable weight {unstable_weight:.4f}g >= target {target_weight:.4f}g. Waiting 4 seconds for confirmation...")
                             else:
-                                print(f"Unstable weight {unstable_weight:.4f}g is within 5% of target {target_weight:.4f}g (>= {threshold_99_percent:.4f}g). Waiting 4 seconds for confirmation...")
-                            time.sleep(4.0)
+                                print(f"Unstable weight {unstable_weight:.4f}g is within 1% of target {target_weight:.4f}g (>= {threshold_99_percent:.4f}g). Waiting 4 seconds for confirmation...")
+                            time.sleep(2.0)
                             
                             # Final stable measurement to confirm
                             final_weight = self._scale.get_weight(stable=True)
@@ -968,17 +972,14 @@ class MovementExecutor:
                     
                     # Move with vibration
                     self._machine.gcode("M42 P0 S0.5 F20000") # Turn on vibration
-                    time.sleep(0.33)
                     self._machine.gcode(f"G1 W{step_size}{feedrate_str}")
                     self._machine.gcode("M400")
                     self._machine.gcode("M42 P0 S0.0 F20000") # Turn off vibration
-                    time.sleep(0.33)
+                    time.sleep(0.1) # Small sleep to promote scale settling
                     
-                    # Take stabilized weight reading after big movement
+                    # Take unstabilized weight reading after big movement
                     try:
-                        weight = self._scale.get_weight(stable=True)
-                        
-                        
+                        weight = self._scale.get_weight(stable=False)
                         print(f"Iteration {iteration}: Weight={weight:.4f}g, Step={step_size:.2f}mm")
                         
                     except Exception as e:
