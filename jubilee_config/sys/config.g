@@ -114,7 +114,7 @@ M566 W800                               ; Scale jerk (deg/min)
 
 ; Servos
 ;-------------------------------------------------------------------------------
-M950 S0 C"laser" ; assign GPIO port 0 to LASER/VFD port, servo motor for the trickler servo
+M950 S1 C"laser" ; assign GPIO port 0 to LASER/VFD port, servo motor for the trickler servo
 
 ; Trickler Vibrator
 ;-------------------------------------------------------------------------------
