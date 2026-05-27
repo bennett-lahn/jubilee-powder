@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python virtual environments
+.venv-docs/*
+
+# Documentation build output
+docs/_build/
+docs/build/

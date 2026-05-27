@@ -129,3 +129,23 @@ export function updateDispenser(index, numPistons) {
     body:   JSON.stringify({ num_pistons: numPistons }),
   })
 }
+
+// ---------------------------------------------------------------------------
+// Google Drive integration
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/drive/status — current Google Drive / Sheets connection status.
+ * Returns { enabled, connected, spreadsheet_id, last_poll, last_error }.
+ */
+export function fetchDriveStatus() {
+  return request('/drive/status')
+}
+
+/**
+ * POST /api/drive/sync — manually trigger a Sheets poll and start a job if ready.
+ * Returns { triggered, job_started, enabled, connected, spreadsheet_id, last_poll, last_error }.
+ */
+export function triggerDriveSync() {
+  return request('/drive/sync', { method: 'POST' })
+}

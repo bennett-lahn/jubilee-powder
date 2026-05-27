@@ -36,6 +36,7 @@ import {
   DISPENSING_COLS,
 } from '../constants/dispensingBed'
 
+
 const SAMPLE_TRAY_ROWS = 5
 const SAMPLE_TRAY_COLS = 5
 const SAMPLE_TRAY_COUNT = 2

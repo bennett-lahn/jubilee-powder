@@ -24,6 +24,7 @@ import math
 import random
 import sys
 import time
+import traceback
 from pathlib import Path
 
 # Ensure project root is on sys.path for the lazy src.JubileeManager import.
@@ -374,6 +375,7 @@ class HardwareManager:
                 raise RuntimeError("JubileeManager.connect() returned False")
             self.state = MachineState.IDLE
         except Exception:
+            traceback.print_exc()
             self.state    = MachineState.ERROR
             self._manager = None
             raise
