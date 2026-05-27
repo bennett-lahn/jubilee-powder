@@ -9,14 +9,6 @@ from typing import Optional
 import numpy as np
 from science_jubilee.tools.Tool import Tool
 
-# Try to import Picamera2 for Raspberry Pi
-try:
-    from picamera2 import Picamera2
-    PICAMERA2_AVAILABLE = True
-except ImportError:
-    PICAMERA2_AVAILABLE = False
-    print("WARNING: Picamera2 not available. Camera capture is disabled.")
-
 # Optional package for creating animated debug GIFs
 try:
     import imageio.v2 as imageio
@@ -39,7 +31,7 @@ Required:
     pip install imageio  # For bundling debug images into animated GIFs
     
 Optional (Raspberry Pi):
-    pip install picamera2  # For Raspberry Pi camera with better control
+    pip install opencv-python  # For camera capture
 
 METHODOLOGY:
 This approach reads 7-segment LCD displays by detecting which segments are active,
@@ -87,12 +79,18 @@ class HardnessTester(Tool):
         cam_id=0,
         use_camera=True,
         index: int = 1,
-        name: Optional[str] = None,
+        name: str = "HardnessTester",
         tester_mode: str = "shore_a",
         calibration_path: str = DEFAULT_CALIBRATION_PATH,
         tip_length_mm: Optional[float] = None,
         power_servo: Optional[str] = None,
         zero_servo: Optional[str] = None,
+        threshold_bias: int = 0,
+        sharpen_strength: float = 1.5,
+        sharpen_blur_radius: int = 5,
+        morph_kernel_size: int = 2,
+        morph_iterations: int = 1,
+        morph_open: bool = False,
     ):
         """
         Initialize the LCD reader.
@@ -108,6 +106,31 @@ class HardnessTester(Tool):
             tip_length_mm: Physical tip length for this tester
             power_servo: Servo identifier used for power button actuation
             zero_servo: Servo identifier used for zero button actuation
+            threshold_bias: Amount to subtract from Otsu's computed threshold
+                before applying binarization. Increase this value to make
+                binarization less sensitive (fewer pixels classified as black),
+                which helps when reflections or lens artifacts create spurious
+                dark regions. Default is 0 (pure Otsu behavior).
+            sharpen_strength: Unsharp masking strength applied to the grayscale
+                image before CLAHE. 0.0 disables sharpening. Values in the range
+                1.0-2.0 work well for mildly blurry images; go higher (e.g. 3.0)
+                for strongly blurred captures. Higher values risk amplifying
+                noise, so pair with a larger sharpen_blur_radius if needed.
+            sharpen_blur_radius: Gaussian blur radius (odd integer) used when
+                computing the unsharp mask. Larger values recover lower-frequency
+                blur (wider blurred edges); smaller values target fine detail.
+                Default is 5.
+            morph_kernel_size: Side length of the rectangular structuring element
+                used in morphological closing (and optional opening). Larger values
+                bridge bigger gaps within segments and remove larger noise regions.
+                Default is 2.
+            morph_iterations: Number of times to apply each morphological operation.
+                More iterations push the effect further without needing a huge kernel.
+                Default is 1.
+            morph_open: If True, runs a morphological opening (erode then dilate)
+                before the closing pass. This scrubs isolated noise blobs first so
+                they are not accidentally merged into segments by the close.
+                Default is False.
         """
         super().__init__(index, name)
         self.num_digits = num_digits
@@ -118,9 +141,12 @@ class HardnessTester(Tool):
         self.tip_length_mm = tip_length_mm
         self.power_servo = power_servo
         self.zero_servo = zero_servo
-        
-        # Camera objects
-        self.picamera = None
+        self.threshold_bias = threshold_bias
+        self.sharpen_strength = sharpen_strength
+        self.sharpen_blur_radius = sharpen_blur_radius
+        self.morph_kernel_size = morph_kernel_size
+        self.morph_iterations = morph_iterations
+        self.morph_open = morph_open
         
         # Digit ROI boundaries (will be set via calibration or manually)
         # Format: [(x1, y1, x2, y2), ...] for each digit
@@ -133,6 +159,9 @@ class HardnessTester(Tool):
         # Threshold for segment detection (proportion of pixels that must be active)
         self.segment_threshold = 0.5
         
+        # cv2.VideoCapture handle (opened on demand)
+        self.cap = None
+
         # Initialize camera only when requested
         if self.use_camera:
             self._init_camera()
@@ -474,19 +503,13 @@ class HardnessTester(Tool):
         return segment_points
     
     def _init_camera(self):
-        """Initialize Picamera2 camera."""
-        if not PICAMERA2_AVAILABLE:
-            raise RuntimeError("Picamera2 is required for camera mode but is not available.")
-        try:
-            print("Initializing Picamera2...")
-            self.picamera = Picamera2()
-            config = self.picamera.create_still_configuration()
-            self.picamera.configure(config)
-            self.picamera.start()
-            print("Picamera2 initialized successfully")
-        except (RuntimeError, ValueError) as e:
-            self.picamera = None
-            raise RuntimeError(f"Failed to initialize Picamera2: {e}") from e
+        """Initialize cv2.VideoCapture camera."""
+        print(f"Initializing camera (device {self.cam_id})...")
+        self.cap = cv2.VideoCapture(self.cam_id)
+        if not self.cap.isOpened():
+            self.cap = None
+            raise RuntimeError(f"Failed to open camera device {self.cam_id}")
+        print("Camera initialized successfully")
 
     def capture_image(self, save=False, output_path='lcd_capture.jpg'):
         """
@@ -503,28 +526,26 @@ class HardnessTester(Tool):
             print("WARNING: Camera capture requested but camera mode is disabled")
             return None
 
-        if self.picamera is None:
-            print("WARNING: Picamera2 camera is not initialized")
+        if self.cap is None or not self.cap.isOpened():
+            print("WARNING: Camera is not initialized")
             return None
 
-        try:
-            raw_frame = self.picamera.capture_array()
-            frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
-        except (RuntimeError, ValueError) as e:
-            print(f"WARNING: Camera capture failed: {e}")
+        ret, frame = self.cap.read()
+        if not ret or frame is None:
+            print("WARNING: Camera capture failed")
             return None
-        
-        if frame is not None and save:
+
+        if save:
             cv2.imwrite(output_path, frame)
             print(f"Image saved to {output_path}")
-        
+
         return frame
 
     def _collect_timed_frames(self, frame_count=10, total_duration_s=1.0):
         """Capture frames over a fixed time window using capture_image()."""
         if frame_count <= 0:
             return []
-        if self.picamera is None:
+        if self.cap is None or not self.cap.isOpened():
             return None
 
         sample_interval = total_duration_s / float(frame_count)
@@ -536,11 +557,9 @@ class HardnessTester(Tool):
             if now < next_capture_time:
                 time.sleep(next_capture_time - now)
 
-            try:
-                raw_frame = self.picamera.capture_array()
-                frame = cv2.cvtColor(raw_frame, cv2.COLOR_RGB2BGR)
-            except (RuntimeError, ValueError) as e:
-                print(f"WARNING: Direct camera capture failed: {e}")
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                print("WARNING: Direct camera capture failed")
                 return None
 
             frames.append(frame)
@@ -574,21 +593,40 @@ class HardnessTester(Tool):
         if debug:
             cv2.imwrite(f"{debug_prefix}_step2_gray.png", gray)
         
-        # Step 2: Apply CLAHE to enhance local contrast
+        # Step 2 (optional): Unsharp masking to recover blurred edges
+        # sharpened = original + strength * (original - blurred)
+        if self.sharpen_strength > 0.0:
+            radius = self.sharpen_blur_radius | 1  # ensure odd
+            blurred = cv2.GaussianBlur(gray, (radius, radius), 0)
+            gray = cv2.addWeighted(gray, 1.0 + self.sharpen_strength, blurred, -self.sharpen_strength, 0)
+            if debug:
+                cv2.imwrite(f"{debug_prefix}_step3_sharpened.png", gray)
+
+        # Step 3: Apply CLAHE to enhance local contrast
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step4_clahe.png", enhanced)
         
-        # Step 3: Threshold to create binary image
-        # Use Otsu's method to automatically determine threshold
-        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Step 4: Threshold to create binary image
+        # Compute Otsu's threshold, then apply a bias to reduce sensitivity to
+        # localized dark artifacts (e.g. camera lens reflection in the center).
+        otsu_thresh, _ = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adjusted_thresh = max(0, int(otsu_thresh) - self.threshold_bias)
+        _, binary = cv2.threshold(enhanced, adjusted_thresh, 255, cv2.THRESH_BINARY)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step5_binary.png", binary)
         
-        # Step 4: Morphological operations to clean up noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Step 5: Morphological operations to clean up noise
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT,
+            (self.morph_kernel_size, self.morph_kernel_size),
+        )
+        if self.morph_open:
+            cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=self.morph_iterations)
+        else:
+            cleaned = binary
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=self.morph_iterations)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step6_cleaned.png", cleaned)
         
@@ -1167,9 +1205,9 @@ class HardnessTester(Tool):
     
     def __del__(self):
         """Clean up camera resources."""
-        if self.picamera is not None:
+        if self.cap is not None:
             try:
-                self.picamera.stop()
+                self.cap.release()
             except (RuntimeError, AttributeError):
                 pass
         
@@ -1204,6 +1242,41 @@ def main():
         default="lcd_read",
         help="Prefix for debug images",
     )
+    parser.add_argument(
+        "--sharpen-strength",
+        type=float,
+        default=0.0,
+        help="Unsharp masking strength (0 = disabled, 1.0-2.0 for mild blur, higher for strong blur)",
+    )
+    parser.add_argument(
+        "--sharpen-blur-radius",
+        type=int,
+        default=5,
+        help="Gaussian blur radius for unsharp masking (odd integer, larger targets wider blur)",
+    )
+    parser.add_argument(
+        "--threshold-bias",
+        type=int,
+        default=0,
+        help="Amount to lower the Otsu threshold to reduce sensitivity to dark artifacts",
+    )
+    parser.add_argument(
+        "--morph-kernel-size",
+        type=int,
+        default=2,
+        help="Morphological kernel size; larger fills bigger gaps and removes larger noise",
+    )
+    parser.add_argument(
+        "--morph-iterations",
+        type=int,
+        default=1,
+        help="Number of morphological operation iterations",
+    )
+    parser.add_argument(
+        "--morph-open",
+        action="store_true",
+        help="Run an opening pass before closing to scrub isolated noise blobs",
+    )
     args = parser.parse_args()
     
     print("\n" + "=" * 80)
@@ -1212,7 +1285,17 @@ def main():
     
     # Initialize reader (camera is optional in image mode)
     print("\nInitializing LCD reader...")
-    reader = HardnessTester(num_digits=4, cam_id=0, use_camera=(args.image is None))
+    reader = HardnessTester(
+        num_digits=4,
+        cam_id=0,
+        use_camera=(args.image is None),
+        sharpen_strength=args.sharpen_strength,
+        sharpen_blur_radius=args.sharpen_blur_radius,
+        threshold_bias=args.threshold_bias,
+        morph_kernel_size=args.morph_kernel_size,
+        morph_iterations=args.morph_iterations,
+        morph_open=args.morph_open,
+    )
     
     # Try to load existing calibration
     if os.path.exists(args.calibration):
