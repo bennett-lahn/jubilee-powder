@@ -31,6 +31,8 @@ Example:
 import asyncio
 import json
 import sys
+import traceback
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,15 +56,43 @@ _FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 from hardware_manager import HardwareManager, MockHardwareManager
 
 # ---------------------------------------------------------------------------
+# Optional Google Drive integration
+# ---------------------------------------------------------------------------
+_drive_sync: Optional["SheetsSynchronizer"] = None  # noqa: F821 — set in lifespan
+_drive_init_error: Optional[str] = None  # set when config enables Drive but init fails
+_pending_uploads: list[dict] = []  # {"path": Path, "outcome": str, "attempts": int}
+
+def _load_drive_sync() -> tuple[Optional["SheetsSynchronizer"], Optional[str]]:
+    """Return (SheetsSynchronizer, None) if enabled and init succeeds.
+
+    Returns (None, None) when the feature is intentionally disabled in config.
+    Returns (None, error_message) when enabled in config but initialisation fails,
+    so callers can distinguish a misconfiguration from a opt-out.
+    """
+    try:
+        from src.ConfigLoader import ConfigLoader
+        cfg = ConfigLoader()
+        if not cfg.get("google_drive.enabled", False):
+            return None, None
+        from src.google_drive.sheets_sync import SheetsSynchronizer
+        return SheetsSynchronizer(), None
+    except Exception as exc:
+        msg = str(exc)
+        print(f"[Drive] Could not initialise SheetsSynchronizer: {msg}")
+        return None, msg
+
+# ---------------------------------------------------------------------------
 # Toggle — flip to False when deploying on real hardware.
 # ---------------------------------------------------------------------------
-MOCK_HARDWARE: bool = True
+MOCK_HARDWARE: bool = False
 
 
 # =============================================================================
@@ -199,11 +229,72 @@ async def telemetry_loop() -> None:
 # App + lifespan
 # =============================================================================
 
+def _drive_poll_and_dispatch(sync: "SheetsSynchronizer") -> bool:
+    """Retry any pending uploads, then poll the sheet and dispatch a job if ready.
+
+    Returns ``True`` if a new job was started, ``False`` otherwise.
+    Raises any exception from the sync layer so the caller can decide how to
+    handle it (log and continue vs. raise an HTTP error).
+    """
+    if _pending_uploads:
+        _retry_pending_uploads(sync)
+
+    job_dict = sync.poll_for_job()
+    if job_dict is None or hw.state != MachineState.IDLE or progress.running:
+        return False
+
+    job_type = job_dict.get("job_type")
+    job_id   = str(uuid.uuid4())[:8]
+    now      = datetime.now(timezone.utc).isoformat()
+
+    if job_type == "dispensing":
+        items = job_dict.get("wells", [])
+        if not items:
+            return False
+        sync.mark_running(job_id)
+        progress.start_job("dispensing", items, now)
+        asyncio.create_task(_run_dispensing(items, drive_sync=sync, drive_job_id=job_id))
+        return True
+
+    if job_type == "hardness":
+        items = job_dict.get("samples", [])
+        if not items:
+            return False
+        sync.mark_running(job_id)
+        progress.start_job("hardness", items, now)
+        asyncio.create_task(_run_hardness(items, drive_sync=sync, drive_job_id=job_id))
+        return True
+
+    return False
+
+
+async def drive_poll_loop(sync: "SheetsSynchronizer") -> None:
+    """Background loop: poll Google Sheets every N seconds and start jobs.
+
+    Only submits a job when the machine is IDLE and no other job is running.
+    Runs indefinitely; cancelled when the FastAPI app shuts down.
+    """
+    from src.ConfigLoader import ConfigLoader
+    interval = ConfigLoader().get("google_drive.poll_interval_seconds")
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            _drive_poll_and_dispatch(sync)
+        except Exception as exc:
+            print(f"[Drive] poll loop error: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(telemetry_loop())
+    global _drive_sync, _drive_init_error
+    _drive_sync, _drive_init_error = _load_drive_sync()
+    tasks = [asyncio.create_task(telemetry_loop())]
+    if _drive_sync is not None:
+        tasks.append(asyncio.create_task(drive_poll_loop(_drive_sync)))
+        print("[Drive] Google Sheets polling started.")
     yield
-    task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="Jubilee Automation API", lifespan=lifespan)
@@ -575,6 +666,71 @@ async def get_job_file(filename: str):
 
 
 # =============================================================================
+# REST — Google Drive integration
+# =============================================================================
+
+@app.get("/api/drive/status")
+async def get_drive_status():
+    """Return the current Google Drive / Sheets integration status.
+
+    Returns:
+        dict: ``{ enabled, connected, spreadsheet_id, last_poll, last_error }``
+        ``enabled`` is ``False`` when the feature is turned off in config or
+        the integration failed to initialise.
+    """
+    if _drive_sync is None:
+        # _drive_init_error is set only when config has enabled=true but init threw.
+        # When the feature is intentionally disabled, both are None.
+        return {
+            "enabled":          _drive_init_error is not None,
+            "connected":        False,
+            "spreadsheet_id":   "",
+            "last_poll":        None,
+            "last_error":       _drive_init_error,
+            "pending_uploads":  len(_pending_uploads),
+        }
+    return {
+        "enabled":          True,
+        "connected":        _drive_sync.connected,
+        "spreadsheet_id":   _drive_sync._sheet_id,
+        "last_poll":        _drive_sync.last_poll,
+        "last_error":       _drive_sync.last_error,
+        "pending_uploads":  len(_pending_uploads),
+    }
+
+
+@app.post("/api/drive/sync", status_code=200)
+async def drive_sync_now():
+    """Manually trigger a Google Sheets poll and, if a job is ready, start it.
+
+    This mirrors the automatic poll loop but fires immediately on demand.
+    Returns the same payload as ``/api/drive/status`` plus a ``triggered``
+    boolean so the UI can display feedback.
+
+    Raises:
+        HTTPException: 503 if Google Drive integration is not enabled.
+    """
+    if _drive_sync is None:
+        raise HTTPException(status_code=503, detail="Google Drive integration is not enabled.")
+
+    try:
+        job_started = _drive_poll_and_dispatch(_drive_sync)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Drive sync error: {exc}")
+
+    return {
+        "triggered":        True,
+        "job_started":      job_started,
+        "enabled":          True,
+        "connected":        _drive_sync.connected,
+        "spreadsheet_id":   _drive_sync._sheet_id,
+        "last_poll":        _drive_sync.last_poll,
+        "last_error":       _drive_sync.last_error,
+        "pending_uploads":  len(_pending_uploads),
+    }
+
+
+# =============================================================================
 # Background task helpers
 # =============================================================================
 
@@ -600,6 +756,60 @@ def _make_job_log(job_type: str, items: list[dict]):
         return None
 
 
+def _do_upload(sync: "SheetsSynchronizer", log_path: Path, outcome: str) -> None:
+    """Upload one log file to Drive and update the sheet status.
+
+    Raises on any failure so callers can decide whether to queue a retry.
+    """
+    sync.upload_result(log_path)
+    if outcome == "successful":
+        sync.mark_complete()
+    else:
+        sync.mark_error(f"Job ended with outcome: {outcome}")
+
+
+def _maybe_upload_to_drive(drive_sync, log_path: Path, outcome: str) -> None:
+    """Upload the finished job log to Drive, queuing for retry on failure.
+
+    Never raises — the job completion path must not be blocked by a network
+    issue. Failed uploads are added to ``_pending_uploads`` and retried on
+    the next poll cycle via ``_retry_pending_uploads``.
+
+    Args:
+        drive_sync: SheetsSynchronizer instance, or ``None`` to skip.
+        log_path:   Path returned by ``JobLog.finalize``.
+        outcome:    One of ``"successful"``, ``"cancelled"``, or ``"aborted"``.
+    """
+    if drive_sync is None:
+        return
+    try:
+        _do_upload(drive_sync, log_path, outcome)
+    except Exception as exc:
+        print(f"[Drive] Upload failed, queuing for retry: {exc}")
+        _pending_uploads.append({"path": log_path, "outcome": outcome, "attempts": 1})
+        try:
+            drive_sync.mark_error(str(exc))
+        except Exception:
+            pass
+
+
+def _retry_pending_uploads(sync: "SheetsSynchronizer") -> None:
+    """Attempt to upload any previously-failed results.
+
+    Called at the start of each poll cycle. Successful uploads are removed
+    from ``_pending_uploads``; failures increment the attempt counter and
+    remain in the queue for the next cycle.
+    """
+    for item in list(_pending_uploads):
+        try:
+            _do_upload(sync, item["path"], item["outcome"])
+            _pending_uploads.remove(item)
+            print(f"[Drive] Retry upload succeeded: {item['path'].name}")
+        except Exception as exc:
+            item["attempts"] += 1
+            print(f"[Drive] Retry upload failed (attempt {item['attempts']}): {exc}")
+
+
 async def _run_connect(config: HardwareConfig) -> None:
     """Run hardware connection in the background.
 
@@ -612,15 +822,23 @@ async def _run_connect(config: HardwareConfig) -> None:
     try:
         await hw.connect(config)
     except BaseException as exc:
+        traceback.print_exc()
         progress.error = f"Connection failed: {exc}"
         # state is already set to ERROR inside each manager's connect()
 
 
-async def _run_dispensing(items: list[dict]) -> None:
+async def _run_dispensing(
+    items: list[dict],
+    drive_sync: Optional["SheetsSynchronizer"] = None,
+    drive_job_id: Optional[str] = None,
+) -> None:
     """Execute a dispensing job in the background and finalise the log on completion.
 
     Args:
         items: Ordered list of well dicts (``well_id``, ``target_weight``).
+        drive_sync: Optional SheetsSynchronizer; when provided the result is
+            uploaded to Drive and the sheet status is updated after finalization.
+        drive_job_id: Job identifier string written to the Main tab.
     """
     job_log = _make_job_log("dispensing", items)
     outcome = "cancelled"
@@ -631,6 +849,7 @@ async def _run_dispensing(items: list[dict]) -> None:
         elif hw.state == MachineState.ERROR:
             outcome = "aborted"
     except Exception as exc:
+        traceback.print_exc()
         progress.error = str(exc)
         hw.state = MachineState.ERROR
         outcome = "aborted"
@@ -638,16 +857,26 @@ async def _run_dispensing(items: list[dict]) -> None:
         progress.running = False
         if job_log is not None:
             try:
-                job_log.finalize(outcome)
+                log_path = job_log.finalize(outcome)
+                _maybe_upload_to_drive(drive_sync, log_path, outcome)
             except Exception as exc:
                 print(f"[JobLog] Failed to write log: {exc}")
+                if drive_sync is not None:
+                    drive_sync.mark_error(f"Log write failed: {exc}")
 
 
-async def _run_hardness(items: list[dict]) -> None:
+async def _run_hardness(
+    items: list[dict],
+    drive_sync: Optional["SheetsSynchronizer"] = None,
+    drive_job_id: Optional[str] = None,
+) -> None:
     """Execute a hardness testing job in the background and finalise the log on completion.
 
     Args:
         items: Ordered list of sample dicts (``tray_index``, ``sample_id``, ``mode``).
+        drive_sync: Optional SheetsSynchronizer; when provided the result is
+            uploaded to Drive and the sheet status is updated after finalization.
+        drive_job_id: Job identifier string written to the Main tab.
     """
     job_log = _make_job_log("hardness", items)
     outcome = "cancelled"
@@ -658,6 +887,7 @@ async def _run_hardness(items: list[dict]) -> None:
         elif hw.state == MachineState.ERROR:
             outcome = "aborted"
     except Exception as exc:
+        traceback.print_exc()
         progress.error = str(exc)
         hw.state = MachineState.ERROR
         outcome = "aborted"
@@ -665,9 +895,12 @@ async def _run_hardness(items: list[dict]) -> None:
         progress.running = False
         if job_log is not None:
             try:
-                job_log.finalize(outcome)
+                log_path = job_log.finalize(outcome)
+                _maybe_upload_to_drive(drive_sync, log_path, outcome)
             except Exception as exc:
                 print(f"[JobLog] Failed to write log: {exc}")
+                if drive_sync is not None:
+                    drive_sync.mark_error(f"Log write failed: {exc}")
 
 
 # =============================================================================
@@ -691,3 +924,27 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.receive_text()   # discard client-sent messages
     except WebSocketDisconnect:
         ws_mgr.disconnect(ws)
+
+
+# =============================================================================
+# Static file serving (production build)
+# =============================================================================
+# When the React app has been built (`npm run build` in frontend/), serve it
+# directly from uvicorn so no separate Vite dev server is needed.  The SPA
+# catch-all below ensures deep-link routes (e.g. /settings) return index.html
+# instead of 404 when the page is refreshed.
+#
+# This block is intentionally placed after every API and WebSocket route so
+# that /api/* and /ws are never shadowed by the static mount.
+
+_DIST_DIR = Path(__file__).parent / "dist"
+
+if _DIST_DIR.exists():
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        candidate = _DIST_DIR / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_DIST_DIR / "index.html")
+
+    app.mount("/", StaticFiles(directory=_DIST_DIR, html=True), name="static")

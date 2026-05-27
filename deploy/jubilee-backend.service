@@ -1,0 +1,22 @@
+[Unit]
+Description=Jubilee Automation Backend
+# Start after the network is up so the Duet board is reachable
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/jubilee-automation
+# Activate the virtual environment created by install.sh
+ExecStart=/home/%i/jubilee-automation/.venv/bin/uvicorn \
+    frontend.server:app \
+    --host 0.0.0.0 \
+    --port 8000
+Restart=on-failure
+RestartSec=5
+# Give hardware devices time to be ready after a reboot
+ExecStartPre=/bin/sleep 3
+
+[Install]
+WantedBy=multi-user.target

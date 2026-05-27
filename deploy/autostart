@@ -1,0 +1,16 @@
+# LXDE autostart for Jubilee Automation kiosk
+#
+# Deploy this file to:
+#   /etc/xdg/lxsession/LXDE-pi/autostart   (system-wide, Raspberry Pi OS)
+# or:
+#   ~/.config/lxsession/LXDE-pi/autostart  (per-user)
+#
+# The install.sh script handles this automatically.
+
+# Disable screen blanking via X11 power management
+@xset s off
+@xset -dpms
+@xset s noblank
+
+# Launch the kiosk browser once the desktop is ready
+@/home/pi/jubilee-automation/deploy/kiosk.sh
