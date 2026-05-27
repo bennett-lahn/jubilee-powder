@@ -315,7 +315,7 @@ class MovementExecutor:
             
             feedrate = self._feedrate
             feedrate_pickup = 2000 # TODO: hardcoded to minimum speed for smooth pickup, for now
-            self._machine.move_to(y=177.7, s=feedrate_pickup) # Move into dispenser to dispense piston
+            self._machine.move_to(y=175.7, s=feedrate_pickup) # Move into dispenser to dispense piston
             self._machine.gcode("M400") # Wait for previous command to finish
             self._machine.gcode("G4 S2") # Wait for 2 seconds
             self._machine.move_to(v=21, s=feedrate) # Move tool up to pickup piston

@@ -28,6 +28,7 @@ Example:
             manager.disconnect()
 """
 
+import traceback
 from typing import Optional, List, TYPE_CHECKING
 from pathlib import Path
 
@@ -379,14 +380,15 @@ class JubileeManager:
             
             # Load the manipulator tool (this registers it but doesn't pick it up)
             self.machine_read_only.load_tool(self.manipulator)
-            self.machine_read_only.load_tool(self.hardness_tester_shore_a)
-            self.machine_read_only.load_tool(self.hardness_tester_shore_d)
+            # self.machine_read_only.load_tool(self.hardness_tester_shore_a)
+            # self.machine_read_only.load_tool(self.hardness_tester_shore_d)
             
             self.connected = True
             return True
             
         except Exception as e:
             print(f"Connection error: {e}")
+            traceback.print_exc()
             self.connected = False
             return False
     
@@ -646,6 +648,7 @@ class JubileeManager:
             
             self.move_to_mold_slot(well_id)
             self.manipulator.pick_mold(well_id)
+            self.move_to_global_ready()
             self.move_to_scale()
             self.manipulator.place_mold_on_scale()
             self.fill_powder(target_weight)
@@ -658,11 +661,13 @@ class JubileeManager:
             self.move_to_mold_slot(well_id)
             self.manipulator.place_mold(well_id)
             self.move_to_global_ready()
+            self.manipulator.home_tamper()
             if self.active_job_log is not None:
                 self.active_job_log.update_well(well_id)
             return True
         except Exception as e:
             print(f"Error filling mold: {e}")
+            traceback.print_exc()
             return False
 
     def test_sample(
@@ -703,6 +708,7 @@ class JubileeManager:
             return True
         except Exception as e:
             print(f"Error testing hardness sample: {e}")
+            traceback.print_exc()
             return False
 
     def hardness_turn_on(self, mode: Optional[str] = None) -> bool:
@@ -968,6 +974,7 @@ class JubileeManager:
                 machine.gcode("M112")
             except Exception as e:
                 print(f"[abort] M112 command failed: {e}")
+                traceback.print_exc()
         self.connected = False
 
     def fill_powder(self, target_weight: float) -> bool:

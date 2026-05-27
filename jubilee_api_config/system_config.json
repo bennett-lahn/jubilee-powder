@@ -49,6 +49,13 @@
         "tamp_speed_min": 500,
         "tamp_speed_max": 5000
     },
+    "google_drive": {
+        "enabled": false,
+        "credentials_file": "jubilee_api_config/service_account.json",
+        "spreadsheet_id": "",
+        "drive_folder_id": "",
+        "poll_interval_seconds": 30
+    },
     "hardness_testers": {
         "shore_a": {
             "tool": {

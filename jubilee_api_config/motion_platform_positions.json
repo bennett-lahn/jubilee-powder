@@ -101,8 +101,8 @@
       "allows_tool_engagement": true,
       "coordinates": {
         "x": 150.0,
-        "y": 143.0,
-        "z": 27.0,
+        "y": 118.0,
+        "z": 34.5,
         "v": 67.0
       },
       "allowed_origins": [

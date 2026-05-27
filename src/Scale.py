@@ -210,9 +210,11 @@ class Scale:
                 # after an E02 response.
             print(f"[DEBUG] Serial connection established: {self.serial}")
             print(f"[DEBUG] Serial port open: {self.serial.is_open}")
-        except serial.SerialException as e:
+        except (serial.SerialException, ScaleException) as e:
+            import traceback
             self._is_connected = False
-            raise ScaleException(f"Error connecting to scale: {e}")
+            traceback.print_exc()
+            raise ScaleException(f"Error connecting to scale: {e}") from e
 
     def disconnect(self):
         """
