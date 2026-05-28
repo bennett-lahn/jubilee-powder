@@ -135,11 +135,21 @@ export const useJubileeStore = create((set, get) => ({
   },
 
   // -------------------------------------------------------------------------
+  // Error dialog  (shown whenever telemetry.state transitions into 'error')
+  // -------------------------------------------------------------------------
+  errorDialog: { open: false, message: null },
+
+  dismissErrorDialog() {
+    set({ errorDialog: { open: false, message: null } })
+  },
+
+  // -------------------------------------------------------------------------
   // WebSocket connection state
   // -------------------------------------------------------------------------
-  wsConnected:     false,
-  _ws:             null,
-  _reconnectTimer: null,
+  wsConnected:          false,
+  _ws:                  null,
+  _reconnectTimer:      null,
+  _prevTelemetryState:  null,
 
   // -------------------------------------------------------------------------
   // WebSocket lifecycle
@@ -168,6 +178,14 @@ export const useJubileeStore = create((set, get) => ({
         // fields from a previous server restart are never retained.
         const { weight, state, connected, jubilee_ip, job, dispensers, clients } =
           JSON.parse(e.data)
+
+        // Detect a transition INTO the error state and surface a popup once.
+        const prevState = get()._prevTelemetryState
+        if (state === 'error' && prevState !== 'error') {
+          const message = job?.error ?? 'An unexpected error occurred.'
+          set({ errorDialog: { open: true, message } })
+        }
+
         set({
           telemetry: {
             weight,
@@ -178,6 +196,7 @@ export const useJubileeStore = create((set, get) => ({
             dispensers: dispensers ?? [],
             clients,
           },
+          _prevTelemetryState: state,
         })
       } catch {
         // ignore malformed frames

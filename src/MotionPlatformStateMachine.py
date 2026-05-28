@@ -1476,7 +1476,10 @@ class MotionPlatformStateMachine(StateMachine):
             )
         
         # Step 3: Validate machine is at expected current position
-        current_pos = self._executor.get_machine_position()
+        try:
+            current_pos = self._executor.get_machine_position()
+        except RuntimeError as exc:
+            return MoveValidationResult(valid=False, reason=str(exc))
         machine_validation = self.validate_machine_state(
             machine_x=float(current_pos.get('X', 0)),
             machine_y=float(current_pos.get('Y', 0)),
@@ -1625,7 +1628,10 @@ class MotionPlatformStateMachine(StateMachine):
         
         # Step 6: Validate machine is at expected current position unless this is a homing action
         if not (action_id and action_id.startswith("home_")):
-            current_pos = self._executor.get_machine_position()
+            try:
+                current_pos = self._executor.get_machine_position()
+            except RuntimeError as exc:
+                return MoveValidationResult(valid=False, reason=str(exc))
             machine_validation = self.validate_machine_state(
                 machine_x=float(current_pos.get('X', 0)),
                 machine_y=float(current_pos.get('Y', 0)),

@@ -131,6 +131,7 @@ class JubileeManager:
         self.last_dispense_weight: Optional[float] = None
         self.last_hardness_result: Optional[float] = None
         self.last_hardness_error: Optional[str] = None
+        self.last_error: Optional[str] = None
     
     @property
     def machine_read_only(self) -> Optional[Machine]:
@@ -387,6 +388,7 @@ class JubileeManager:
             return True
             
         except Exception as e:
+            self.last_error = str(e)
             print(f"Connection error: {e}")
             traceback.print_exc()
             self.connected = False
@@ -634,6 +636,7 @@ class JubileeManager:
         """
         if not self.connected:
             return False
+        self.last_error = None
         try:
             if not self.manipulator:
                 raise ToolStateError("Manipulator is not connected or provided.")
@@ -666,6 +669,7 @@ class JubileeManager:
                 self.active_job_log.update_well(well_id)
             return True
         except Exception as e:
+            self.last_error = str(e)
             print(f"Error filling mold: {e}")
             traceback.print_exc()
             return False
@@ -681,6 +685,7 @@ class JubileeManager:
         """
         if not self.connected:
             return False
+        self.last_error = None
         try:
             if not self.state_machine:
                 raise RuntimeError("State machine not configured")
@@ -707,6 +712,7 @@ class JubileeManager:
                 )
             return True
         except Exception as e:
+            self.last_error = str(e)
             print(f"Error testing hardness sample: {e}")
             traceback.print_exc()
             return False

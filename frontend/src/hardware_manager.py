@@ -372,7 +372,8 @@ class HardwareManager:
                 scale_port=config.scale_port,
             )
             if not success:
-                raise RuntimeError("JubileeManager.connect() returned False")
+                detail = getattr(self._manager, "last_error", None) or "Unknown connection error"
+                raise RuntimeError(f"Connection failed: {detail}")
             self.state = MachineState.IDLE
         except Exception:
             traceback.print_exc()
@@ -475,8 +476,9 @@ class HardwareManager:
                     well["target_weight"],
                 )
                 if not success:
+                    detail = getattr(self._manager, "last_error", None) or "Unknown error"
                     raise RuntimeError(
-                        f"Dispense failed for well {well['well_id']!r}"
+                        f"Dispense failed for well {well['well_id']!r}: {detail}"
                     )
                 progress.mark_item_complete(
                     i,
@@ -521,9 +523,10 @@ class HardwareManager:
                         pass_mode,
                     )
                     if not success:
+                        detail = getattr(self._manager, "last_error", None) or "Unknown error"
                         raise RuntimeError(
                             "Hardness test failed for "
-                            f"tray {sample['tray_index']} sample {sample['sample_id']!r}"
+                            f"tray {sample['tray_index']} sample {sample['sample_id']!r}: {detail}"
                         )
 
                     measured_result = _safe_float(

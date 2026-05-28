@@ -787,8 +787,25 @@ class MovementExecutor:
             return False
     
     def get_machine_position(self) -> dict:
-        """Get current machine position."""
-        return self._machine.get_position()
+        """Get current machine position.
+
+        Raises:
+            RuntimeError: If the Duet does not respond or returns an unusable
+                response (science_jubilee returns None on HTTP failure, which
+                surfaces as TypeError or AttributeError inside get_position).
+        """
+        _DUET_COMM_ERRORS = (TypeError, AttributeError, ConnectionError, TimeoutError, OSError)
+        try:
+            pos = self._machine.get_position()
+        except _DUET_COMM_ERRORS as exc:
+            raise RuntimeError(
+                f"Failed to read machine position (Duet not responding): {exc!r}"
+            ) from exc
+        if pos is None:
+            raise RuntimeError(
+                "Failed to read machine position: get_position() returned None"
+            )
+        return pos
     
     def get_machine_axes_homed(self) -> list:
         """Get list of which axes are homed."""
@@ -938,11 +955,6 @@ class MovementExecutor:
                         # Check if within 1% of target weight or above target
                         threshold_99_percent = 0.99 * target_weight
                         if unstable_weight >= threshold_99_percent:
-                            # Wait 2 seconds to confirm actually over threshold
-                            if unstable_weight >= target_weight:
-                                print(f"Unstable weight {unstable_weight:.4f}g >= target {target_weight:.4f}g. Waiting 4 seconds for confirmation...")
-                            else:
-                                print(f"Unstable weight {unstable_weight:.4f}g is within 1% of target {target_weight:.4f}g (>= {threshold_99_percent:.4f}g). Waiting 4 seconds for confirmation...")
                             time.sleep(2.0)
                             
                             # Final stable measurement to confirm
@@ -977,13 +989,6 @@ class MovementExecutor:
                     self._machine.gcode("M42 P0 S0.0 F20000") # Turn off vibration
                     time.sleep(0.1) # Small sleep to promote scale settling
                     
-                    # Take unstabilized weight reading after big movement
-                    try:
-                        weight = self._scale.get_weight(stable=False)
-                        print(f"Iteration {iteration}: Weight={weight:.4f}g, Step={step_size:.2f}mm")
-                        
-                    except Exception as e:
-                        print(f"Error reading weight at iteration {iteration}: {e}")
             
             # Restore absolute positioning mode
             self._machine.gcode("G90")

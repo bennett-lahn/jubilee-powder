@@ -4,6 +4,8 @@ import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom'
 import { useJubileeStore } from './store/jubileeStore'
 import NavRail from './components/NavRail'
 import BottomBar from './components/BottomBar'
+import Dialog from './components/ui/Dialog'
+import Button from './components/ui/Button'
 
 import HomeScreen             from './screens/HomeScreen'
 import PowderDispensingScreen from './screens/PowderDispensingScreen'
@@ -15,9 +17,11 @@ import SettingsScreen         from './screens/SettingsScreen'
 // Root layout — nav rail + main content area + bottom status bar.
 // Wraps every route so navigation and telemetry are always visible.
 function RootLayout() {
-  const connectWs    = useJubileeStore((s) => s.connectWs)
-  const disconnectWs = useJubileeStore((s) => s.disconnectWs)
-  const loadStatus   = useJubileeStore((s) => s.loadStatus)
+  const connectWs          = useJubileeStore((s) => s.connectWs)
+  const disconnectWs       = useJubileeStore((s) => s.disconnectWs)
+  const loadStatus         = useJubileeStore((s) => s.loadStatus)
+  const errorDialog        = useJubileeStore((s) => s.errorDialog)
+  const dismissErrorDialog = useJubileeStore((s) => s.dismissErrorDialog)
 
   useEffect(() => {
     connectWs()
@@ -35,6 +39,22 @@ function RootLayout() {
         </main>
       </div>
       <BottomBar />
+
+      {/* Global error dialog — surfaces whenever the machine enters ERROR state */}
+      <Dialog
+        open={errorDialog.open}
+        title="Error"
+        onClose={dismissErrorDialog}
+        footer={
+          <Button variant="danger" onClick={dismissErrorDialog}>
+            Dismiss
+          </Button>
+        }
+      >
+        <p className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed">
+          {errorDialog.message}
+        </p>
+      </Dialog>
     </div>
   )
 }
