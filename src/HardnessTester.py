@@ -76,15 +76,19 @@ class HardnessTester(Tool):
     def __init__(
         self,
         num_digits=4,
-        cam_id=0,
+        cam_usb_path: Optional[str] = None,
         use_camera=True,
         index: int = 1,
         name: str = "HardnessTester",
         tester_mode: str = "shore_a",
         calibration_path: str = DEFAULT_CALIBRATION_PATH,
         tip_length_mm: Optional[float] = None,
-        power_servo: Optional[str] = None,
-        zero_servo: Optional[str] = None,
+        servo: Optional[str] = None,
+        power_press_angle: Optional[int] = None,
+        power_release_angle: Optional[int] = None,
+        zero_press_angle: Optional[int] = None,
+        zero_release_angle: Optional[int] = None,
+        state_machine=None,
         threshold_bias: int = 15,
         sharpen_strength: float = 31,
         sharpen_blur_radius: int = 90,
@@ -97,15 +101,27 @@ class HardnessTester(Tool):
         
         Args:
             num_digits: Number of digits in the display (default: 4)
-            cam_id: Camera device ID (default: 0)
+            cam_usb_path: Filesystem path to the camera USB device
+                (e.g. /dev/v4l/by-path/...-video-index0). This is the only
+                supported camera config source. When None, the camera cannot
+                be opened until camera discrimination runs and sets the
+                resolved index via identify_hardness_camera().
             use_camera: Whether to initialize and use a camera device
             index: Jubilee tool index for this tester
             name: Jubilee tool name for this tester
             tester_mode: Shore tester mode ("shore_a" or "shore_d")
             calibration_path: Path to the LCD calibration json for this tester
             tip_length_mm: Physical tip length for this tester
-            power_servo: Servo identifier used for power button actuation
-            zero_servo: Servo identifier used for zero button actuation
+            servo: Servo identifier for the shared button servo (e.g. "S1" = servo
+                channel 1). The same physical servo actuates both the power and zero
+                buttons; the button is selected by angle range.
+            power_press_angle: Servo angle in degrees when pressing the power button
+            power_release_angle: Servo angle in degrees when releasing the power button
+            zero_press_angle: Servo angle in degrees when pressing the zero button
+            zero_release_angle: Servo angle in degrees when releasing the zero button
+            state_machine: Optional MotionPlatformStateMachine reference. When set,
+                turn_on(), turn_off(), and zero() use it directly without requiring
+                a per-call argument (same pattern as Manipulator).
             threshold_bias: Amount to subtract from Otsu's computed threshold
                 before applying binarization. Increase this value to make
                 binarization less sensitive (fewer pixels classified as black),
@@ -134,19 +150,26 @@ class HardnessTester(Tool):
         """
         super().__init__(index, name)
         self.num_digits = num_digits
-        self.cam_id = cam_id
+        self.cam_usb_path = cam_usb_path
         self.use_camera = use_camera
         self.tester_mode = tester_mode
         self.calibration_path = calibration_path
         self.tip_length_mm = tip_length_mm
-        self.power_servo = power_servo
-        self.zero_servo = zero_servo
+        self.servo = servo
+        self.power_press_angle = power_press_angle
+        self.power_release_angle = power_release_angle
+        self.zero_press_angle = zero_press_angle
+        self.zero_release_angle = zero_release_angle
+        self.state_machine = state_machine
         self.threshold_bias = threshold_bias
         self.sharpen_strength = sharpen_strength
         self.sharpen_blur_radius = sharpen_blur_radius
         self.morph_kernel_size = morph_kernel_size
         self.morph_iterations = morph_iterations
         self.morph_open = morph_open
+
+        # Integer cv2 camera index resolved from cam_usb_path at open time.
+        self._resolved_cam_index: Optional[int] = None
         
         # Digit ROI boundaries (will be set via calibration or manually)
         # Format: [(x1, y1, x2, y2), ...] for each digit
@@ -172,8 +195,8 @@ class HardnessTester(Tool):
         tester_mode: str,
         config_payload: dict,
         num_digits: int = 4,
-        cam_id: int = 0,
         use_camera: bool = True,
+        state_machine=None,
     ) -> "HardnessTester":
         """Build a configured Shore tester instance from system config."""
         testers_cfg = config_payload.get("hardness_testers", {})
@@ -188,56 +211,71 @@ class HardnessTester(Tool):
 
         button_servos = tester_cfg.get("button_servos", {})
         tool_cfg = tester_cfg.get("tool", {})
+        cam_usb_path = tester_cfg.get("cam_usb_path") or None
+
+        def _require_angle(key: str) -> int:
+            if key not in button_servos:
+                raise KeyError(
+                    f"Missing required key '{key}' in button_servos for "
+                    f"'{tester_mode}' in system config"
+                )
+            return int(button_servos[key])
+
         return cls(
             num_digits=num_digits,
-            cam_id=cam_id,
+            cam_usb_path=cam_usb_path,
             use_camera=use_camera,
             index=tool_cfg.get("index", 1),
             name=tool_cfg.get("name", f"{tester_mode}_hardness_tester"),
             tester_mode=tester_mode,
             calibration_path=calibration_path,
             tip_length_mm=tester_cfg.get("tip_length_mm"),
-            power_servo=button_servos.get("power"),
-            zero_servo=button_servos.get("zero"),
+            servo=button_servos.get("servo"),
+            power_press_angle=_require_angle("power_press_angle"),
+            power_release_angle=_require_angle("power_release_angle"),
+            zero_press_angle=_require_angle("zero_press_angle"),
+            zero_release_angle=_require_angle("zero_release_angle"),
+            state_machine=state_machine,
         )
 
     def load_assigned_calibration(self) -> bool:
         """Load the calibration configured for this Shore tester."""
         return self.load_calibration(self.calibration_path)
 
-    def turn_on(self, state_machine) -> bool:
+    def turn_on(self) -> bool:
         """
-        Actuate the tester power button via the state machine action framework.
+        Actuate the tester power button via the stored state machine.
         """
-        if state_machine is None:
-            raise ValueError("state_machine is required for turn_on()")
-        result = state_machine.validated_hardness_turn_on(mode=self.tester_mode)
+        if self.state_machine is None:
+            raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
+        result = self.state_machine.validated_hardness_turn_on(mode=self.tester_mode, hardness_tester=self)
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness turn-on action failed")
         return True
 
-    def turn_off(self, state_machine) -> bool:
+    def turn_off(self) -> bool:
         """
-        Actuate the tester power button for shutdown via the state machine action framework.
+        Actuate the tester power button for shutdown via the stored state machine.
         """
-        if state_machine is None:
-            raise ValueError("state_machine is required for turn_off()")
-        result = state_machine.validated_hardness_turn_off(mode=self.tester_mode)
+        if self.state_machine is None:
+            raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
+        result = self.state_machine.validated_hardness_turn_off(mode=self.tester_mode, hardness_tester=self)
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness turn-off action failed")
         return True
 
-    def zero(self, state_machine) -> bool:
+    def zero(self) -> bool:
         """
-        Actuate the tester zero button via the state machine action framework.
+        Actuate the tester zero button via the stored state machine.
         """
-        if state_machine is None:
-            raise ValueError("state_machine is required for zero()")
-        result = state_machine.validated_hardness_zero(mode=self.tester_mode)
+        if self.state_machine is None:
+            raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
+        result = self.state_machine.validated_hardness_zero(mode=self.tester_mode, hardness_tester=self)
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness zero action failed")
         return True
 
+    @staticmethod
     def is_display_zero(self, debug=False, debug_prefix="display_zero") -> bool:
         """
         Run a consensus display capture and check whether value is 0000-0005.
@@ -416,13 +454,99 @@ class HardnessTester(Tool):
         return segment_points
     
     def _init_camera(self):
-        """Initialize cv2.VideoCapture camera."""
-        print(f"Initializing camera (device {self.cam_id})...")
-        self.cap = cv2.VideoCapture(self.cam_id)
+        """Initialize cv2.VideoCapture by resolving cam_usb_path to a device index.
+
+        Raises RuntimeError if cam_usb_path is not configured or cannot be
+        resolved to a valid /dev/videoN index, or if the VideoCapture cannot
+        be opened.
+        """
+        if not self.cam_usb_path:
+            raise RuntimeError(
+                f"Cannot open camera for {self.tester_mode}: cam_usb_path is not configured"
+            )
+        resolved = self.resolve_cam_index_from_usb_path(self.cam_usb_path)
+        if resolved is None:
+            raise RuntimeError(
+                f"Cannot open camera for {self.tester_mode}: "
+                f"cam_usb_path '{self.cam_usb_path}' could not be resolved to a device index"
+            )
+        self._resolved_cam_index = resolved
+        print(f"Initializing camera (device {resolved})...")
+        self.cap = cv2.VideoCapture(resolved)
         if not self.cap.isOpened():
             self.cap = None
-            raise RuntimeError(f"Failed to open camera device {self.cam_id}")
+            raise RuntimeError(f"Failed to open camera device {resolved}")
         print("Camera initialized successfully")
+
+    def open_camera(self) -> None:
+        """Open (or re-open) the camera for this tester.
+
+        Resolves cam_usb_path to a device index. Safe to call when the camera
+        is already open - closes the existing handle first.
+        """
+        if self.cap is not None and self.cap.isOpened():
+            self.cap.release()
+            self.cap = None
+        self._init_camera()
+
+    def close_camera(self) -> None:
+        """Release the camera handle for this tester."""
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+            print(f"Camera closed for {self.tester_mode}")
+
+    def reset_camera(self) -> None:
+        """Close then reopen the camera, re-deriving the index from cam_usb_path."""
+        self.close_camera()
+        self._init_camera()
+
+    @staticmethod
+    def resolve_cam_index_from_usb_path(usb_path: str) -> Optional[int]:
+        """Resolve a USB/v4l by-path string to an integer OpenCV camera index.
+
+        Handles:
+        - /dev/v4l/by-path/ and /dev/v4l/by-id/ symlinks (Linux)
+        - Direct /dev/videoN paths
+        - Plain integer strings ("2")
+
+        The by-path convention for multi-function USB cameras exposes a
+        ``-video-index0`` variant for the actual image stream and
+        ``-video-index1`` (or higher) for metadata; this method always
+        follows the symlink target, so callers should pass the
+        ``-video-index0`` path explicitly to get the data stream.
+
+        Returns the integer index, or None if the path cannot be resolved.
+        """
+        if not usb_path:
+            return None
+        if str(usb_path).strip().lstrip("-").isdigit():
+            return int(str(usb_path).strip())
+        try:
+            real_path = os.path.realpath(usb_path)
+            m = re.search(r'/dev/video(\d+)$', real_path)
+            if m:
+                return int(m.group(1))
+        except (OSError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def enumerate_available_cam_indices(max_id: int = 10) -> list:
+        """Return all camera indices in [0, max_id) that OpenCV can open.
+
+        Each index is tested by attempting to open a VideoCapture; only
+        indices where the capture reports isOpened() are returned. Always
+        picks index 0 of each USB device (actual image stream, not
+        metadata) when using numeric indices.
+        """
+        available = []
+        for idx in range(max_id):
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                available.append(idx)
+            cap.release()
+        return available
 
     def capture_image(self, save=False, output_path='lcd_capture.jpg'):
         """
@@ -1200,7 +1324,6 @@ def main():
     print("\nInitializing LCD reader...")
     reader = HardnessTester(
         num_digits=4,
-        cam_id=0,
         use_camera=(args.image is None),
         sharpen_strength=args.sharpen_strength,
         sharpen_blur_radius=args.sharpen_blur_radius,

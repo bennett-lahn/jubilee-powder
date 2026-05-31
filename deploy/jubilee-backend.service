@@ -1,22 +1,27 @@
 [Unit]
 Description=Jubilee Automation Backend
-# Start after the network is up so the Duet board is reachable
-After=network-online.target
-Wants=network-online.target
+# network.target is reliable on all Raspberry Pi OS versions.
+# network-online.target is intentionally avoided - it requires extra systemd
+# services to be enabled (NetworkManager-wait-online / systemd-networkd-wait-online)
+# and silently blocks boot on Raspberry Pi OS if those are not active.
+# The backend's own hardware connect logic handles retries if the Duet is not
+# yet reachable at startup.
+After=network.target
 
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=/home/%i/jubilee-automation
-# Activate the virtual environment created by install.sh
-ExecStart=/home/%i/jubilee-automation/.venv/bin/uvicorn \
+WorkingDirectory=/home/%i/jubilee-powder
+ExecStart=/home/%i/jubilee-powder/.venv/bin/uvicorn \
     frontend.server:app \
     --host 0.0.0.0 \
     --port 8000
-Restart=on-failure
+# Restart=always covers both crash exits and clean exits (e.g. import errors)
+Restart=always
 RestartSec=5
-# Give hardware devices time to be ready after a reboot
-ExecStartPre=/bin/sleep 3
+# Hard cap so a broken service does not spam restarts indefinitely
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Install]
 WantedBy=multi-user.target

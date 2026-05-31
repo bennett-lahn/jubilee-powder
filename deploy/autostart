@@ -13,4 +13,4 @@
 @xset s noblank
 
 # Launch the kiosk browser once the desktop is ready
-@/home/pi/jubilee-automation/deploy/kiosk.sh
+@/home/pi/jubilee-powder/deploy/kiosk.sh

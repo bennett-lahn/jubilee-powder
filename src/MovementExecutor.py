@@ -506,32 +506,69 @@ class MovementExecutor:
         self.last_hardness_error = sample_error
         return True
 
-    def execute_hardness_turn_on(self, mode: Optional[str] = None) -> bool:
-        """
-        Placeholder for Shore tester power-button actuation.
+    def execute_hardness_turn_on(
+        self,
+        mode: Optional[str] = None,
+        servo_channel: int = None,
+        press_angle: int = None,
+        release_angle: int = None,
+    ) -> bool:
+        """Press and release the power button on the specified Shore tester."""
+        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "turn_on")
 
-        Intentionally left as a stub for hardware-specific implementation.
-        """
-        # TODO: Implement Shore tester power-button servo actuation.
-        return False
+    def execute_hardness_turn_off(
+        self,
+        mode: Optional[str] = None,
+        servo_channel: int = None,
+        press_angle: int = None,
+        release_angle: int = None,
+    ) -> bool:
+        """Press and release the power button on the specified Shore tester (to turn off)."""
+        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "turn_off")
 
-    def execute_hardness_turn_off(self, mode: Optional[str] = None) -> bool:
-        """
-        Placeholder for Shore tester power-button actuation.
+    def execute_hardness_zero(
+        self,
+        mode: Optional[str] = None,
+        servo_channel: int = None,
+        press_angle: int = None,
+        release_angle: int = None,
+    ) -> bool:
+        """Press and release the zero button on the specified Shore tester."""
+        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "zero")
 
-        Intentionally left as a stub for hardware-specific implementation.
-        """
-        # TODO: Implement Shore tester power-button servo actuation.
-        return False
+    def _actuate_servo(
+        self,
+        mode: Optional[str],
+        servo_channel: Optional[int],
+        press_angle: Optional[int],
+        release_angle: Optional[int],
+        action: str,
+    ) -> bool:
+        """Send M280 press/release gcode for a single servo button actuation.
 
-    def execute_hardness_zero(self, mode: Optional[str] = None) -> bool:
+        Args:
+            mode: Tester mode string (for logging only).
+            servo_channel: Duet servo channel number (integer).
+            press_angle: Servo angle in degrees to press the button (0-180).
+            release_angle: Servo angle in degrees to release the button (0-180).
+            action: Action label for log messages.
         """
-        Placeholder for Shore tester zero-button actuation.
-
-        Intentionally left as a stub for hardware-specific implementation.
-        """
-        # TODO: Implement Shore tester zero-button servo actuation.
-        return False
+        if servo_channel is None or press_angle is None or release_angle is None:
+            print(
+                f"WARNING: _actuate_servo called with missing parameters "
+                f"(mode={mode}, channel={servo_channel}, press={press_angle}, "
+                f"release={release_angle}, action={action})"
+            )
+            return False
+        try:
+            self._machine.gcode(f"M280 P{servo_channel} S{press_angle}")
+            self._machine.gcode("G4 P500")
+            self._machine.gcode(f"M280 P{servo_channel} S{release_angle}")
+            self._machine.gcode("M400")
+            return True
+        except Exception as e:
+            print(f"Error actuating servo (mode={mode}, action={action}): {e}")
+            return False
 
 
     def execute_home_all(self, registry) -> bool:

@@ -2,7 +2,7 @@
 # install.sh - Set up Jubilee Automation for auto-launch on Raspberry Pi.
 #
 # Run once after cloning the repo:
-#   cd ~/jubilee-automation
+#   cd ~/jubilee-powder
 #   bash deploy/install.sh
 #
 # What this script does:
@@ -38,14 +38,26 @@ info "Installing as user: ${CURRENT_USER}"
 # ---------------------------------------------------------------------------
 info "Installing system packages ..."
 apt-get update -qq
+
+# Install everything except Node.js first so curl is available for NodeSource
 apt-get install -y --no-install-recommends \
     chromium-browser \
     unclutter \
     curl \
-    nodejs \
-    npm \
     python3-venv \
     python3-pip
+
+# Raspberry Pi OS ships Node.js 18 via apt, which is too old for Vite 8
+# (requires Node 20.19+ or 22.12+).  Install Node.js 22 LTS from NodeSource.
+NODE_MAJOR=22
+if ! node --version 2>/dev/null | grep -q "^v${NODE_MAJOR}\."; then
+    info "Installing Node.js ${NODE_MAJOR} LTS from NodeSource ..."
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
+    apt-get install -y nodejs
+    ok "Node.js $(node --version) installed."
+else
+    ok "Node.js $(node --version) already satisfies requirement (>= ${NODE_MAJOR})."
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Build the React frontend
