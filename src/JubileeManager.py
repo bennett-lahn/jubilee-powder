@@ -357,11 +357,13 @@ class JubileeManager:
                 tester_mode="shore_a",
                 config_payload={"hardness_testers": hardness_testers_cfg},
                 use_camera=False,
+                state_machine=self.state_machine,
             )
             self.hardness_tester_shore_d = HardnessTester.from_system_config(
                 tester_mode="shore_d",
                 config_payload={"hardness_testers": hardness_testers_cfg},
                 use_camera=False,
+                state_machine=self.state_machine,
             )
 
             # Ensure state machine context is set correctly for homing
@@ -531,6 +533,7 @@ class JubileeManager:
         pickup_result = self.state_machine.validated_pickup_tool(tool)
         if not pickup_result.valid:
             raise RuntimeError(f"Failed to pick up tool '{tool.name}': {pickup_result.reason}")
+
         return True
 
     def ensure_tool_active(self, required_tool) -> bool:
@@ -567,7 +570,7 @@ class JubileeManager:
         if not self.hardness_tester_shore_a:
             raise ToolStateError("Shore-A hardness tester is not configured.")
         return self.hardness_tester_shore_a
-    
+
     def dispense_to_well(self, well_id: str, target_weight: float) -> bool:
         """
         Perform complete powder dispense operation to a well.
@@ -726,7 +729,7 @@ class JubileeManager:
                 raise RuntimeError("State machine not configured")
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
-            selected_tester.turn_on(self.state_machine)
+            selected_tester.turn_on()
             return True
         except Exception as e:
             print(f"Error turning on hardness tester: {e}")
@@ -741,7 +744,7 @@ class JubileeManager:
                 raise RuntimeError("State machine not configured")
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
-            selected_tester.turn_off(self.state_machine)
+            selected_tester.turn_off()
             return True
         except Exception as e:
             print(f"Error turning off hardness tester: {e}")
@@ -756,7 +759,7 @@ class JubileeManager:
                 raise RuntimeError("State machine not configured")
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
-            selected_tester.zero(self.state_machine)
+            selected_tester.zero()
             return True
         except Exception as e:
             print(f"Error zeroing hardness tester: {e}")

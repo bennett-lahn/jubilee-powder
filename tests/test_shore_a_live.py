@@ -126,12 +126,12 @@ def _annotate_live(frame: np.ndarray, reading: str, calibrated: bool) -> np.ndar
 
 
 
-def run_live_feed(cam_id: int, calibration_path: str, debug: bool):
+def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
     """Continuous live camera loop with real-time LCD translation."""
-    print(f"Initializing Shore A camera (device {cam_id})...")
+    print(f"Initializing Shore A camera (USB path: {cam_usb_path})...")
     reader = HardnessTester(
         num_digits=4,
-        cam_id=cam_id,
+        cam_usb_path=cam_usb_path,
         use_camera=True,
         tester_mode="shore_a",
         calibration_path=calibration_path,
@@ -250,11 +250,11 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
-        "--cam-id",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Camera device index (default: 0)",
+        "--cam-usb-path",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="USB device path for the camera (e.g. /dev/v4l/by-path/...-video-index0)",
     )
     parser.add_argument(
         "--calibration",
@@ -270,7 +270,7 @@ def main():
     )
     args = parser.parse_args()
 
-    run_live_feed(args.cam_id, args.calibration, args.debug)
+    run_live_feed(args.cam_usb_path, args.calibration, args.debug)
 
 
 if __name__ == "__main__":

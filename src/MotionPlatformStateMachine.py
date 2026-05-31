@@ -1799,42 +1799,119 @@ class MotionPlatformStateMachine(StateMachine):
             hardness_tester=hardness_tester,
         )
 
-    def validated_hardness_turn_on(self, mode: Optional[str] = None) -> MoveValidationResult:
+    @staticmethod
+    def _extract_servo_angles(hardness_tester, button: str) -> tuple:
+        """Extract and validate servo channel and angles from a HardnessTester.
+
+        Args:
+            hardness_tester: HardnessTester instance (duck-typed).
+            button: "power" or "zero".
+
+        Returns:
+            (servo_channel, press_angle, release_angle, error_message).
+            error_message is None on success; a descriptive string on failure.
+            Both angles are validated to be in [0, 180].
+        """
+        if hardness_tester is None:
+            return None, None, None, "hardness_tester is required for servo actuation"
+
+        servo_id = getattr(hardness_tester, "servo", None)
+        tester_mode = getattr(hardness_tester, "tester_mode", "unknown")
+
+        if button == "power":
+            press_angle = getattr(hardness_tester, "power_press_angle", None)
+            release_angle = getattr(hardness_tester, "power_release_angle", None)
+        elif button == "zero":
+            press_angle = getattr(hardness_tester, "zero_press_angle", None)
+            release_angle = getattr(hardness_tester, "zero_release_angle", None)
+        else:
+            return None, None, None, f"Unknown button '{button}'; expected 'power' or 'zero'"
+
+        if not servo_id:
+            return None, None, None, (
+                f"No servo configured on {tester_mode} tester"
+            )
+
+        if press_angle is None or release_angle is None:
+            return None, None, None, (
+                f"Servo angles for '{button}' button are not configured on {tester_mode} tester"
+            )
+
+        for label, angle in (("press", press_angle), ("release", release_angle)):
+            if not (0 <= int(angle) <= 180):
+                return None, None, None, (
+                    f"Servo {label}_angle {angle} is out of range [0, 180] "
+                    f"for '{button}' button on {tester_mode} tester"
+                )
+
+        s = str(servo_id).strip()
+        try:
+            channel = int(s[1:]) if s.upper().startswith("S") else int(s)
+        except ValueError:
+            return None, None, None, f"Cannot parse servo identifier '{servo_id}'"
+
+        return channel, int(press_angle), int(release_angle), None
+
+    def validated_hardness_turn_on(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-on button actuation.
 
-        This action is intentionally allowed at any position.
+        Extracts the servo channel and press/release angles from hardness_tester,
+        validates that both angles are in the range [0, 180], then delegates to
+        the executor. This action is intentionally allowed at any position.
         """
+        channel, press, release, err = self._extract_servo_angles(hardness_tester, "power")
+        if err:
+            return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
             action_id="hardness_turn_on",
             execution_func=self._executor.execute_hardness_turn_on,
             mode=mode,
+            servo_channel=channel,
+            press_angle=press,
+            release_angle=release,
         )
 
-    def validated_hardness_turn_off(self, mode: Optional[str] = None) -> MoveValidationResult:
+    def validated_hardness_turn_off(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-off button actuation.
 
-        This action is intentionally allowed at any position.
+        Extracts the servo channel and press/release angles from hardness_tester,
+        validates that both angles are in the range [0, 180], then delegates to
+        the executor. This action is intentionally allowed at any position.
         """
+        channel, press, release, err = self._extract_servo_angles(hardness_tester, "power")
+        if err:
+            return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
             action_id="hardness_turn_off",
             execution_func=self._executor.execute_hardness_turn_off,
             mode=mode,
+            servo_channel=channel,
+            press_angle=press,
+            release_angle=release,
         )
 
-    def validated_hardness_zero(self, mode: Optional[str] = None) -> MoveValidationResult:
+    def validated_hardness_zero(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester zero button actuation.
 
-        This action is intentionally allowed at any position.
+        Extracts the servo channel and press/release angles from hardness_tester,
+        validates that both angles are in the range [0, 180], then delegates to
+        the executor. This action is intentionally allowed at any position.
         """
+        channel, press, release, err = self._extract_servo_angles(hardness_tester, "zero")
+        if err:
+            return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
             action_id="hardness_zero",
             execution_func=self._executor.execute_hardness_zero,
             mode=mode,
+            servo_channel=channel,
+            press_angle=press,
+            release_angle=release,
         )
-    
+
     def validated_fill_powder(
         self,
         target_weight: float
