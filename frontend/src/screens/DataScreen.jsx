@@ -24,7 +24,7 @@ import ArcProgress from '../components/ArcProgress'
 const DISPENSING_ROWS = 4
 const DISPENSING_COLS = 6
 const SAMPLE_TRAY_ROWS = 5
-const SAMPLE_TRAY_COLS = 5
+const SAMPLE_TRAY_COLS = 7
 const SAMPLE_TRAY_COUNT = 2
 const HARDNESS_ROWS = SAMPLE_TRAY_ROWS
 

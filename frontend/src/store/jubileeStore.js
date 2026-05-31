@@ -57,7 +57,7 @@ function wsUrl() {
 const RECONNECT_DELAY_MS = 1500
 
 const HARDNESS_ROWS = 5
-const HARDNESS_COLS = 5
+const HARDNESS_COLS = 7
 const HARDNESS_TRAY_COUNT = 2
 
 function initDispensingWells() {

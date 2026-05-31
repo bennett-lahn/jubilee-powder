@@ -6,7 +6,6 @@ Loads system-wide configuration parameters from JSON files.
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any
 
 class ConfigLoader:
     """Loads and manages system configuration"""
@@ -79,48 +78,6 @@ class ConfigLoader:
     def get_tamp_speed_max(self) -> int:
         """Get maximum tamp speed in mm/min"""
         return self.get("manipulator.tamp_speed_max", None)
-
-    def get_tool_offsets(self) -> Dict[str, Dict[str, float]]:
-        """
-        Get the tool-offset table from system config.
-
-        Returns a dict mapping offset_id (e.g. "manipulator", "durometer",
-        "durometer_z_probe") to a dict with float x/y/z components. The
-        'description' key, if present in the config, is filtered out so
-        callers can iterate offsets safely.
-        """
-        offsets = self.get("tool_offsets", {}) or {}
-        result: Dict[str, Dict[str, float]] = {}
-        for offset_id, value in offsets.items():
-            if offset_id == "description":
-                continue
-            if not isinstance(value, dict):
-                continue
-            result[offset_id] = {
-                "x": float(value.get("x")),
-                "y": float(value.get("y")),
-                "z": float(value.get("z")),
-            }
-        return result
-
-    def get_default_offset_for_tool(self, tool_name: str) -> str:
-        """
-        Get the default tool-offset id associated with a given tool name.
-
-        Falls back to "manipulator" (zero offset) when the tool does not
-        explicitly declare a default_offset, so the system always has a
-        well-defined offset to assume.
-        """
-        tools_cfg = self.get("tools", {}) or {}
-        for tool_cfg in tools_cfg.values():
-            if not isinstance(tool_cfg, dict):
-                continue
-            if tool_cfg.get("name") == tool_name:
-                offset_id = tool_cfg.get("default_offset")
-                if isinstance(offset_id, str) and offset_id:
-                    return offset_id
-                break
-        return "manipulator"
 
 # Global config instance
 config = ConfigLoader()

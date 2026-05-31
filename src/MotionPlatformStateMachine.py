@@ -57,42 +57,6 @@ class ZHeightPolicy:
         return None
 
 
-@dataclass(frozen=True)
-class OffsetPolicy:
-    """
-    Defines the tool-offset constraints that must be satisfied before a
-    move or action.
-
-    A tool offset (manipulator/durometer/durometer_z_probe) shifts the
-    commanded XYZ coordinate so that the active tool tip lands on the
-    position-frame coordinates defined in motion_platform_positions.json.
-
-    A policy with neither 'required' nor 'allowed' set is treated as an
-    explicit "no constraint" and accepts any offset, including None.
-    """
-
-    allowed: frozenset[str] = field(default_factory=frozenset)
-    required: Optional[str] = None
-
-    def validate(self, offset_id: Optional[str]) -> Optional[str]:
-        """Return a human readable error message if the policy is not satisfied."""
-        if not self.required and not self.allowed:
-            return None
-
-        if (self.required or self.allowed) and offset_id is None:
-            return "Current tool offset is not set."
-
-        if self.required and offset_id != self.required:
-            current = "None" if offset_id is None else offset_id
-            return f"Move requires tool offset '{self.required}', current '{current}'."
-
-        if self.allowed and offset_id not in self.allowed:
-            allowed = ", ".join(sorted(self.allowed))
-            current = "None" if offset_id is None else offset_id
-            return f"Tool offset '{current}' not permitted. Allowed: {allowed}."
-
-        return None
-
 
 @dataclass(frozen=True)
 class MachineCoordinates:
@@ -121,7 +85,6 @@ class PositionDescriptor:
     coordinates: Optional[MachineCoordinates] = None
     requirements: Mapping[str, object] = field(default_factory=dict)
     z_height_policy: ZHeightPolicy = field(default_factory=ZHeightPolicy)
-    offset_policy: OffsetPolicy = field(default_factory=OffsetPolicy)
     allows_tool_engagement: bool = False
     engagement_requirements: Mapping[str, object] = field(default_factory=dict)
     engagement_actions: frozenset[str] = field(default_factory=frozenset)
@@ -139,7 +102,6 @@ class ActionDescriptor:
     requirements: Mapping[str, object] = field(default_factory=dict)
     excludes: Mapping[str, object] = field(default_factory=dict)
     required_tool_id: Optional[str] = None
-    required_offset: Optional[str] = None
     requires_tool_engaged: bool = False
     blocked_when_engaged: bool = False
     description: str = ""
@@ -163,9 +125,6 @@ class MotionContext:
     z_height_id: Optional[str] = None
     active_tool_id: Optional[str] = None
     payload_state: Optional[str] = None
-    # Tool-tip XYZ offset id active on the platform. Defaults to "manipulator"
-    # which has zero offset and is the reference frame.
-    tool_offset_id: Optional[str] = "manipulator"
     tool_states: Dict[str, ToolStatus] = field(default_factory=dict)
     pending_move: Optional["MoveRequest"] = None
     engaged_ready_position_id: Optional[str] = None
@@ -212,12 +171,6 @@ class PositionRegistry:
         self._z_heights: Dict[str, object] = {}
         self._coordinate_tolerance: Dict[str, float] = {}
         self._supported_tool_ids: frozenset[str] = frozenset()
-        # Tool-tip offsets: offset_id -> {"x": float, "y": float, "z": float}
-        self._tool_offsets: Dict[str, Dict[str, float]] = {}
-        # tool name -> default offset id (loaded from system_config tools.*.default_offset)
-        self._tool_default_offsets: Dict[str, str] = {}
-        # tool name -> firmware tool index (loaded from system_config tools.*.index)
-        self._tool_indices: Dict[str, int] = {}
 
         for position in positions:
             self.add_position(position)
@@ -266,57 +219,6 @@ class PositionRegistry:
 
         return frozenset(tool_ids)
 
-    @staticmethod
-    def _extract_tool_offsets(payload: dict) -> Dict[str, Dict[str, float]]:
-        """Extract the tool-offset table from a system_config payload."""
-        offsets_cfg = payload.get("tool_offsets", {}) or {}
-        result: Dict[str, Dict[str, float]] = {}
-        if not isinstance(offsets_cfg, dict):
-            return result
-        for offset_id, value in offsets_cfg.items():
-            if offset_id == "description":
-                continue
-            if not isinstance(value, dict):
-                continue
-            result[offset_id] = {
-                "x": float(value.get("x", 0.0)),
-                "y": float(value.get("y", 0.0)),
-                "z": float(value.get("z", 0.0)),
-            }
-        return result
-
-    @staticmethod
-    def _extract_tool_default_offsets(payload: dict) -> Dict[str, str]:
-        """Map tool name -> default offset id from a system_config payload."""
-        defaults: Dict[str, str] = {}
-        tools_cfg = payload.get("tools", {})
-        if isinstance(tools_cfg, dict):
-            for tool_cfg in tools_cfg.values():
-                if not isinstance(tool_cfg, dict):
-                    continue
-                name = tool_cfg.get("name")
-                offset_id = tool_cfg.get("default_offset")
-                if isinstance(name, str) and isinstance(offset_id, str) and offset_id:
-                    defaults[name] = offset_id
-        return defaults
-
-    @staticmethod
-    def _extract_tool_indices(payload: dict) -> Dict[str, int]:
-        """Map tool name -> firmware tool index from a system_config payload."""
-        indices: Dict[str, int] = {}
-        tools_cfg = payload.get("tools", {})
-        if not isinstance(tools_cfg, dict):
-            return indices
-
-        for tool_cfg in tools_cfg.values():
-            if not isinstance(tool_cfg, dict):
-                continue
-            name = tool_cfg.get("name")
-            index = tool_cfg.get("index")
-            if isinstance(name, str) and isinstance(index, int):
-                indices[name] = index
-        return indices
-
     @classmethod
     def from_config_file(
         cls,
@@ -351,12 +253,6 @@ class PositionRegistry:
                 required=z_policy_config.get("required"),
             )
 
-            offset_policy_config = raw.get("offset_policy", {})
-            offset_policy = OffsetPolicy(
-                allowed=frozenset(offset_policy_config.get("allowed", [])),
-                required=offset_policy_config.get("required"),
-            )
-
             engagement_cfg = raw.get("engagement") or {}
             
             # Parse coordinates if present
@@ -379,7 +275,6 @@ class PositionRegistry:
                 coordinates=coordinates,
                 requirements=dict(raw.get("requirements", {})),
                 z_height_policy=z_policy,
-                offset_policy=offset_policy,
                 allows_tool_engagement=raw.get("allows_tool_engagement", False),
                 engagement_requirements=dict(engagement_cfg.get("requirements", {})),
                 engagement_actions=frozenset(engagement_cfg.get("allowed_actions", [])),
@@ -414,7 +309,6 @@ class PositionRegistry:
                 coordinates=descriptor.coordinates,
                 requirements=descriptor.requirements,
                 z_height_policy=descriptor.z_height_policy,
-                offset_policy=descriptor.offset_policy,
                 allows_tool_engagement=descriptor.allows_tool_engagement,
                 engagement_requirements=descriptor.engagement_requirements,
                 engagement_actions=descriptor.engagement_actions,
@@ -432,7 +326,6 @@ class PositionRegistry:
                 requirements=dict(action_cfg.get("requirements", {})),
                 excludes=dict(action_cfg.get("excludes", {})),
                 required_tool_id=action_cfg.get("required_tool_id"),
-                required_offset=action_cfg.get("required_offset"),
                 requires_tool_engaged=action_cfg.get("requires_tool_engaged", False),
                 blocked_when_engaged=action_cfg.get("blocked_when_engaged", False),
                 description=action_cfg.get("description", ""),
@@ -443,9 +336,6 @@ class PositionRegistry:
         if system_config.exists():
             sys_payload = cls._load_system_config_payload(system_config)
             registry._supported_tool_ids = cls._extract_supported_tool_ids(sys_payload)
-            registry._tool_offsets = cls._extract_tool_offsets(sys_payload)
-            registry._tool_default_offsets = cls._extract_tool_default_offsets(sys_payload)
-            registry._tool_indices = cls._extract_tool_indices(sys_payload)
         registry._z_heights = dict(payload.get("z_heights", {}))
         
         tolerance_cfg = payload.get("coordinate_tolerance", {})
@@ -499,54 +389,6 @@ class PositionRegistry:
     def supported_tool_ids(self) -> frozenset[str]:
         return self._supported_tool_ids
 
-    @property
-    def tool_offsets(self) -> Dict[str, Dict[str, float]]:
-        """Mapping of offset_id -> {x, y, z} offsets in mm."""
-        return {k: dict(v) for k, v in self._tool_offsets.items()}
-
-    @property
-    def tool_default_offsets(self) -> Dict[str, str]:
-        """Mapping of tool name -> default offset id."""
-        return dict(self._tool_default_offsets)
-
-    @property
-    def tool_indices(self) -> Dict[str, int]:
-        """Mapping of tool name -> firmware tool index."""
-        return dict(self._tool_indices)
-
-    def get_tool_offset(self, offset_id: Optional[str]) -> Tuple[float, float, float]:
-        """
-        Return the (x, y, z) offset components in mm for a given offset id.
-
-        A None offset_id resolves to (0, 0, 0). An unknown offset_id raises
-        KeyError to surface configuration errors loudly.
-        """
-        if offset_id is None:
-            return (0.0, 0.0, 0.0)
-        if offset_id not in self._tool_offsets:
-            raise KeyError(f"Unknown tool offset id '{offset_id}'")
-        offset = self._tool_offsets[offset_id]
-        return (
-            float(offset.get("x", 0.0)),
-            float(offset.get("y", 0.0)),
-            float(offset.get("z", 0.0)),
-        )
-
-    def get_default_offset_for_tool(self, tool_name: Optional[str]) -> str:
-        """
-        Get the default tool offset for a tool name, falling back to
-        'manipulator' (zero offset) when not configured.
-        """
-        if tool_name and tool_name in self._tool_default_offsets:
-            return self._tool_default_offsets[tool_name]
-        return "manipulator"
-
-    def get_tool_index(self, tool_name: Optional[str]) -> Optional[int]:
-        """Get firmware tool index for the given tool name."""
-        if not tool_name:
-            return None
-        return self._tool_indices.get(tool_name)
-    
     def validate_machine_position(
         self,
         position_id: str,
@@ -1494,11 +1336,6 @@ class MotionPlatformStateMachine(StateMachine):
         if z_height_issue:
             return MoveValidationResult(valid=False, reason=z_height_issue)
 
-        # Step 4b: Validate tool-offset policy
-        offset_issue = target_descriptor.offset_policy.validate(self.context.tool_offset_id)
-        if offset_issue:
-            return MoveValidationResult(valid=False, reason=offset_issue)
-
         # Step 5: Validate position requirements
         requirement_issue = self._validate_requirements(target_descriptor.requirements)
         if requirement_issue:
@@ -1594,18 +1431,6 @@ class MotionPlatformStateMachine(StateMachine):
                     reason=(
                         f"Action '{action_id}' requires tool '{descriptor.required_tool_id}'. "
                         f"Current tool: '{self.context.active_tool_id}'."
-                    )
-                )
-
-        # Step 4b: Validate required tool offset (if any)
-        if descriptor.required_offset:
-            if self.context.tool_offset_id != descriptor.required_offset:
-                current = self.context.tool_offset_id or "None"
-                return MoveValidationResult(
-                    valid=False,
-                    reason=(
-                        f"Action '{action_id}' requires tool offset "
-                        f"'{descriptor.required_offset}'. Current: '{current}'."
                     )
                 )
 
@@ -1886,18 +1711,76 @@ class MotionPlatformStateMachine(StateMachine):
             z=ready_z,
         )
 
+    def validated_move_to_hardness_sample(
+        self,
+        tray_index: str | int,
+        sample_id: str | int,
+    ) -> MoveValidationResult:
+        """
+        Validate and execute movement to a specific hardness sample slot.
+
+        Resolves the per-slot position from the registry using the
+        ``sample_tray_{tray_index}_slot_{sample_id}`` identifier. The
+        state machine owns all coordinate validation; the executor
+        receives only the resolved (x, y, z) floats.
+        """
+        try:
+            tray_index_int = int(str(tray_index))
+        except (TypeError, ValueError):
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Tray index '{tray_index}' must be a non-negative integer",
+            )
+        if tray_index_int < 0:
+            return MoveValidationResult(valid=False, reason="Tray index must be non-negative")
+
+        try:
+            sample_index = int(str(sample_id))
+        except (TypeError, ValueError):
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Sample id '{sample_id}' must be a non-negative integer",
+            )
+        if sample_index < 0:
+            return MoveValidationResult(valid=False, reason="Sample id must be non-negative")
+
+        slot_id = f"sample_tray_{tray_index_int}_slot_{sample_index}"
+        if not self._registry.has(slot_id):
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Sample slot '{slot_id}' is not registered in the position configuration",
+            )
+
+        pos_result = self._resolve_ready_position_coords(slot_id, require_v=False)
+        if pos_result.error:
+            return pos_result.error
+        if pos_result.coords is None:
+            return MoveValidationResult(
+                valid=False,
+                reason=f"Sample slot '{slot_id}' coordinates could not be resolved",
+            )
+        ready_x, ready_y, ready_z, _ = pos_result.coords
+
+        return self._validate_and_execute_move(
+            target_position_id=slot_id,
+            execution_func=self._executor.execute_move_to_hardness_sample,
+            x=ready_x,
+            y=ready_y,
+            z=ready_z,
+        )
+
     def validated_test_sample(
         self,
         tray_index: str | int,
         sample_id: str | int,
         mode: Optional[str] = None,
-        target_x: Optional[float] = None,
-        target_y: Optional[float] = None,
-        target_z: Optional[float] = None,
         hardness_tester=None,
     ) -> MoveValidationResult:
         """
-        Validate and execute the hardness sample action.
+        Validate and execute the hardness measurement at the current sample slot.
+
+        The machine must already be positioned at the target slot (via
+        ``validated_move_to_hardness_sample``) before this action is called.
         """
         try:
             tray_index_int = int(str(tray_index))
@@ -1913,11 +1796,7 @@ class MotionPlatformStateMachine(StateMachine):
             tray_index=tray_index_int,
             sample_id=str(sample_id),
             mode=mode,
-            target_x=target_x,
-            target_y=target_y,
-            target_z=target_z,
             hardness_tester=hardness_tester,
-            state_machine=self,
         )
 
     def validated_hardness_turn_on(self, mode: Optional[str] = None) -> MoveValidationResult:
@@ -1987,6 +1866,36 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="fill_mold",
             execution_func=self._executor.execute_fill_powder,
             target_weight=target_weight
+        )
+
+    def validated_open_powder_dispenser_cover(self) -> MoveValidationResult:
+        """
+        Validate and execute opening the powder dispenser cover.
+
+        Requires the manipulator tool to be active, a mold to be placed on the
+        scale, and the tool to be engaged at the scale_active position.
+
+        Returns:
+            MoveValidationResult with outcome
+        """
+        return self._validate_and_execute(
+            action_id="open_powder_dispenser_cover",
+            execution_func=self._executor.execute_open_powder_dispenser_cover
+        )
+
+    def validated_close_powder_dispenser_cover(self) -> MoveValidationResult:
+        """
+        Validate and execute closing the powder dispenser cover.
+
+        Requires the manipulator tool to be active, a mold to be placed on the
+        scale, and the tool to be engaged at the scale_active position.
+
+        Returns:
+            MoveValidationResult with outcome
+        """
+        return self._validate_and_execute(
+            action_id="close_powder_dispenser_cover",
+            execution_func=self._executor.execute_close_powder_dispenser_cover
         )
 
     def validated_move_to_global_ready(
@@ -2080,9 +1989,6 @@ class MotionPlatformStateMachine(StateMachine):
                 self.context.position_id = global_ready_pos.identifier
                 # Set z_height to mold_transfer_safe (default after homing)
                 self.context.z_height_id = "mold_transfer_safe"
-            # No tool is active after homing, so the active offset returns to
-            # the manipulator (zero) reference frame.
-            self.context.tool_offset_id = "manipulator"
 
         return result
     
@@ -2167,10 +2073,9 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=f"Unsupported tool '{tool_id}'. Supported tools: {self._format_options(supported_tool_ids)}"
             )
 
-        # Pickup is only valid from global_ready under the manipulator (zero)
-        # offset (enforced by the action's position_scope and required_offset).
-        # Resolve the recentering coordinates here so the executor only has to
-        # drive the machine after the tpost macro completes.
+        # Pickup is only valid from global_ready (enforced by the action's
+        # position_scope). Resolve the recentering coordinates here so the
+        # executor only has to drive the machine after the tpost macro completes.
         global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
         if global_ready_pos is None:
             return MoveValidationResult(
@@ -2206,16 +2111,6 @@ class MotionPlatformStateMachine(StateMachine):
                 # Set z_height to mold_transfer_safe
                 self.context.z_height_id = "mold_transfer_safe"
 
-            # Now that we're at global_ready, switch to the tool's default
-            # offset. This must happen AFTER arrival so the offset change is
-            # always safe (we never traverse with a stale offset and the new
-            # tool tip).
-            target_offset = self._registry.get_default_offset_for_tool(tool_id)
-            if target_offset != self.context.tool_offset_id:
-                offset_result = self.apply_tool_offset(target_offset)
-                if not offset_result.valid:
-                    return offset_result
-
         return result
     
     def validated_park_tool(
@@ -2225,10 +2120,7 @@ class MotionPlatformStateMachine(StateMachine):
         Validate and execute parking the current tool.
 
         Valid from global_ready position. Requires a supported tool to be active.
-        Returns to global_ready position. Before the firmware park executes,
-        the active tool offset is restored to ``manipulator`` (the zero-offset
-        reference frame) so we never leave global_ready with a stale offset
-        and we never approach the parking post under a non-zero offset.
+        Returns to global_ready position.
 
         Note: The machine's park_tool() method is decorated with @requires_safe_z,
         which automatically raises the bed height to deck.safe_z + 20 if it is not
@@ -2237,18 +2129,6 @@ class MotionPlatformStateMachine(StateMachine):
         Returns:
             MoveValidationResult with outcome
         """
-        # Restore the manipulator (zero) offset BEFORE leaving global_ready.
-        # This both satisfies the user's safety rule and ensures that any
-        # firmware park macro that snaps back to the original position lands
-        # at the correct, offset-free pose.
-        if self.context.tool_offset_id != "manipulator":
-            offset_result = self.apply_tool_offset("manipulator")
-            if not offset_result.valid:
-                return offset_result
-
-        # Park is only valid from global_ready (enforced by position_scope).
-        # Resolve recentering coordinates under the manipulator offset that
-        # we just restored above and pass them to the executor.
         global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
         if global_ready_pos is None:
             return MoveValidationResult(
@@ -2278,9 +2158,6 @@ class MotionPlatformStateMachine(StateMachine):
             # Position should already be at global_ready (executor handles this)
             # Ensure z_height is set appropriately
             self.context.z_height_id = "mold_transfer_safe"
-            # After park, we are once again at global_ready with no tool;
-            # offset stays at "manipulator" (the default zero offset).
-            self.context.tool_offset_id = "manipulator"
 
         return result
     
@@ -2442,17 +2319,6 @@ class MotionPlatformStateMachine(StateMachine):
                     ),
                 )
 
-        if descriptor.required_offset:
-            if self.context.tool_offset_id != descriptor.required_offset:
-                current = self.context.tool_offset_id or "None"
-                return MoveValidationResult(
-                    valid=False,
-                    reason=(
-                        f"Action '{action_id}' requires tool offset "
-                        f"'{descriptor.required_offset}'. Current: '{current}'."
-                    ),
-                )
-
         if descriptor.position_scope:
             reference_position = (
                 self.context.engaged_ready_position_id
@@ -2538,10 +2404,6 @@ class MotionPlatformStateMachine(StateMachine):
             z_height_issue = target_descriptor.z_height_policy.validate(self.context.z_height_id)
             if z_height_issue:
                 return MoveValidationResult(valid=False, reason=z_height_issue)
-
-            offset_issue = target_descriptor.offset_policy.validate(self.context.tool_offset_id)
-            if offset_issue:
-                return MoveValidationResult(valid=False, reason=offset_issue)
 
         requirement_issue = self._validate_requirements(target_descriptor.requirements)
         if requirement_issue:
@@ -2639,7 +2501,6 @@ class MotionPlatformStateMachine(StateMachine):
         active_tool_id: Optional[str] = None,
         payload_state: Optional[str] = None,
         z_height_id: Optional[str] = None,
-        tool_offset_id: Optional[str] = None,
     ) -> None:
         """Convenience helper to mutate commonly updated context properties."""
         if active_tool_id is not None:
@@ -2648,133 +2509,7 @@ class MotionPlatformStateMachine(StateMachine):
             self.context.payload_state = payload_state
         if z_height_id is not None:
             self.context.z_height_id = z_height_id
-        if tool_offset_id is not None:
-            self.context.tool_offset_id = tool_offset_id
 
-    # ---------------------------------------------------------------------
-    # Tool-offset transitions
-    # ---------------------------------------------------------------------
-    def apply_tool_offset(
-        self,
-        new_offset_id: str,
-        *,
-        position_id: Optional[str] = None,
-    ) -> MoveValidationResult:
-        """
-        Switch the active tool offset by programming the firmware tool frame
-        and then re-centering to the same logical position.
-
-        This applies the offset once (via G10) and keeps normal move planning
-        offset-agnostic. Coordinates resolved by the state machine remain base
-        position coordinates; firmware handles tool-frame transforms.
-
-        Args:
-            new_offset_id: The offset id to switch to (must exist in the
-                registry's tool offsets table).
-            position_id: Logical position to settle at. Defaults to the current
-                ``context.position_id``.
-
-        Returns:
-            A MoveValidationResult describing the outcome. Validation does NOT
-            check the position's offset_policy, since callers (pickup/park)
-            are deliberately establishing or restoring the offset state.
-        """
-        target_position = position_id or self.context.position_id
-        previous_offset_id = self.context.tool_offset_id
-
-        if new_offset_id not in self._registry.tool_offsets:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Unknown tool offset id '{new_offset_id}'",
-            )
-
-        tool_name = self.context.active_tool_id
-        tool_index = self._registry.get_tool_index(tool_name)
-        if tool_index is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"No firmware tool index configured for tool '{tool_name}'",
-            )
-
-        try:
-            offset_x, offset_y, offset_z = self._registry.get_tool_offset(new_offset_id)
-        except KeyError as exc:
-            return MoveValidationResult(valid=False, reason=str(exc))
-
-        # Offset switches only adjust XYZ at the current logical position;
-        # V (manipulator carriage) is intentionally left untouched, so do not
-        # require it to be defined for positions like sample_tray_X_ready.
-        pos_result = self._resolve_ready_position_coords(
-            target_position,
-            require_v=False,
-        )
-        if pos_result.error:
-            return pos_result.error
-        if pos_result.coords is None:
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Could not resolve coordinates for position '{target_position}'",
-            )
-
-        target_x, target_y, target_z, target_v = pos_result.coords
-
-        try:
-            g10_ok = self._executor.execute_apply_tool_offset(
-                tool_index=tool_index,
-                offset_x=offset_x,
-                offset_y=offset_y,
-                offset_z=offset_z,
-            )
-            if g10_ok is False:
-                return MoveValidationResult(
-                    valid=False,
-                    reason=(
-                        f"Failed to apply firmware offset '{new_offset_id}' to "
-                        f"tool index {tool_index}."
-                    ),
-                )
-
-            ok = self._executor.execute_move_to_position(
-                x=target_x,
-                y=target_y,
-                z=target_z,
-                v=target_v,
-            )
-            if ok is False:
-                # Best effort rollback of firmware tool frame if recentering fails.
-                if previous_offset_id in self._registry.tool_offsets:
-                    prev_x, prev_y, prev_z = self._registry.get_tool_offset(previous_offset_id)
-                    self._executor.execute_apply_tool_offset(
-                        tool_index=tool_index,
-                        offset_x=prev_x,
-                        offset_y=prev_y,
-                        offset_z=prev_z,
-                    )
-                return MoveValidationResult(
-                    valid=False,
-                    reason=(
-                        f"Failed to re-center at '{target_position}' after applying "
-                        f"offset '{new_offset_id}'."
-                    ),
-                )
-            self._executor.wait_for_moves_to_finish()
-            self.context.tool_offset_id = new_offset_id
-            return MoveValidationResult(valid=True)
-        except Exception as exc:
-            # Best effort rollback of firmware tool frame on unexpected errors.
-            if previous_offset_id in self._registry.tool_offsets:
-                prev_x, prev_y, prev_z = self._registry.get_tool_offset(previous_offset_id)
-                self._executor.execute_apply_tool_offset(
-                    tool_index=tool_index,
-                    offset_x=prev_x,
-                    offset_y=prev_y,
-                    offset_z=prev_z,
-                )
-            return MoveValidationResult(
-                valid=False,
-                reason=f"Tool-offset transition failed: {exc}",
-            )
-    
     def validate_machine_state(
         self,
         machine_x: float,

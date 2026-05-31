@@ -211,13 +211,13 @@ class MovementExecutor:
             feedrate = self._feedrate
             self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
             self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
-            self._machine.gcode("M208 Z32.5:195")      # Move bed up so well fits under trickler, relax z-limit to do so
+            self._machine.gcode("M208 Z32.5:155")      # Move bed up so well fits under trickler, relax z-limit to do so
             self._machine.move_to(z=34.5, s=feedrate)
             self._machine.move(dy=7, s=feedrate)
             # TODO: open chute
             self._machine.move_to(z=32.5, s=feedrate)
             self._machine.move(dy=19, s=feedrate)
-            self._machine.gcode("M208 Z27:195")      # Move bed up so well is resting on scale, relax z-limit to do so
+            self._machine.gcode("M208 Z27:155")      # Move bed up so well is resting on scale, relax z-limit to do so
             self._machine.move_to(z=27, s=feedrate) # Place mold on scale
 
             # Post-place retreat: move away from scale and mold.
@@ -269,7 +269,7 @@ class MovementExecutor:
             # Phase 2: execute the existing pickup and retreat sequence.
             self._machine.move(dy=1, s=feedrate)          # Return to model position
             self._machine.move_to(z=32.5, s=feedrate)     # Pick up mold off scale
-            self._machine.gcode("M208 Z34.5:195")         # Revert z-limit to protect tool
+            self._machine.gcode("M208 Z34.5:155")         # Revert z-limit to protect tool
             self._machine.move(dy=-19, s=feedrate)        # Move mold from under trickler
             self._machine.move_to(z=34.5, s=feedrate)     # Move within z-limits
             self._machine.move(dy=-7, s=feedrate)         # Move all the way back from under trickler
@@ -439,107 +439,72 @@ class MovementExecutor:
             print(f"Error moving to hardness sample tray: {e}")
             return False
 
+    def execute_move_to_hardness_sample(
+        self,
+        x: float,
+        y: float,
+        z: float,
+    ) -> bool:
+        """
+        Move the hardness tester to a specific sample slot position.
+
+        The state machine resolves the per-slot coordinates and validates
+        the slot before this executor is called.
+        """
+        try:
+            feedrate = self._feedrate
+            print(f"Moving hardness tester to sample: x={x}, y={y}, z={z}")
+            self._machine.move_to(x=x, y=y, z=z, s=feedrate)
+            return True
+        except Exception as e:
+            print(f"Error moving to hardness sample: {e}")
+            return False
+
     def execute_test_sample(
         self,
         tray_index: int,
         sample_id: str,
         mode: Optional[str] = None,
         hardness_tester: HardnessTester = None,
-        target_x: float = None,
-        target_y: float = None,
-        target_z: float = None,
-        state_machine=None,
     ) -> bool:
         """
-        Sketch of the hardness sample sequence with z-probe offset transition.
+        Execute the hardness measurement at the current sample slot position.
 
-        Pre-condition (validated by the state machine before this is called):
-          - ``context.position_id`` is the relevant ``sample_tray_X_ready``.
-          - ``context.tool_offset_id == "durometer"`` (action's required_offset).
-          - target_x / target_y / target_z are resolved base machine coords
-            for the current logical sample-tray frame.
+        Pre-conditions (validated by the state machine before this is called):
+          - Machine is already positioned at the target sample slot via
+            ``execute_move_to_hardness_sample``.
 
         Sequence:
-          1. Move XY over the sample at the tray's safe (durometer) Z.
-          2. Switch to ``durometer_z_probe`` (transient) so the probe tip
-             is the active reference. Probe down to find the sample top.
-          3. ALWAYS restore the ``durometer`` offset before returning so the
-             action's required_offset post-condition is satisfied (try/finally).
-          4. Drive the durometer down for contact pressure, read the LCD via
-             the HardnessTester, then retract to the tray's safe Z.
-
-        The offset switches are issued via ``state_machine.apply_tool_offset``,
-        which both updates ``context.tool_offset_id`` and physically settles
-        the bed at the same logical position under the new offset frame.
+          1. TODO: Issue the z-probe descent (e.g. G38.2 / vendor probe
+             routine) and capture the contact Z. This is a no-op placeholder
+             until probing hardware is wired up.
+          2. Drive the durometer down for contact pressure and read the LCD
+             via the HardnessTester.
         """
-        if state_machine is None:
-            print("execute_test_sample requires a state_machine reference for offset switches")
-            return False
-        if target_x is None or target_y is None or target_z is None:
-            print("execute_test_sample requires fully-resolved target_x/y/z")
-            return False
         self.last_hardness_result = None
         self.last_hardness_error = None
 
-        feedrate = self._feedrate
+        # TODO: Issue the actual z-probe descent (e.g. G38.2 / vendor
+        # probe routine) and capture the contact Z.
+        probed_top_z = None  # Replace with real probe result.
 
-        # 1) Move XY over the sample at the durometer-offset safe Z.
-        try:
-            self._machine.move_to(x=target_x, y=target_y, z=target_z, s=feedrate)
-            self.wait_for_moves_to_finish()
-        except Exception as exc:
-            print(f"Error moving over sample {sample_id} on tray {tray_index}: {exc}")
-            return False
-
-        try:
-            # 2) Transient switch to the z-probe offset to find the sample
-            # surface. apply_tool_offset re-resolves the tray ready position
-            # under durometer_z_probe and moves the bed accordingly so the
-            # probe tip is at the same logical (base) Z. Probe logic is
-            # hardware-specific and is left as a stub.
-            zprobe_result = state_machine.apply_tool_offset("durometer_z_probe")
-            if not zprobe_result.valid:
-                print(f"Failed to switch to durometer_z_probe offset: {zprobe_result.reason}")
-                return False
-
-            # TODO: Issue the actual z-probe descent (e.g. G38.2 / vendor
-            # probe routine) and capture the contact Z. Until the probing
-            # hardware is wired up, this is a no-op placeholder.
-            probed_top_z = None  # Replace with real probe result.
-
-            # 4) Drive the durometer onto the sample and read the LCD. This
-            # belongs in the HardnessTester (which owns the camera / segment
-            # decoder); the executor only sequences motion + offset state.
-            # The HardnessTester can use ``probed_top_z`` to compute its
-            # final approach Z under the durometer offset.
-            print(
-                "Hardness sample motion stub "
-                f"(tray={tray_index}, sample={sample_id}, mode={mode}, "
-                f"probed_top_z={probed_top_z})"
-            )
-            if hardness_tester is None:
-                self.last_hardness_error = "Hardness tester instance was not provided for OCR."
-                return True
-
-            reading = hardness_tester.read_display(
-                debug=False,
-                debug_prefix=f"hardness_{tray_index}_{sample_id}",
-            )
-            measured_value, sample_error = hardness_tester._parse_hardness_reading(reading)
-            self.last_hardness_result = measured_value
-            self.last_hardness_error = sample_error
+        print(
+            "Hardness sample motion stub "
+            f"(tray={tray_index}, sample={sample_id}, mode={mode}, "
+            f"probed_top_z={probed_top_z})"
+        )
+        if hardness_tester is None:
+            self.last_hardness_error = "Hardness tester instance was not provided for OCR."
             return True
-        finally:
-            # 3) Always restore the durometer offset before returning so the
-            # action's required_offset post-condition holds even on failure.
-            restore_result = state_machine.apply_tool_offset("durometer")
-            if not restore_result.valid:
-                # Best-effort logging; we cannot raise from finally without
-                # masking an in-flight exception.
-                print(
-                    "WARNING: failed to restore durometer offset after "
-                    f"hardness sample: {restore_result.reason}"
-                )
+
+        reading = hardness_tester.read_display(
+            debug=False,
+            debug_prefix=f"hardness_{tray_index}_{sample_id}",
+        )
+        measured_value, sample_error = hardness_tester._parse_hardness_reading(reading)
+        self.last_hardness_result = measured_value
+        self.last_hardness_error = sample_error
+        return True
 
     def execute_hardness_turn_on(self, mode: Optional[str] = None) -> bool:
         """
@@ -572,52 +537,34 @@ class MovementExecutor:
     def execute_home_all(self, registry) -> bool:
         """Home all axes and return to global_ready position.
 
-        After homing, the no-tool / manipulator (zero) offset frame is the
-        only valid frame, so the global_ready coordinates can be sent without
-        any offset adjustment.
-
         Returns:
             True if successful, False otherwise.
         """
         try:
             self._machine.home_all()
-            # After homing, move to global_ready position if not already there
             global_ready_pos = registry.find_first_of_type(PositionType.GLOBAL_READY)
             if global_ready_pos and global_ready_pos.coordinates:
                 coords = global_ready_pos.coordinates
-                # Get z height from z_heights if needed
                 z_height = None
                 if coords.z == "USE_Z_HEIGHT_POLICY":
-                    # Use mold_transfer_safe z height
                     z_heights = registry.z_heights
                     if "mold_transfer_safe" in z_heights:
                         z_config = z_heights["mold_transfer_safe"]
                         if isinstance(z_config, dict):
                             z_height = z_config.get("z_coordinate")
 
-                # The manipulator offset is the zero/reference frame, so
-                # global_ready coordinates can be commanded directly. We
-                # query the registry for the offset to keep this honest if
-                # someone configures a non-zero manipulator offset later.
-                offset_x, offset_y, offset_z = registry.get_tool_offset("manipulator")
-
-                def _adjusted(value, offset):
-                    if value is None:
+                def _to_float(value):
+                    if value is None or isinstance(value, str):
                         return None
-                    if isinstance(value, str):
-                        if value.startswith("PLACEHOLDER"):
-                            return None
-                        return None
-                    return float(value) + offset
+                    return float(value)
 
-                x = _adjusted(coords.x, offset_x)
-                y = _adjusted(coords.y, offset_y)
-                z = _adjusted(z_height, offset_z)
+                x = _to_float(coords.x)
+                y = _to_float(coords.y)
+                z = _to_float(z_height)
                 v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
 
                 if x is not None or y is not None or z is not None or v is not None:
-                    feedrate = self._feedrate
-                    self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
+                    self._machine.move_to(x=x, y=y, z=z, v=v, s=self._feedrate)
             return True
         except Exception as e:
             print(f"Error homing all axes: {e}")
@@ -822,38 +769,6 @@ class MovementExecutor:
         """
         self._machine.gcode("M400")
 
-    def execute_apply_tool_offset(
-        self,
-        tool_index: int,
-        offset_x: float,
-        offset_y: float,
-        offset_z: float,
-    ) -> bool:
-        """
-        Apply a firmware tool-frame offset using G10.
-
-        Args:
-            tool_index: Firmware tool index (G10 P value)
-            offset_x: X offset in mm
-            offset_y: Y offset in mm
-            offset_z: Z offset in mm
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        try:
-            self._machine.gcode(
-                f"G10 P{int(tool_index)} X{float(offset_x)} Y{float(offset_y)} Z{float(offset_z)}"
-            )
-            self._machine.gcode("M400")
-            return True
-        except Exception as e:
-            print(
-                "Error applying firmware tool offset "
-                f"(P{tool_index} X{offset_x} Y{offset_y} Z{offset_z}): {e}"
-            )
-            return False
-    
     def execute_move_to_scale_location(
         self,
         ready_x: float,
@@ -1002,6 +917,24 @@ class MovementExecutor:
                 pass
             return False
         
+    def execute_open_powder_dispenser_cover(self) -> bool:
+        """
+        Placeholder for powder dispenser cover open actuation.
+
+        Intentionally left as a stub for hardware-specific implementation.
+        """
+        # TODO: Implement powder dispenser cover open actuation.
+        return False
+
+    def execute_close_powder_dispenser_cover(self) -> bool:
+        """
+        Placeholder for powder dispenser cover close actuation.
+
+        Intentionally left as a stub for hardware-specific implementation.
+        """
+        # TODO: Implement powder dispenser cover close actuation.
+        return False
+
     def execute_home_tamper(
         self,
         tamper_axis: str = 'V'

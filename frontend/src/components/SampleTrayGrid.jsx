@@ -42,7 +42,7 @@ function initSamples(rows, cols, trayCount) {
   return samples
 }
 
-export function useSampleTrayGrid(rows = 5, cols = 5, trayCount = 2) {
+export function useSampleTrayGrid(rows = 5, cols = 7, trayCount = 2) {
   const [samples, setSamples] = useState(() => initSamples(rows, cols, trayCount))
 
   const selectedIds = useMemo(
@@ -206,11 +206,12 @@ export default function SampleTrayGrid({
               Tray {trayIndex + 1}
             </div>
             <div
-              className="grid aspect-square max-h-full max-w-full bg-black border border-black gap-px"
+              className="grid max-h-full max-w-full bg-black border border-black gap-px"
               style={{
                 gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                 gridTemplateRows:    `repeat(${rows}, minmax(0, 1fr))`,
-                width:               'min(100%, 100vh)',
+                aspectRatio:         `${cols} / ${rows}`,
+                width:               `min(100%, calc(100vh * ${cols} / ${rows}))`,
               }}
             >
               {Array.from({ length: rows }, (_, r) => (

@@ -11,35 +11,15 @@
     "tools": {
         "manipulator": {
             "index": 0,
-            "name": "manipulator",
-            "default_offset": "manipulator"
+            "name": "manipulator"
         },
         "shore_a_hardness_tester": {
             "index": 1,
-            "name": "shore_a_hardness_tester",
-            "default_offset": "durometer"
+            "name": "shore_a_hardness_tester"
         },
         "shore_d_hardness_tester": {
             "index": 2,
-            "name": "shore_d_hardness_tester",
-            "default_offset": "durometer"
-        }
-    },
-    "tool_offsets": {
-        "manipulator": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0
-        },
-        "durometer": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 10.0
-        },
-        "durometer_z_probe": {
-            "x": 0.0,
-            "y": 0.0,
-            "z": -5.0
+            "name": "shore_d_hardness_tester"
         }
     },
     "manipulator": {
