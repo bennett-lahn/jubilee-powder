@@ -27,6 +27,7 @@ ENV/
 env/
 jubilee-env/
 .test-venv/
+.venv-docs/
 
 # IDE
 .vscode/

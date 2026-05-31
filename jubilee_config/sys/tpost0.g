@@ -10,7 +10,7 @@
 
 G90                        ; Ensure the machine is in absolute mode before issuing movements.
 G1 Z95                     ; Ensure leadscrew will clear molds when tool is removed
-M208 Z34.5:150              ; Set hard limit so tool won't crash into bed if bad command given(this is bypassed during scale mold movements)
+M208 Z34.5:155             ; Set hard limit so tool won't crash into bed if bad command given(this is bypassed during scale mold movements)
 G1 Y309 F1000
 M98 P"/macros/tool_lock.g" ; Lock the tool
 G1 Y260.0 F1000         ; Back off the tool post

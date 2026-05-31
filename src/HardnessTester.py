@@ -85,11 +85,11 @@ class HardnessTester(Tool):
         tip_length_mm: Optional[float] = None,
         power_servo: Optional[str] = None,
         zero_servo: Optional[str] = None,
-        threshold_bias: int = 0,
-        sharpen_strength: float = 1.5,
-        sharpen_blur_radius: int = 5,
-        morph_kernel_size: int = 2,
-        morph_iterations: int = 1,
+        threshold_bias: int = 15,
+        sharpen_strength: float = 31,
+        sharpen_blur_radius: int = 90,
+        morph_kernel_size: int = 5,
+        morph_iterations: int = 3,
         morph_open: bool = False,
     ):
         """
@@ -273,95 +273,6 @@ class HardnessTester(Tool):
             return True
         raise RuntimeError(f"Display state is indeterminate: unexpected reading '{reading}'")
 
-    def _resolve_sample_target(
-        self,
-        state_machine,
-        tray_index: str | int,
-        sample_id: str | int,
-    ):
-        """
-        Resolve tray-local sample id to target coordinates using tray metadata.
-        """
-        try:
-            tray_index_int = int(str(tray_index))
-        except (TypeError, ValueError):
-            raise ValueError(f"Tray index '{tray_index}' must be a non-negative integer")
-
-        if tray_index_int < 0:
-            raise ValueError("Tray index must be non-negative")
-
-        try:
-            sample_index = int(str(sample_id))
-        except (TypeError, ValueError):
-            raise ValueError(f"Sample id '{sample_id}' must be a zero-based integer")
-
-        if sample_index < 0:
-            raise ValueError("Sample id must be non-negative")
-
-        tray_position = next(
-            (
-                position
-                for position in state_machine._registry._positions.values()
-                if position.type.name == "HARDNESS_SAMPLE_READY"
-                and position.metadata.get("tray_index") == tray_index_int
-            ),
-            None,
-        )
-        if tray_position is None:
-            raise ValueError(f"Sample tray with tray_index={tray_index_int} is not configured")
-
-        metadata = tray_position.metadata
-        rows = metadata.get("rows")
-        columns = metadata.get("columns")
-        if not isinstance(rows, int) or not isinstance(columns, int) or rows <= 0 or columns <= 0:
-            raise ValueError(
-                f"Sample tray '{tray_position.identifier}' has invalid rows/columns metadata"
-            )
-
-        tray_capacity = rows * columns
-        if sample_index >= tray_capacity:
-            raise ValueError(
-                f"Sample id '{sample_id}' is outside tray {tray_index_int} capacity ({tray_capacity})"
-            )
-
-        sample_start_x = metadata.get("sample_start_x")
-        sample_start_y = metadata.get("sample_start_y")
-        x_offset = metadata.get("sample_spacing_x")
-        y_offset = metadata.get("sample_spacing_y")
-        if not isinstance(sample_start_x, (int, float)) or not isinstance(sample_start_y, (int, float)):
-            raise ValueError(
-                f"Sample tray '{tray_position.identifier}' missing numeric metadata: sample_start_x, sample_start_y"
-            )
-        if not isinstance(x_offset, (int, float)) or not isinstance(y_offset, (int, float)):
-            raise ValueError(
-                f"Sample tray '{tray_position.identifier}' missing numeric metadata: sample_spacing_x/sample_spacing_y"
-            )
-
-        tray_result = state_machine._resolve_ready_position_coords(
-            tray_position.identifier,
-            require_v=False,
-        )
-        if tray_result.error:
-            raise ValueError(tray_result.error.reason)
-        tray_xyz = tray_result.coords
-        if tray_xyz is None:
-            raise ValueError(f"Sample tray '{tray_position.identifier}' coordinates could not be resolved")
-
-        row = sample_index // columns
-        column = sample_index % columns
-        target_x = sample_start_x + column * x_offset
-        target_y = sample_start_y + row * y_offset
-        target_z = metadata.get("test_z", tray_xyz[2])
-        if target_z == "USE_Z_HEIGHT_POLICY":
-            target_z = tray_xyz[2]
-
-        if not isinstance(target_z, (int, float)):
-            raise ValueError(
-                f"Sample tray '{tray_position.identifier}' has non-numeric target Z for testing"
-            )
-
-        return target_x, target_y, target_z
-
     def _parse_hardness_reading(self, reading: Optional[str]) -> tuple[Optional[float], Optional[str]]:
         """Convert a consensus LCD string to a hardness float."""
         if reading is None:
@@ -386,32 +297,34 @@ class HardnessTester(Tool):
         state_machine,
     ) -> dict[str, Optional[float | str]]:
         """
-        Execute one hardness sample operation via the state machine action path.
+        Execute one hardness sample operation via the state machine move/action path.
+
+        Mirrors the mold pick/place architecture: movement to the target position
+        is a separate validated step from the measurement action itself. The state
+        machine owns all coordinate resolution and position validation.
         """
         if state_machine is None:
             raise ValueError("state_machine is required for test_sample()")
 
         self.load_assigned_calibration()
+
         tray_result = state_machine.validated_move_to_sample_tray(tray_index)
         if not tray_result.valid:
             raise RuntimeError(tray_result.reason or "Move to sample tray failed")
 
-        target_x, target_y, target_z = self._resolve_sample_target(
-            state_machine,
-            tray_index,
-            sample_id,
-        )
+        sample_result = state_machine.validated_move_to_hardness_sample(tray_index, sample_id)
+        if not sample_result.valid:
+            raise RuntimeError(sample_result.reason or "Move to hardness sample failed")
+
         result = state_machine.validated_test_sample(
             tray_index=tray_index,
             sample_id=sample_id,
             mode=self.tester_mode,
-            target_x=target_x,
-            target_y=target_y,
-            target_z=target_z,
             hardness_tester=self,
         )
         if not result.valid:
             raise RuntimeError(result.reason or "Sample action failed")
+
         measured_value = getattr(state_machine._executor, "last_hardness_result", None)
         sample_error = getattr(state_machine._executor, "last_hardness_error", None)
         return {
