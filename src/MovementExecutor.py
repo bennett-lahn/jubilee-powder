@@ -1010,6 +1010,7 @@ class MovementExecutor:
         self._machine.gcode(f'M98 P"home{tamper_axis.lower()}.g"')
         
         print(f"Homing complete. {tamper_axis} axis position reset to 0.0mm")
+        return True
     
     def execute_home_manipulator(
         self,
