@@ -621,7 +621,7 @@ class Scale:
                             raise ScaleException("No data response from scale after ACK")
                     
                     decoded = data.decode('ascii').strip()
-                    print(f"[DEBUG] Data response: {decoded}")
+                    # print(f"[DEBUG] Data response: {decoded}")
                     
                     # Check for error in data response
                     if decoded.startswith('EC,'):
@@ -775,7 +775,8 @@ class Scale:
         :return: The weight in grams
         """
         resp = self.request_stable_weight() if stable else self.request_instant_weight()
-        print(f"[DEBUG] Response: {resp}")
+        if stable:
+            print(f"[DEBUG] Response: {resp}")
         return self._parse_weight(resp, expect_stable=stable)
 
     def get_weight_for_telemetry(self) -> float:
@@ -813,7 +814,6 @@ class Scale:
             resp = self._execute_command('SI', expect_data=True)
             self._last_weight_time = time.time()
             self._last_weight_message = resp
-            print(f"[DEBUG] Response: {resp}")
             return self._parse_weight(resp, expect_stable=False)
         finally:
             self._release_busy()
