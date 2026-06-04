@@ -330,7 +330,7 @@ function JobResultView({ job, onBack }) {
         </Card>
 
         {/* Right panel: well grid */}
-        <Card className="flex-1 flex flex-col gap-2 p-4 min-h-0">
+        <Card className="flex-1 flex flex-col gap-2 p-4 min-h-0 min-w-0 overflow-hidden">
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 shrink-0">
             Results{jobDate ? ` \u2014 ${jobDate}` : ''}
           </p>
@@ -354,6 +354,7 @@ function JobResultView({ job, onBack }) {
               selectRow={() => {}}
               selectCol={() => {}}
               variant="result"
+              className="flex-1 min-h-0 min-w-0"
             />
           )}
         </Card>

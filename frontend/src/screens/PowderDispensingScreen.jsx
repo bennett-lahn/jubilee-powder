@@ -114,7 +114,7 @@ export default function PowderDispensingScreen() {
       </Card>
 
       {/* ── Bed visualisation — fills remaining height ────────────────── */}
-      <Card className="flex-1 p-4 min-h-0">
+      <Card className="flex-1 flex flex-col p-4 min-h-0 min-w-0 overflow-hidden">
         <WellGrid
           wells={wells}
           rows={rows}
@@ -124,6 +124,7 @@ export default function PowderDispensingScreen() {
           selectCol={selectDispensingCol}
           variant="dispensing"
           physicalLayout={DISPENSING_LAYOUT}
+          className="flex-1 min-h-0 min-w-0"
         />
       </Card>
 

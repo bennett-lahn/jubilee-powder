@@ -2,10 +2,10 @@
  * WellGrid — interactive bed visualisation.
  *
  * Sizing strategy
- *   The mold grid is width-driven: the root div uses aspect-ratio (cols:rows)
- *   so its height is always derived from the available width.  Each data row
- *   then takes an equal share of that height (flex-1), and each well button
- *   is h-full with aspectRatio:1 so it becomes a circle sized by its row's height.
+ *   The grid fills its parent (flex-1 + min-h-0).  Mold rows share remaining
+ *   height equally.  Each well is a square sized to min(cell width, cell height)
+ *   via w-full max-h-full aspect-square, with min-w-0 on flex children so
+ *   circles never force horizontal overflow.  Extra vertical space stays empty.
  *
  * Row / column axis buttons
  *   Clicking a row or column button toggles the entire row/column:
@@ -220,12 +220,11 @@ function WellCircle({ id, well, onClick, variant }) {
     }
 
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
         <div
           aria-label={`Well ${id} — ${status}`}
-          style={{ aspectRatio: '1' }}
           className={[
-            'h-full max-w-full rounded-full flex items-center justify-center',
+            'w-full max-h-full aspect-square rounded-full flex items-center justify-center',
             status === 'active' ? 'animate-pulse' : '',
             RESULT_STATUS_CLASS[status] ?? RESULT_STATUS_CLASS.excluded,
           ].join(' ')}
@@ -284,14 +283,13 @@ function WellCircle({ id, well, onClick, variant }) {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center">
+    <div className="flex-1 flex items-center justify-center min-w-0 min-h-0">
       <button
         onClick={() => onClick(id)}
         aria-pressed={selected}
         aria-label={`Well ${id}${selected ? ' selected' : ''}`}
-        style={{ aspectRatio: '1' }}
         className={[
-          'h-full max-w-full rounded-full',
+          'w-full max-h-full aspect-square rounded-full',
           'flex items-center justify-center',
           'transition-[background-color,border-color,box-shadow] duration-100',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-white',
@@ -350,18 +348,12 @@ export default function WellGrid({
 }) {
   const readOnly = variant === 'result'
   const showTrickler = physicalLayout !== null
-  // Width-driven sizing: height is derived from the available width so the
-  // grid always fits horizontally.  Extra vertical space is left empty.
-  const layoutCols = physicalLayout ? physicalLayout[0].length : cols
 
   return (
-    <div
-      className={['flex flex-col gap-2 w-full min-h-0', className].join(' ')}
-      style={{ aspectRatio: `${layoutCols} / ${rows}` }}
-    >
+    <div className={['flex flex-col gap-2 w-full h-full min-h-0 min-w-0', className].join(' ')}>
 
       {/* Column header row — width driven by the physical layout if provided */}
-      <div className={['flex gap-2 shrink-0', HEADER_H].join(' ')}>
+      <div className={['flex gap-2 shrink-0 min-w-0', HEADER_H].join(' ')}>
         <div className={[AXIS_W, 'shrink-0'].join(' ')} /> {/* top-left spacer */}
         {Array.from(
           { length: physicalLayout ? physicalLayout[0].length : cols },
@@ -377,11 +369,12 @@ export default function WellGrid({
         )}
       </div>
 
-      {/* Data rows — each takes an equal share of remaining height */}
+      {/* Data rows — share remaining height; circles size to column width */}
+      <div className="flex flex-col gap-2 flex-1 min-h-0 min-w-0">
       {Array.from({ length: rows }, (_, r) => {
         const rowLayout = physicalLayout ? physicalLayout[r] : null
         return (
-          <div key={r} className="flex gap-2 flex-1 min-h-0">
+          <div key={r} className="flex gap-2 flex-1 min-h-0 min-w-0">
             <AxisButton
               label={r + 1}
               onClick={() => !readOnly && selectRow(r)}
@@ -451,10 +444,11 @@ export default function WellGrid({
           </div>
         )
       })}
+      </div>
 
       {/* Trickler indicator — down arrow at the physical bottom of the dispensing bed */}
       {showTrickler && (
-        <div className="flex gap-2 shrink-0 items-center mt-0.5">
+        <div className="flex gap-2 shrink-0 min-w-0 items-center mt-0.5">
           <div className={[AXIS_W, 'shrink-0'].join(' ')} />
           <div className="flex-1 flex items-center justify-center gap-2">
             <svg

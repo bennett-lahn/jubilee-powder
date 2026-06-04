@@ -289,7 +289,7 @@ export default function HomeScreen() {
     <div className="flex flex-col gap-3 h-full">
 
       {/* ── Two-column body ──────────────────────────────────────────────── */}
-      <div className="flex flex-row gap-3 flex-1 min-h-0">
+      <div className="flex flex-row gap-3 flex-1 min-h-0 min-w-0">
 
         {/* ── Left panel: compact arc + action buttons ─────────────────── */}
         <Card className="flex flex-col items-center gap-3 p-3 w-48 shrink-0">
@@ -359,7 +359,7 @@ export default function HomeScreen() {
         </Card>
 
         {/* ── Right panel: well result grid (primary content) ──────────── */}
-        <Card className="flex-1 flex flex-col gap-2 p-4 min-h-0">
+        <Card className="flex-1 flex flex-col gap-2 p-4 min-h-0 min-w-0 overflow-hidden">
           <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 shrink-0">
             Results{jobDate ? ` \u2014 ${jobDate}` : ''}
           </p>
@@ -383,6 +383,7 @@ export default function HomeScreen() {
               selectCol={() => {}}
               variant="result"
               physicalLayout={DISPENSING_LAYOUT}
+              className="flex-1 min-h-0 min-w-0"
             />
           )}
         </Card>
