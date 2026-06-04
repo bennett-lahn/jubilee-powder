@@ -52,9 +52,9 @@ export default function HardnessTestingScreen() {
     const items = eligibleIds.map((id) => {
       const [trayIndex, localSampleIndex] = id.split(':')
       return {
-        tray_index: Number(trayIndex),
-        sample_id: String(localSampleIndex),
-        mode:      samples[id].mode,
+        tray_index:   Number(trayIndex),
+        sample_index: Number(localSampleIndex),
+        mode:         samples[id].mode,
       }
     })
     setStatusText('Submitting test…')

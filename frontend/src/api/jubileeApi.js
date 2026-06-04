@@ -139,21 +139,13 @@ export function updateDispenser(index, numPistons) {
 }
 
 // ---------------------------------------------------------------------------
-// Google Drive integration
+// Google Drive job log backup
 // ---------------------------------------------------------------------------
 
 /**
- * GET /api/drive/status — current Google Drive / Sheets connection status.
- * Returns { enabled, connected, spreadsheet_id, last_poll, last_error }.
+ * GET /api/drive/status — Drive backup status for Settings.
+ * Returns { enabled, folder_configured, last_upload, last_error, pending_uploads }.
  */
 export function fetchDriveStatus() {
   return request('/drive/status')
-}
-
-/**
- * POST /api/drive/sync — manually trigger a Sheets poll and start a job if ready.
- * Returns { triggered, job_started, enabled, connected, spreadsheet_id, last_poll, last_error }.
- */
-export function triggerDriveSync() {
-  return request('/drive/sync', { method: 'POST' })
 }

@@ -753,7 +753,7 @@ class JubileeManager:
     def test_sample(
         self,
         tray_index: int,
-        sample_id: str,
+        sample_index: int,
         mode: Optional[str] = None,
         image_save_path=None,
     ) -> bool:
@@ -773,7 +773,7 @@ class JubileeManager:
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
             measurement = selected_tester.test_sample(
-                tray_index, sample_id, self.state_machine, image_save_path=image_save_path
+                tray_index, sample_index, self.state_machine, image_save_path=image_save_path
             )
             if isinstance(measurement, dict):
                 self.last_hardness_result = measurement.get("result")
@@ -785,7 +785,7 @@ class JubileeManager:
 
             if self.active_job_log is not None:
                 self.active_job_log.update_sample(
-                    sample_id,
+                    sample_index,
                     tray_index=tray_index,
                     result=self.last_hardness_result,
                     sample_error=self.last_hardness_error,

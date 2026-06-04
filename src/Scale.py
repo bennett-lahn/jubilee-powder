@@ -1005,6 +1005,7 @@ class Scale:
             # Check for negative weight (possible tare issue)
             if final_value < -1.0:
                 # print(f"[DEBUG] Warning: Negative weight detected: {final_value:.4f} g (possible tare issue or container removed)")
+                pass
             
             # Check for positive weight exceeding maximum
             if value > MAX_WEIGHT:

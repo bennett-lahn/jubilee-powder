@@ -24,10 +24,6 @@ function GoogleDriveSection() {
   const driveStatus      = useJubileeStore((s) => s.driveStatus)
   const driveStatusError = useJubileeStore((s) => s.driveStatusError)
   const fetchDriveStatus = useJubileeStore((s) => s.fetchDriveStatus)
-  const triggerDriveSync = useJubileeStore((s) => s.triggerDriveSync)
-
-  const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState('')
 
   useEffect(() => { fetchDriveStatus() }, [])
 
@@ -54,65 +50,49 @@ function GoogleDriveSection() {
     )
   }
 
-  const connected = driveStatus?.connected ?? false
-  const lastPoll  = driveStatus?.last_poll  ?? null
-  const lastError = driveStatus?.last_error ?? null
-  const sheetId   = driveStatus?.spreadsheet_id ?? ''
-  const sheetUrl  = sheetId
-    ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit`
-    : null
-
-  async function handleSync() {
-    setSyncing(true)
-    setSyncMsg('')
-    const { ok, job_started, error } = await triggerDriveSync()
-    if (!ok)              setSyncMsg(`Error: ${error}`)
-    else if (job_started) setSyncMsg('Job started from sheet.')
-    else                  setSyncMsg('Sheet polled - no ready job found.')
-    setSyncing(false)
-  }
+  const folderOk   = driveStatus?.folder_configured ?? false
+  const lastUpload = driveStatus?.last_upload ?? null
+  const lastError  = driveStatus?.last_error ?? null
+  const ready      = driveStatus?.enabled && folderOk && !lastError
 
   return (
     <Card className="flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
-          Google Drive
+          Google Drive Backup
         </h3>
         <div className="flex items-center gap-2">
           <span className={[
             'inline-block w-2 h-2 rounded-full',
-            connected ? 'bg-green-500' : 'bg-slate-600',
+            ready ? 'bg-green-500' : 'bg-slate-600',
           ].join(' ')} />
           <span className="text-xs text-slate-500">
-            {connected ? 'Connected' : 'Disconnected'}
+            {ready ? 'Ready' : folderOk ? 'Check config' : 'Not configured'}
           </span>
         </div>
       </div>
 
-      {sheetUrl ? (
-        <a
-          href={sheetUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="text-xs text-sky-400 hover:text-sky-300 truncate"
-        >
-          Open spreadsheet
-        </a>
-      ) : (
-        <p className="text-xs text-slate-500">
-          No spreadsheet configured. Set <code className="text-slate-400">google_drive.spreadsheet_id</code> in system_config.json.
+      <p className="text-xs text-slate-500">
+        Completed jobs upload automatically to the Drive folder in{' '}
+        <code className="text-slate-400">google_drive.drive_folder_id</code>{' '}
+        (JSON, CSV, and hardness images per job).
+      </p>
+
+      {!folderOk && driveStatus?.enabled && (
+        <p className="text-xs text-amber-400">
+          Set <code className="text-slate-400">google_drive.drive_folder_id</code> in system_config.json.
         </p>
       )}
 
-      {lastPoll && (
+      {lastUpload && (
         <p className="text-xs text-slate-500">
-          Last poll: {new Date(lastPoll).toLocaleTimeString()}
+          Last upload: {new Date(lastUpload).toLocaleString()}
         </p>
       )}
 
       {(driveStatus?.pending_uploads ?? 0) > 0 && (
         <p className="text-xs text-amber-400">
-          {driveStatus.pending_uploads} result{driveStatus.pending_uploads !== 1 ? 's' : ''} pending upload - will retry on next poll.
+          {driveStatus.pending_uploads} log{driveStatus.pending_uploads !== 1 ? 's' : ''} pending upload — will retry automatically.
         </p>
       )}
 
@@ -120,20 +100,14 @@ function GoogleDriveSection() {
         <p className="text-xs text-red-400 break-all">Error: {lastError}</p>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button
-          size="sm"
-          variant="outlined"
-          onClick={handleSync}
-          disabled={syncing || !connected}
-          className="shrink-0"
-        >
-          {syncing ? 'Syncing...' : 'Sync Now'}
-        </Button>
-        {syncMsg && (
-          <span className="text-xs text-slate-400">{syncMsg}</span>
-        )}
-      </div>
+      <Button
+        size="sm"
+        variant="outlined"
+        onClick={fetchDriveStatus}
+        className="self-start shrink-0"
+      >
+        Refresh status
+      </Button>
     </Card>
   )
 }

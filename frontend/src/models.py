@@ -91,18 +91,24 @@ class JobProgress:
         """Return the stable display ID used by progress tracking."""
         if "well_id" in item:
             return str(item.get("well_id"))
-        return f"{item.get('tray_index')}:{item.get('sample_id')}"
+        return f"{item['tray_index']}:{item['sample_index']}"
 
     def _normalize_item(self, item: dict, job_type: str) -> dict:
         """Attach default progress/result fields for a job item."""
         next_item = dict(item)
-        next_item.setdefault("status", "pending")
+        next_item.setdefault("status", "incomplete")
         if job_type == "dispensing":
             next_item.setdefault("actual_weight", None)
         elif job_type == "hardness":
             next_item.setdefault("result", None)
             next_item.setdefault("result_shore_a", None)
             next_item.setdefault("result_shore_d", None)
+            next_item["sample_index"] = int(item["sample_index"])
+            mode = item.get("mode", "")
+            if mode in ("shore_a", "shore_a_d"):
+                next_item.setdefault("status_shore_a", "incomplete")
+            if mode in ("shore_d", "shore_a_d"):
+                next_item.setdefault("status_shore_d", "incomplete")
             next_item.setdefault("image_path_shore_a", None)
             next_item.setdefault("image_path_shore_d", None)
             next_item.setdefault("sample_error", None)
@@ -120,7 +126,7 @@ class JobProgress:
         self.running = True
 
     def mark_item_active(self, index: int) -> None:
-        """Mark one item active and all untouched items pending."""
+        """Mark one item active and reset other active slots to incomplete."""
         if index < 0 or index >= len(self.items):
             return
         self.current_item = self.item_id(self.items[index])
@@ -129,7 +135,7 @@ class JobProgress:
             self.items[index]["status"] = "active"
         for idx, item in enumerate(self.items):
             if idx != index and item.get("status") == "active":
-                item["status"] = "pending"
+                item["status"] = "incomplete"
 
     def mark_item_complete(self, index: int, **updates) -> None:
         """Mark one item complete and attach optional result fields."""

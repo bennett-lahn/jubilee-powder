@@ -15,7 +15,7 @@
  * Variants
  *   'dispensing'  — shows target weight label inside selected wells
  *   'hardness'    — shows Shore mode label (A / A+D / D)
- *   'result'      — read-only; colors wells by status field (pending/active/complete/error/excluded)
+ *   'result'      — read-only; colors wells by status field (incomplete/active/complete/error/excluded)
  *                   used on the Home screen to display live job progress and completed job results
  */
 
@@ -162,9 +162,9 @@ export function useWellGrid(rows = 4, cols = 6) {
 // ── Result-variant status colours ────────────────────────────────────────────
 // Used when variant === 'result'.  Non-interactive divs — no hover or focus states.
 const RESULT_STATUS_CLASS = {
-  excluded: 'bg-slate-800 border border-slate-700',
-  pending:  'bg-slate-950 border border-slate-800',
-  active:   'bg-amber-500 ring-2 ring-amber-400/60',
+  excluded:   'bg-slate-800 border border-slate-700',
+  incomplete: 'bg-slate-950 border border-slate-800',
+  active:     'bg-amber-500 ring-2 ring-amber-400/60',
   complete: 'bg-green-700 border border-green-600',
   error:    'bg-red-800 border border-red-700',
 }

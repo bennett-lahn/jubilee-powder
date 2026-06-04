@@ -41,7 +41,7 @@ from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 def _sample_display_id(sample: dict) -> str:
     """Build a stable sample identifier for UI progress tracking."""
     t_idx = sample.get('tray_index', 'UnknownTray')
-    s_id = sample.get('sample_id', 'UnknownID')
+    s_id = sample.get('sample_index', 'UnknownID')
     
     return f"{t_idx}:{s_id}"
 
@@ -79,14 +79,30 @@ def _apply_hardness_progress_update(
     item = progress.items[index]
     configured_mode = item.get("mode")
     if sample_error:
+        pass_status = "error"
+    elif measured_result is not None:
+        pass_status = "complete"
+    else:
+        pass_status = "incomplete"
+
+    if sample_error:
+        error_updates = {
+            "result": None,
+            "status_shore_a": item.get("status_shore_a"),
+            "status_shore_d": item.get("status_shore_d"),
+            "result_shore_a": item.get("result_shore_a"),
+            "result_shore_d": item.get("result_shore_d"),
+            "image_path_shore_a": item.get("image_path_shore_a"),
+            "image_path_shore_d": item.get("image_path_shore_d"),
+        }
+        if pass_mode == "shore_a":
+            error_updates["status_shore_a"] = pass_status
+        else:
+            error_updates["status_shore_d"] = pass_status
         progress.mark_item_error(
             index,
             sample_error=sample_error,
-            result=item.get("result"),
-            result_shore_a=item.get("result_shore_a"),
-            result_shore_d=item.get("result_shore_d"),
-            image_path_shore_a=item.get("image_path_shore_a"),
-            image_path_shore_d=item.get("image_path_shore_d"),
+            **error_updates,
         )
         return
 
@@ -97,39 +113,45 @@ def _apply_hardness_progress_update(
         }
         if pass_mode == "shore_a":
             updates["result_shore_a"] = measured_result
+            updates["status_shore_a"] = pass_status
             if image_url is not None:
                 updates["image_path_shore_a"] = image_url
         elif pass_mode == "shore_d":
             updates["result_shore_d"] = measured_result
+            updates["status_shore_d"] = pass_status
             if image_url is not None:
                 updates["image_path_shore_d"] = image_url
 
         item.update(updates)
-        has_a = item.get("result_shore_a") is not None
-        has_d = item.get("result_shore_d") is not None
-        if has_a and has_d:
+        status_a = item.get("status_shore_a")
+        status_d = item.get("status_shore_d")
+        if status_a == "complete" and status_d == "complete":
             progress.mark_item_complete(
                 index,
                 result=None,
                 result_shore_a=item.get("result_shore_a"),
                 result_shore_d=item.get("result_shore_d"),
+                status_shore_a=status_a,
+                status_shore_d=status_d,
                 image_path_shore_a=item.get("image_path_shore_a"),
                 image_path_shore_d=item.get("image_path_shore_d"),
                 sample_error=None,
             )
         else:
-            item["status"] = "pending"
+            item["status"] = "incomplete"
         return
 
-    progress.mark_item_complete(
-        index,
-        result=measured_result,
-        result_shore_a=measured_result if pass_mode == "shore_a" else None,
-        result_shore_d=measured_result if pass_mode == "shore_d" else None,
-        image_path_shore_a=image_url if pass_mode == "shore_a" else item.get("image_path_shore_a"),
-        image_path_shore_d=image_url if pass_mode == "shore_d" else item.get("image_path_shore_d"),
-        sample_error=None,
-    )
+    updates = {
+        "result": None,
+        "sample_error": None,
+        "result_shore_a": measured_result if pass_mode == "shore_a" else None,
+        "result_shore_d": measured_result if pass_mode == "shore_d" else None,
+        "status_shore_a": pass_status if pass_mode == "shore_a" else None,
+        "status_shore_d": pass_status if pass_mode == "shore_d" else None,
+        "image_path_shore_a": image_url if pass_mode == "shore_a" else item.get("image_path_shore_a"),
+        "image_path_shore_d": image_url if pass_mode == "shore_d" else item.get("image_path_shore_d"),
+    }
+    progress.mark_item_complete(index, **updates)
 
 
 # =============================================================================
@@ -289,7 +311,7 @@ class MockHardwareManager:
 
         Args:
             samples: Ordered list of sample dicts with ``tray_index``,
-                ``sample_id``, and ``mode`` keys.
+                ``sample_index``, and ``mode`` keys.
             progress: Shared ``JobProgress`` instance updated as samples complete.
             job_log: Optional ``JobLog`` instance for recording results.
         """
@@ -310,7 +332,7 @@ class MockHardwareManager:
                     simulated_result = round(random.uniform(30.0, 80.0), 1)
                     if job_log is not None:
                         job_log.update_sample(
-                            sample["sample_id"],
+                            sample["sample_index"],
                             tray_index=sample["tray_index"],
                             result=simulated_result,
                             measurement_mode=pass_mode,
@@ -535,7 +557,7 @@ class HardwareManager:
 
         Args:
             samples: Ordered list of sample dicts with ``tray_index``,
-                ``sample_id``, and ``mode`` keys.
+                ``sample_index``, and ``mode`` keys.
             progress: Shared ``JobProgress`` instance updated as samples complete.
             job_log: Optional ``JobLog`` instance for recording results.
         """
@@ -561,7 +583,7 @@ class HardwareManager:
                     image_url = None
                     if job_log is not None:
                         img_filename = (
-                            f"{sample['tray_index']}_{sample['sample_id']}_{pass_mode}.jpg"
+                            f"{sample['tray_index']}_{sample['sample_index']}_{pass_mode}.jpg"
                         )
                         image_save_path = job_log.image_dir / img_filename
                         image_url = (
@@ -572,7 +594,7 @@ class HardwareManager:
                     success = await asyncio.to_thread(
                         self._manager.test_sample,
                         sample["tray_index"],
-                        sample["sample_id"],
+                        sample["sample_index"],
                         pass_mode,
                         image_save_path,
                     )
@@ -580,7 +602,7 @@ class HardwareManager:
                         detail = getattr(self._manager, "last_error", None) or "Unknown error"
                         raise RuntimeError(
                             "Hardness test failed for "
-                            f"tray {sample['tray_index']} sample {sample['sample_id']!r}: {detail}"
+                            f"tray {sample['tray_index']} sample {sample['sample_index']!r}: {detail}"
                         )
 
                     measured_result = _safe_float(

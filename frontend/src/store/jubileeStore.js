@@ -47,7 +47,6 @@ import {
   fetchJobLog as apiFetchJobLog,
   updateDispenser as apiUpdateDispenser,
   fetchDriveStatus as apiFetchDriveStatus,
-  triggerDriveSync as apiTriggerDriveSync,
 } from '../api/jubileeApi'
 
 function wsUrl() {
@@ -399,18 +398,17 @@ export const useJubileeStore = create((set, get) => ({
   },
 
   // -------------------------------------------------------------------------
-  // Google Drive integration
+  // Google Drive job log backup
   // -------------------------------------------------------------------------
 
   /**
-   * Null when not yet fetched.  Shape mirrors GET /api/drive/status:
-   * { enabled, connected, spreadsheet_id, last_poll, last_error }
+   * Null when not yet fetched.  Shape mirrors GET /api/drive/status.
    */
   driveStatus: null,
   driveStatusError: null,
 
   /**
-   * GET /api/drive/status — fetch and cache Drive connection status.
+   * GET /api/drive/status — fetch and cache Drive backup status.
    *
    * @returns {{ ok: boolean, error?: string }}
    */
@@ -419,25 +417,6 @@ export const useJubileeStore = create((set, get) => ({
       const data = await apiFetchDriveStatus()
       set({ driveStatus: data, driveStatusError: null })
       return { ok: true }
-    } catch (err) {
-      set({ driveStatusError: err.message })
-      return { ok: false, error: err.message }
-    }
-  },
-
-  /**
-   * POST /api/drive/sync — manually poll the sheet and start a job if ready.
-   * Updates driveStatus from the response payload.
-   *
-   * @returns {{ ok: boolean, job_started?: boolean, error?: string }}
-   */
-  async triggerDriveSync() {
-    try {
-      const data = await apiTriggerDriveSync()
-      // Response includes the same fields as /api/drive/status
-      const { triggered, job_started, ...statusFields } = data
-      set({ driveStatus: statusFields, driveStatusError: null })
-      return { ok: true, job_started: job_started ?? false }
     } catch (err) {
       set({ driveStatusError: err.message })
       return { ok: false, error: err.message }

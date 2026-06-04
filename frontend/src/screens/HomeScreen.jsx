@@ -72,7 +72,7 @@ function formatElapsed(totalSeconds) {
  * Build a `wells` map for WellGrid from a job progress object.
  *
  * All ROWS×COLS wells are initialised as `excluded`.  Wells present in
- * `job.items` are marked pending / active / complete based on the current
+ * `job.items` are marked incomplete / active / complete based on the current
  * `job.completed` counter and `job.current_item`.
  */
 function buildResultWells(rows, cols, job, jobType) {
@@ -121,7 +121,7 @@ function buildResultWells(rows, cols, job, jobType) {
   items.forEach((item, idx) => {
     const id = item.well_id != null
       ? String(item.well_id)
-      : sampleKeyForTray(item.tray_index, item.sample_id)
+      : sampleKeyForTray(item.tray_index, item.sample_index)
     if (!(id in wells)) return
 
     let status
@@ -134,18 +134,20 @@ function buildResultWells(rows, cols, job, jobType) {
     } else if (String(job.current_item) === id) {
       status = 'active'
     } else {
-      status = 'pending'
+      status = 'incomplete'
     }
+
+    const mode = item.mode ?? 'none'
 
     wells[id] = {
       ...wells[id],
       targetWeight: item.target_weight ?? 0,
       actualWeight: item.actual_weight ?? null,
-      result:       item.result ?? null,
+      result:       null,
       resultShoreA: item.result_shore_a ?? null,
       resultShoreD: item.result_shore_d ?? null,
       sampleError:  item.sample_error ?? null,
-      mode:         item.mode ?? 'none',
+      mode,
       status,
     }
   })
