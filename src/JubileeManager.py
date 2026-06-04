@@ -457,8 +457,11 @@ class JubileeManager:
             - Safe to call multiple times
             - Safe to call even if not fully connected
             - Does not raise exceptions on disconnection errors
+            - Parks the active tool before releasing the machine connection
+            - Turns off a mounted hardness tester before parking it
             - Sets `connected` property to False
         """
+        self._disconnect_cleanup()
         if self.machine_read_only:
             self.machine_read_only.disconnect()
         if self.scale:
@@ -542,6 +545,37 @@ class JubileeManager:
             except:
                 return 0.0
         return 0.0
+
+    def _hardness_tester_for_tool_id(self, tool_id: Optional[str]) -> Optional[HardnessTester]:
+        """Return the configured hardness tester whose name matches tool_id."""
+        if not tool_id:
+            return None
+        if self.hardness_tester_shore_a and tool_id == self.hardness_tester_shore_a.name:
+            return self.hardness_tester_shore_a
+        if self.hardness_tester_shore_d and tool_id == self.hardness_tester_shore_d.name:
+            return self.hardness_tester_shore_d
+        return None
+
+    def _disconnect_cleanup(self) -> None:
+        """Park the mounted tool and power off an active hardness tester before disconnect."""
+        if not self.connected or not self.state_machine:
+            return
+
+        active_tool_id = self.state_machine.context.active_tool_id
+        hardness_tester = self._hardness_tester_for_tool_id(active_tool_id)
+        if hardness_tester is not None:
+            try:
+                hardness_tester.turn_off()
+            except Exception as e:
+                print(f"Disconnect cleanup: hardness turn-off failed: {e}")
+
+        if active_tool_id is None:
+            return
+
+        try:
+            self.park_active_tool()
+        except Exception as e:
+            print(f"Disconnect cleanup: park tool failed: {e}")
 
     def park_active_tool(self) -> bool:
         """Park the currently mounted tool if one is active."""
