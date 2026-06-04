@@ -29,6 +29,24 @@
         "tamp_speed_min": 500,
         "tamp_speed_max": 5000
     },
+    "trickler": {
+        "flow_ema_alpha":           0.3,
+        "yield_ema_alpha":          0.2,
+        "jam_yield_threshold":      0.001,
+        "jam_iter_threshold":       40,
+        "max_step_size_mm":         4.0,
+        "min_step_size_mm":         0.2,
+        "warmup_steps":             3,
+        "warmup_max_step_mm":       0.5,
+        "coarse_threshold_pct":     0.70,
+        "finish_threshold_pct":     0.99,
+        "coarse_target_steps":      8,
+        "coarse_feedrate":            200,
+        "fine_feedrate":              400,
+        "coarse_vibration_amplitude": 0.5,
+        "fine_vibration_amplitude":   0.2,
+        "max_dribble_step_mm":      0.5
+    },
     "google_drive": {
         "enabled": false,
         "credentials_file": "jubilee_api_config/service_account.json",
@@ -53,6 +71,7 @@
             },
             "cam_usb_path": "/dev/shore_a_cam"
         },
+        "shore_d": {
             "tool": {
                 "index": 2,
                 "name": "shore_d_hardness_tester"

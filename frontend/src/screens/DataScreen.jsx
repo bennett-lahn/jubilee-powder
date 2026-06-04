@@ -202,6 +202,31 @@ function JobResultView({ job, onBack }) {
   const resultWells  = buildResultWells(resultRows, resultCols, job, jobType)
   const unitLabel    = jobType === 'dispensing' ? 'molds' : 'samples'
 
+  const [selectedSampleKey, setSelectedSampleKey] = useState(null)
+  const [shoreView, setShoreView] = useState('shore_a')
+
+  // Find the job item that matches the clicked sample key.
+  const selectedItem = selectedSampleKey
+    ? (job.items ?? []).find((item) => {
+        const key = item.well_id != null
+          ? String(item.well_id)
+          : `${item.tray_index}:${item.sample_id}`
+        return key === selectedSampleKey
+      }) ?? null
+    : null
+
+  const selectedShoreAUrl = selectedItem?.image_path_shore_a ?? null
+  const selectedShoreDUrl = selectedItem?.image_path_shore_d ?? null
+  const hasBothShores     = !!(selectedShoreAUrl && selectedShoreDUrl)
+  const activeImageUrl    = shoreView === 'shore_d' && selectedShoreDUrl
+    ? selectedShoreDUrl
+    : (selectedShoreAUrl ?? selectedShoreDUrl)
+
+  function handleSampleClick(key) {
+    setSelectedSampleKey(key)
+    setShoreView('shore_a')
+  }
+
   return (
     <div className="flex flex-col gap-3 h-full">
 
@@ -223,23 +248,85 @@ function JobResultView({ job, onBack }) {
       {/* ── Two-column body ──────────────────────────────────────────────── */}
       <div className="flex flex-row gap-3 flex-1 min-h-0">
 
-        {/* Left panel: arc */}
-        <Card className="flex flex-col items-center gap-3 p-3 w-48 shrink-0">
-          <div className="self-start w-full">
-            <p className="text-sm font-semibold text-slate-300 leading-tight">
-              {jobTypeLabel} Job
-            </p>
-            <p className="text-xs text-slate-600 leading-tight">historical record</p>
-          </div>
-          <ArcProgress
-            value={pct}
-            completed={completed}
-            total={total}
-            elapsed="--:--"
-            label={jobTypeLabel}
-            color={arcColor}
-            className="w-full"
-          />
+        {/* Left panel: arc or sample image */}
+        <Card className="flex flex-col gap-3 p-3 w-48 shrink-0">
+          {selectedItem ? (
+            /* ── Image viewer ──────────────────────────────────────────── */
+            <>
+              <div className="flex items-center gap-1 w-full">
+                <button
+                  onClick={() => setSelectedSampleKey(null)}
+                  className="text-slate-400 hover:text-slate-200 transition-colors shrink-0"
+                  aria-label="Back to summary"
+                >
+                  <ArrowLeft size={14} />
+                </button>
+                <p className="text-xs text-slate-500 truncate leading-tight">
+                  Sample {selectedSampleKey}
+                </p>
+              </div>
+
+              {hasBothShores && (
+                <div className="flex items-center justify-between w-full">
+                  <button
+                    onClick={() => setShoreView('shore_a')}
+                    disabled={shoreView === 'shore_a'}
+                    className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:cursor-default transition-colors"
+                    aria-label="View Shore A image"
+                  >
+                    &#8592;
+                  </button>
+                  <span className="text-[11px] font-semibold text-slate-300 select-none">
+                    Shore {shoreView === 'shore_a' ? 'A' : 'D'}
+                  </span>
+                  <button
+                    onClick={() => setShoreView('shore_d')}
+                    disabled={shoreView === 'shore_d'}
+                    className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:cursor-default transition-colors"
+                    aria-label="View Shore D image"
+                  >
+                    &#8594;
+                  </button>
+                </div>
+              )}
+
+              {activeImageUrl ? (
+                <img
+                  src={activeImageUrl}
+                  alt={`LCD display for sample ${selectedSampleKey}`}
+                  className="w-full rounded object-contain bg-slate-950"
+                />
+              ) : (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-xs text-slate-600 text-center">No image saved for this sample</p>
+                </div>
+              )}
+            </>
+          ) : (
+            /* ── Arc summary (default) ─────────────────────────────────── */
+            <>
+              <div className="self-start w-full">
+                <p className="text-sm font-semibold text-slate-300 leading-tight">
+                  {jobTypeLabel} Job
+                </p>
+                <p className="text-xs text-slate-600 leading-tight">historical record</p>
+              </div>
+              <ArcProgress
+                value={pct}
+                completed={completed}
+                total={total}
+                elapsed="--:--"
+                label={jobTypeLabel}
+                color={arcColor}
+                className="w-full"
+              />
+              {jobType === 'hardness' && (
+                <p className="text-[10px] text-slate-600 text-center leading-tight select-none">
+                  Click a sample to view its display image
+                </p>
+              )}
+            </>
+          )}
         </Card>
 
         {/* Right panel: well grid */}
@@ -253,6 +340,7 @@ function JobResultView({ job, onBack }) {
               rows={resultRows}
               cols={resultCols}
               toggleSample={() => {}}
+              onSampleClick={handleSampleClick}
               variant="result"
               trayCount={SAMPLE_TRAY_COUNT}
               className="flex-1 min-h-0"
@@ -266,7 +354,6 @@ function JobResultView({ job, onBack }) {
               selectRow={() => {}}
               selectCol={() => {}}
               variant="result"
-              className="flex-1 min-h-0"
             />
           )}
         </Card>

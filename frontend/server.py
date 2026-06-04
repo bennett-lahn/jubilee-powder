@@ -395,6 +395,19 @@ async def start_job(body: JobRequest):
                 "Wait for the current operation to finish or resolve the error."
             ),
         )
+    if hw._manager is None:
+        # Catches the race where disconnect() was called while a connect() was
+        # still running: connect() can finish after disconnect() and leave state
+        # as IDLE with _manager = None.  Force a clean disconnected state so
+        # the UI reflects reality before the user retries.
+        hw.state = MachineState.DISCONNECTED
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Hardware is not connected (internal manager is missing). "
+                "Please disconnect and reconnect before starting a job."
+            ),
+        )
     if progress.running:
         raise HTTPException(
             status_code=400,
@@ -461,6 +474,25 @@ async def abort_job():
     progress.running = False
     await hw.abort()
     return {"aborted": True}
+
+
+@app.post("/api/job/clear_jam", status_code=200)
+async def clear_jam():
+    """Resume a dispensing job that is paused due to a powder jam.
+
+    The dispensing loop blocks on a threading event when it detects that
+    powder flow has stalled.  This endpoint clears the jam flag in
+    ``JobProgress`` (so the UI dialog is dismissed on the next telemetry
+    frame) and then calls ``hw.clear_jam()`` to set the threading event,
+    unblocking the dispensing loop.
+
+    Returns 400 if no jam is currently active.
+    """
+    if not progress.jam_detected:
+        raise HTTPException(status_code=400, detail="No jam currently active")
+    progress.clear_jam()
+    hw.clear_jam()
+    return {"cleared": True}
 
 
 @app.get("/api/job/log")
@@ -936,6 +968,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 #
 # This block is intentionally placed after every API and WebSocket route so
 # that /api/* and /ws are never shadowed by the static mount.
+
+_IMAGES_DIR = _FILES_DIR / "images"
+_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/api/files/images",
+    StaticFiles(directory=str(_IMAGES_DIR), html=False),
+    name="sample_images",
+)
 
 _DIST_DIR = Path(__file__).parent / "dist"
 

@@ -102,6 +102,14 @@ export function abortJob() {
 }
 
 /**
+ * POST /api/job/clear_jam — resume a dispensing job paused by a powder jam.
+ * Returns { cleared: true } on success; 400 if no jam is active.
+ */
+export function clearJam() {
+  return request('/job/clear_jam', { method: 'POST' })
+}
+
+/**
  * GET /api/job/log — most recent job log, or { log: null } if none exists.
  */
 export function fetchJobLog() {

@@ -96,7 +96,7 @@ export function useSampleTrayGrid(rows = 5, cols = 7, trayCount = 2) {
   }
 }
 
-function SampleCell({ id, sample, onClick, variant }) {
+function SampleCell({ id, sample, onClick, onSampleClick, variant }) {
   if (variant === 'result') {
     const {
       status = 'excluded',
@@ -108,6 +108,7 @@ function SampleCell({ id, sample, onClick, variant }) {
     } = sample
     const shoreLabel = SHORE_LABELS[mode] ?? ''
     const formatOne = (value) => (Number.isFinite(value) ? value.toFixed(1) : 'N/A')
+    const isClickable = !!onSampleClick && (status === 'complete' || status === 'error')
 
     let innerContent = null
     if (status === 'complete') {
@@ -135,15 +136,31 @@ function SampleCell({ id, sample, onClick, variant }) {
       )
     }
 
+    const cellClass = [
+      'flex h-full w-full items-center justify-center rounded-none box-border',
+      status === 'active' ? 'animate-pulse' : '',
+      isClickable ? 'cursor-pointer hover:brightness-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white' : '',
+      RESULT_STATUS_CLASS[status] ?? RESULT_STATUS_CLASS.excluded,
+    ].join(' ')
+
+    if (isClickable) {
+      return (
+        <button
+          aria-label={`Sample ${id} - ${status}${sampleError ? ` (${sampleError})` : ''} — click to view image`}
+          style={{ aspectRatio: '1' }}
+          className={cellClass}
+          onClick={() => onSampleClick(id)}
+        >
+          {innerContent}
+        </button>
+      )
+    }
+
     return (
       <div
         aria-label={`Sample ${id} - ${status}${sampleError ? ` (${sampleError})` : ''}`}
         style={{ aspectRatio: '1' }}
-        className={[
-          'flex h-full w-full items-center justify-center rounded-none box-border',
-          status === 'active' ? 'animate-pulse' : '',
-          RESULT_STATUS_CLASS[status] ?? RESULT_STATUS_CLASS.excluded,
-        ].join(' ')}
+        className={cellClass}
       >
         {innerContent}
       </div>
@@ -192,6 +209,7 @@ export default function SampleTrayGrid({
   cols,
   trayCount = 2,
   toggleSample,
+  onSampleClick,
   variant = 'hardness',
   className = '',
 }) {
@@ -224,6 +242,7 @@ export default function SampleTrayGrid({
                       id={id}
                       sample={samples[id] ?? { selected: false, mode: 'none', status: 'excluded' }}
                       onClick={toggleSample}
+                      onSampleClick={onSampleClick}
                       variant={variant}
                     />
                   )

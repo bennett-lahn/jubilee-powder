@@ -43,6 +43,7 @@ import {
   stopJob as apiStopJob,
   cancelJob as apiCancelJob,
   abortJob as apiAbortJob,
+  clearJam as apiClearJam,
   fetchJobLog as apiFetchJobLog,
   updateDispenser as apiUpdateDispenser,
   fetchDriveStatus as apiFetchDriveStatus,
@@ -338,6 +339,21 @@ export const useJubileeStore = create((set, get) => ({
   async abortJob() {
     try {
       await apiAbortJob()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  },
+
+  /**
+   * POST /api/job/clear_jam
+   * Resumes a dispensing job that is paused due to a powder jam.
+   *
+   * @returns {{ ok: boolean, error?: string }}
+   */
+  async clearJam() {
+    try {
+      await apiClearJam()
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err.message }

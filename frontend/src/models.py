@@ -38,8 +38,8 @@ class MachineState(str, Enum):
 
 class HardwareConfig(BaseModel):
     """Sent from the Settings screen when the user clicks Connect."""
-    num_dispensers:        int           = Field(default=2,  ge=0)
-    pistons_per_dispenser: int           = Field(default=10, ge=0)
+    num_dispensers:        int           = Field(default=1, ge=0)
+    pistons_per_dispenser: int           = Field(default=2, ge=0)
     machine_address:       Optional[str] = None   # None → read from system_config.json
     scale_port:            str           = "/dev/ttyUSB0"
 
@@ -83,6 +83,8 @@ class JobProgress:
         self.error:        Optional[str] = None
         self.started_at:   Optional[str] = None   # ISO-8601 UTC string
         self.items:        list          = []      # ordered list of item dicts from the job request
+        self.jam_detected: bool          = False
+        self.jam_well_id:  Optional[str] = None
 
     @staticmethod
     def item_id(item: dict) -> str:
@@ -101,6 +103,8 @@ class JobProgress:
             next_item.setdefault("result", None)
             next_item.setdefault("result_shore_a", None)
             next_item.setdefault("result_shore_d", None)
+            next_item.setdefault("image_path_shore_a", None)
+            next_item.setdefault("image_path_shore_d", None)
             next_item.setdefault("sample_error", None)
         return next_item
 
@@ -143,6 +147,16 @@ class JobProgress:
         self.items[index]["status"] = "error"
         self.items[index]["sample_error"] = sample_error
 
+    def set_jam(self, well_id: str) -> None:
+        """Mark a powder jam as active for the given well."""
+        self.jam_detected = True
+        self.jam_well_id  = well_id
+
+    def clear_jam(self) -> None:
+        """Clear an active jam so the UI dialog is dismissed."""
+        self.jam_detected = False
+        self.jam_well_id  = None
+
     def reset(self) -> None:
         """Reset all fields to their initial defaults."""
         self.__init__()
@@ -162,4 +176,6 @@ class JobProgress:
             "error":        self.error,
             "started_at":   self.started_at,
             "items":        self.items,
+            "jam_detected": self.jam_detected,
+            "jam_well_id":  self.jam_well_id,
         }

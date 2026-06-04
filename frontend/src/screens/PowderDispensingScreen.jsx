@@ -124,7 +124,6 @@ export default function PowderDispensingScreen() {
           selectCol={selectDispensingCol}
           variant="dispensing"
           physicalLayout={DISPENSING_LAYOUT}
-          className="h-full"
         />
       </Card>
 

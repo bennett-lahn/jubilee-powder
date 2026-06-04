@@ -232,9 +232,9 @@ export default function SettingsScreen() {
   const dispensers = telemetry.dispensers ?? []
 
   // Form state
-  const [numDispensers,       setNumDispensers]       = useState('2')
-  const [pistonsPerDispenser, setPistonsPerDispenser] = useState('10')
-  const [jubileeIp,           setJubileeIp]           = useState('jubilee.local')
+  const [numDispensers,       setNumDispensers]       = useState('1')
+  const [pistonsPerDispenser, setPistonsPerDispenser] = useState('2')
+  const [jubileeIp,           setJubileeIp]           = useState('192.168.1.2')
   const [scalePort,           setScalePort]           = useState('/dev/ttyUSB0')
   const [statusMsg,           setStatusMsg]           = useState('')
 

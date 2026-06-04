@@ -333,6 +333,7 @@ class HardnessTester(Tool):
         tray_index: str | int,
         sample_id: str | int,
         state_machine,
+        image_save_path=None,
     ) -> dict[str, Optional[float | str]]:
         """
         Execute one hardness sample operation via the state machine move/action path.
@@ -359,15 +360,18 @@ class HardnessTester(Tool):
             sample_id=sample_id,
             mode=self.tester_mode,
             hardness_tester=self,
+            image_save_path=image_save_path,
         )
         if not result.valid:
             raise RuntimeError(result.reason or "Sample action failed")
 
         measured_value = getattr(state_machine._executor, "last_hardness_result", None)
         sample_error = getattr(state_machine._executor, "last_hardness_error", None)
+        image_path = getattr(state_machine._executor, "last_hardness_image_path", None)
         return {
             "result": measured_value,
             "sample_error": sample_error,
+            "image_path": image_path,
         }
 
 
@@ -880,7 +884,7 @@ class HardnessTester(Tool):
 
         return ''.join(result)
 
-    def read_display(self, frame=None, debug=False, debug_prefix="debug"):
+    def read_display(self, frame=None, debug=False, debug_prefix="debug", image_save_path=None):
         """
         Complete pipeline: Read all digits from LCD display.
         
@@ -889,6 +893,11 @@ class HardnessTester(Tool):
                    If None, collect 10 readings and return strict majority.
             debug: Whether to save debug images
             debug_prefix: Prefix for debug image filenames
+            image_save_path: Optional path (str or Path) to save a raw camera
+                frame alongside the reading.  The first frame that produced the
+                consensus result is saved; if consensus fails the last captured
+                frame is used as a fallback.  Parent directories are created
+                automatically.  Has no effect when ``frame`` is supplied.
             
         Returns:
             String with recognized digits or None if reading failed
@@ -919,6 +928,15 @@ class HardnessTester(Tool):
             print(f"Consensus candidates: {dict(consensus_counts)}")
 
         if consensus_count > len(read_results) // 2:
+            if image_save_path is not None and frames:
+                save_frame = next(
+                    (f for f, r in zip(frames, read_results) if r == consensus_result),
+                    frames[-1],
+                )
+                import cv2 as _cv2
+                from pathlib import Path as _Path
+                _Path(image_save_path).parent.mkdir(parents=True, exist_ok=True)
+                _cv2.imwrite(str(image_save_path), save_frame)
             return consensus_result
         return None
     

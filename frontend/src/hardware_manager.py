@@ -73,6 +73,7 @@ def _apply_hardness_progress_update(
     pass_mode: str,
     measured_result: float | None,
     sample_error: str | None,
+    image_url: str | None = None,
 ) -> None:
     """Apply one pass result to a sample item in JobProgress."""
     item = progress.items[index]
@@ -84,6 +85,8 @@ def _apply_hardness_progress_update(
             result=item.get("result"),
             result_shore_a=item.get("result_shore_a"),
             result_shore_d=item.get("result_shore_d"),
+            image_path_shore_a=item.get("image_path_shore_a"),
+            image_path_shore_d=item.get("image_path_shore_d"),
         )
         return
 
@@ -94,8 +97,12 @@ def _apply_hardness_progress_update(
         }
         if pass_mode == "shore_a":
             updates["result_shore_a"] = measured_result
+            if image_url is not None:
+                updates["image_path_shore_a"] = image_url
         elif pass_mode == "shore_d":
             updates["result_shore_d"] = measured_result
+            if image_url is not None:
+                updates["image_path_shore_d"] = image_url
 
         item.update(updates)
         has_a = item.get("result_shore_a") is not None
@@ -106,6 +113,8 @@ def _apply_hardness_progress_update(
                 result=None,
                 result_shore_a=item.get("result_shore_a"),
                 result_shore_d=item.get("result_shore_d"),
+                image_path_shore_a=item.get("image_path_shore_a"),
+                image_path_shore_d=item.get("image_path_shore_d"),
                 sample_error=None,
             )
         else:
@@ -117,6 +126,8 @@ def _apply_hardness_progress_update(
         result=measured_result,
         result_shore_a=measured_result if pass_mode == "shore_a" else None,
         result_shore_d=measured_result if pass_mode == "shore_d" else None,
+        image_path_shore_a=image_url if pass_mode == "shore_a" else item.get("image_path_shore_a"),
+        image_path_shore_d=image_url if pass_mode == "shore_d" else item.get("image_path_shore_d"),
         sample_error=None,
     )
 
@@ -319,6 +330,10 @@ class MockHardwareManager:
         """Simulate an emergency stop. Transitions state to ERROR immediately."""
         self.state = MachineState.ERROR
 
+    def clear_jam(self) -> None:
+        """No-op in mock: no real dispensing loop to unblock."""
+        pass
+
 
 # =============================================================================
 # HardwareManager
@@ -342,7 +357,8 @@ class HardwareManager:
 
     @property
     def connected(self) -> bool:
-        return self.state != MachineState.DISCONNECTED
+        # Only connected when state is not disconnected and there is a valid _manager object
+        return self.state != MachineState.DISCONNECTED and self._manager is not None
 
     @property
     def jubilee_ip(self) -> str:
@@ -374,6 +390,10 @@ class HardwareManager:
             if not success:
                 detail = getattr(self._manager, "last_error", None) or "Unknown connection error"
                 raise RuntimeError(f"Connection failed: {detail}")
+            # disconnect() may have been called while blocked in the background thread.  
+            # If so, _manager was cleared and state was set to DISCONNECTED; honour that instead.
+            if self._manager is None:
+                return
             self.state = MachineState.IDLE
         except Exception:
             traceback.print_exc()
@@ -462,19 +482,35 @@ class HardwareManager:
         Raises:
             RuntimeError: If ``dispense_to_well()`` returns ``False`` for any well.
         """
+        if self._manager is None:
+            raise RuntimeError(
+                "Hardware is not connected. Connect before starting a job."
+            )
         self.state = MachineState.RUNNING
-        if job_log is not None and self._manager is not None:
+        if job_log is not None:
             self._manager.active_job_log = job_log
         try:
             for i, well in enumerate(wells):
                 if not progress.running:
                     break
                 progress.mark_item_active(i)
+
+                # Register a jam callback so the dispensing loop can signal
+                # the UI by writing into progress without blocking the caller.
+                well_id = well["well_id"]
+                def _on_jam(wid=well_id):
+                    progress.set_jam(wid)
+                self._manager.set_jam_callback(_on_jam)
+
                 success = await asyncio.to_thread(
                     self._manager.dispense_to_well,
                     well["well_id"],
                     well["target_weight"],
                 )
+                # Clear any jam state left over from this well before moving on.
+                progress.clear_jam()
+                self._manager.set_jam_callback(None)
+
                 if not success:
                     detail = getattr(self._manager, "last_error", None) or "Unknown error"
                     raise RuntimeError(
@@ -487,6 +523,8 @@ class HardwareManager:
         finally:
             if self._manager is not None:
                 self._manager.active_job_log = None
+                self._manager.set_jam_callback(None)
+            progress.clear_jam()
             if self.state == MachineState.RUNNING:
                 self.state = MachineState.IDLE
 
@@ -501,8 +539,12 @@ class HardwareManager:
             progress: Shared ``JobProgress`` instance updated as samples complete.
             job_log: Optional ``JobLog`` instance for recording results.
         """
+        if self._manager is None:
+            raise RuntimeError(
+                "Hardware is not connected. Connect before starting a job."
+            )
         self.state = MachineState.RUNNING
-        if job_log is not None and self._manager is not None:
+        if job_log is not None:
             self._manager.active_job_log = job_log
         try:
             for pass_mode in ("shore_a", "shore_d"):
@@ -515,12 +557,24 @@ class HardwareManager:
                     if progress.items[i].get("status") == "error":
                         continue
 
+                    image_save_path = None
+                    image_url = None
+                    if job_log is not None:
+                        img_filename = (
+                            f"{sample['tray_index']}_{sample['sample_id']}_{pass_mode}.jpg"
+                        )
+                        image_save_path = job_log.image_dir / img_filename
+                        image_url = (
+                            f"/api/files/images/{job_log._id:04d}/{img_filename}"
+                        )
+
                     progress.mark_item_active(i)
                     success = await asyncio.to_thread(
                         self._manager.test_sample,
                         sample["tray_index"],
                         sample["sample_id"],
                         pass_mode,
+                        image_save_path,
                     )
                     if not success:
                         detail = getattr(self._manager, "last_error", None) or "Unknown error"
@@ -536,12 +590,18 @@ class HardwareManager:
                     if measured_result is None:
                         sample_error = sample_error or "OCR did not return a numeric hardness value."
 
+                    # Only record the image URL if the file was actually saved.
+                    confirmed_image_url = None
+                    if image_save_path is not None and image_save_path.is_file():
+                        confirmed_image_url = image_url
+
                     _apply_hardness_progress_update(
                         progress,
                         i,
                         pass_mode,
                         measured_result=measured_result,
                         sample_error=sample_error,
+                        image_url=confirmed_image_url,
                     )
         finally:
             if self._manager is not None:
@@ -561,3 +621,12 @@ class HardwareManager:
         if self._manager is not None:
             await asyncio.to_thread(self._manager.abort)   # Bypass state machine
         self.state = MachineState.ERROR                    # Prevents job finally-block reset
+
+    def clear_jam(self) -> None:
+        """Unblock the dispensing loop after the operator clears a powder jam.
+
+        Delegates to ``JubileeManager.clear_jam()`` which sets the threading
+        event that ``execute_fill_powder`` is waiting on.
+        """
+        if self._manager is not None:
+            self._manager.clear_jam()

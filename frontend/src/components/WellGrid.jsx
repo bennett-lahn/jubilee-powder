@@ -2,9 +2,10 @@
  * WellGrid — interactive bed visualisation.
  *
  * Sizing strategy
- *   The default mold grid is height-driven: each data row takes an equal
- *   share of the container height (flex-1), and each well button is h-full
- *   with aspectRatio:1 so it becomes a circle sized by its row's height.
+ *   The mold grid is width-driven: the root div uses aspect-ratio (cols:rows)
+ *   so its height is always derived from the available width.  Each data row
+ *   then takes an equal share of that height (flex-1), and each well button
+ *   is h-full with aspectRatio:1 so it becomes a circle sized by its row's height.
  *
  * Row / column axis buttons
  *   Clicking a row or column button toggles the entire row/column:
@@ -349,11 +350,15 @@ export default function WellGrid({
 }) {
   const readOnly = variant === 'result'
   const showTrickler = physicalLayout !== null
+  // Width-driven sizing: height is derived from the available width so the
+  // grid always fits horizontally.  Extra vertical space is left empty.
+  const layoutCols = physicalLayout ? physicalLayout[0].length : cols
 
   return (
-    // h-full fills whatever space the parent gives; min-h-0 lets it shrink
-    // in a flex column without overflowing.
-    <div className={['flex flex-col gap-2 h-full w-full min-h-0', className].join(' ')}>
+    <div
+      className={['flex flex-col gap-2 w-full min-h-0', className].join(' ')}
+      style={{ aspectRatio: `${layoutCols} / ${rows}` }}
+    >
 
       {/* Column header row — width driven by the physical layout if provided */}
       <div className={['flex gap-2 shrink-0', HEADER_H].join(' ')}>

@@ -181,6 +181,15 @@ class Scale:
         self._last_weight_time: float | None = None
         self._last_weight_message: str | None = None
 
+        # SIR streaming state.  When _streaming is True the serial read path
+        # is owned exclusively by _stream_thread; all other read paths must
+        # use the cached value.  _stream_lock protects the shared
+        # cache fields _last_weight_message / _last_weight_time against
+        # concurrent reads from the dispensing loop and the telemetry task.
+        self._streaming: bool = False
+        self._stream_thread: threading.Thread | None = None
+        self._stream_lock: threading.Lock = threading.Lock()
+
     def connect(self):
         """
         Establish a serial connection to the scale.
@@ -506,8 +515,7 @@ class Scale:
         try:
             result = self._execute_command(cmd, expect_data)
             if expect_data and cmd in WEIGHT_DATA_COMMANDS:
-                self._last_weight_time = time.time()
-                self._last_weight_message = result
+                self._store_weight_message(result)
             return result
         finally:
             self._release_busy()
@@ -620,7 +628,7 @@ class Scale:
                             print(f"[DEBUG] Final failure - Received serial data: {remaining}")
                             raise ScaleException("No data response from scale after ACK")
                     
-                    decoded = data.decode('ascii').strip()
+                    decoded = self._decode_serial_line(data)
                     # print(f"[DEBUG] Data response: {decoded}")
                     
                     # Check for error in data response
@@ -640,7 +648,7 @@ class Scale:
                                         continue
                                     else:
                                         raise ScaleException("No data response from scale after error handling")
-                                decoded = data.decode('ascii').strip()
+                                decoded = self._decode_serial_line(data)
                                 print(f"[DEBUG] Data response after error handling: {decoded}")
                                 # Check again for errors
                                 if decoded.startswith('EC,'):
@@ -768,6 +776,102 @@ class Scale:
         cmd = f'PT:{value:.3f}{unit}'
         return self._send_command(cmd)
 
+    # --- SIR streaming ---
+
+    def start_streaming(self) -> None:
+        """Start continuous weight streaming (SIR command).
+
+        Uses ``_send_command`` to handle the busy lock, input buffer flush,
+        write, first-line read, EC error detection/retry, and cache update.
+        The first weight line returned primes both the standard cache and the
+        ``_stream_lock``-protected cache before the reader thread is started.
+
+        Raises:
+            ScaleException: If the scale responds with an EC error code,
+                returns unexpected content, or times out.
+        """
+        if self._streaming:
+            return  # already streaming
+
+        first_response = self._send_command('SIR', expect_data=True)
+
+        if not self._is_weight_message(first_response):
+            raise ScaleException(
+                f"SIR command: unexpected first response: '{first_response}'"
+            )
+
+        # Prime the stream cache before the reader thread starts.
+        self._store_weight_message(first_response, stream_locked=True)
+
+        self._streaming = True
+
+        self._stream_thread = threading.Thread(
+            target=self._streaming_reader,
+            daemon=True,
+            name="scale-sir-reader",
+        )
+        self._stream_thread.start()
+
+    def stop_streaming(self) -> None:
+        """Stop the SIR stream by sending the Cancel command.
+
+        Sets ``_streaming = False`` so the reader thread exits its loop after
+        its current ``readline()`` returns, then calls the existing ``cancel()``
+        method (which uses ``_send_command('C')``) to tell the scale to stop
+        emitting lines, and finally joins the reader thread.
+        """
+        if not self._streaming:
+            return
+
+        self._streaming = False
+        self.cancel()  # _send_command('C') — acquires lock, writes, releases
+
+        if self._stream_thread is not None:
+            self._stream_thread.join(timeout=2.0)
+            self._stream_thread = None
+
+    def _streaming_reader(self) -> None:
+        """Background daemon that reads SIR weight lines and updates the cache.
+
+        Runs until ``_streaming`` is cleared by ``stop_streaming()``.
+        Only ``ST,`` and ``US,`` lines update the cache; ``EC,`` lines are
+        logged but do not crash the thread.  All other content is ignored.
+        """
+        while self._streaming:
+            try:
+                line = self.serial.readline()
+                if not line:
+                    continue
+                decoded = self._decode_serial_line(line)
+                if self._is_weight_message(decoded):
+                    self._store_weight_message(decoded, stream_locked=True)
+                elif decoded.startswith('EC,'):
+                    print(f"[Scale] SIR stream error: {decoded}")
+            except Exception:
+                pass  # serial timeout or decode error during shutdown
+
+    def get_stream_weight(self) -> float:
+        """Return the most recent weight value from the active SIR stream.
+
+        Reads from the shared cache rather than the serial port, so it is
+        safe to call from any thread while streaming is active.
+
+        Raises:
+            ScaleException: If not streaming, no data has arrived yet, or
+                the cached reading is older than 2 seconds.
+        """
+        with self._stream_lock:
+            msg = self._last_weight_message
+            ts  = self._last_weight_time
+
+        if not self._streaming or msg is None:
+            raise ScaleException("get_stream_weight: not streaming or no data yet")
+        if ts is not None and time.time() - ts > 2.0:
+            raise ScaleException("get_stream_weight: stream data is stale (>2 s)")
+        return self._parse_weight(msg, expect_stable=False)
+
+    # --- Standard weight commands ---
+
     def get_weight(self, stable: bool = True) -> float:
         """
         Get the current weight from the scale, parsing the response according to the data format.
@@ -802,7 +906,19 @@ class Scale:
         is queried with the SI (instant/unstable weight) command exactly as
         get_weight(stable=False) would do, and the result becomes the new cached
         weight.
+
+        SIR streaming shortcut: when SIR streaming is active the serial read
+        path is owned by the background reader thread.  This method returns
+        the latest cached stream value immediately without  acquiring the
+        busy lock, preventing a deadlock between the telemetry task and the
+        reader thread.
         """
+        if self._streaming:
+            with self._stream_lock:
+                msg = self._last_weight_message
+            if msg is not None:
+                return self._parse_weight(msg, expect_stable=False)
+
         blocked = self._acquire_busy_for_telemetry()
         try:
             if blocked and self._last_weight_time is not None:
@@ -812,11 +928,36 @@ class Scale:
                     return self._parse_weight(self._last_weight_message, expect_stable=False)
 
             resp = self._execute_command('SI', expect_data=True)
-            self._last_weight_time = time.time()
-            self._last_weight_message = resp
+            self._store_weight_message(resp)
             return self._parse_weight(resp, expect_stable=False)
         finally:
             self._release_busy()
+
+    @staticmethod
+    def _decode_serial_line(raw: bytes) -> str:
+        """Decode one scale serial line to a stripped ASCII string."""
+        return raw.decode('ascii').strip()
+
+    @staticmethod
+    def _is_weight_message(message: str) -> bool:
+        """
+        True if message is a weight data line (``ST,`` or ``US,`` header).
+
+        Matches the headers accepted by ``_parse_weight`` when
+        ``expect_stable=False``; does not validate length, sign, or unit.
+        """
+        return len(message) >= 3 and message[2] == ',' and message[0:2] in ('ST', 'US')
+
+    def _store_weight_message(self, message: str, *, stream_locked: bool = False) -> None:
+        """Cache the latest raw weight response string and timestamp."""
+        now = time.time()
+        if stream_locked:
+            with self._stream_lock:
+                self._last_weight_message = message
+                self._last_weight_time = now
+        else:
+            self._last_weight_message = message
+            self._last_weight_time = now
 
     def _parse_weight(self, data: str, expect_stable: bool = True) -> float:
         """
@@ -839,9 +980,8 @@ class Scale:
             if expect_stable:
                 if header != 'ST':
                     raise ScaleHeaderException(ScaleError.BAD_HEADER.desc + f" Got '{header}' when expecting 'ST'.")
-            else:
-                if header not in ('ST', 'US'):
-                    raise ScaleHeaderException(ScaleError.BAD_HEADER.desc + f" Got '{header}' when expecting 'ST' or 'US'.")
+            elif not Scale._is_weight_message(data):
+                raise ScaleHeaderException(ScaleError.BAD_HEADER.desc + f" Got '{header}' when expecting 'ST' or 'US'.")
             sign = data[3]
             if sign not in ('+', '-'):  # Polarity sign, 0 is positive, but protocol uses +/-, so accept both
                 raise ScaleException(f"Unexpected sign character: '{sign}' in '{data}'")
@@ -864,7 +1004,7 @@ class Scale:
             
             # Check for negative weight (possible tare issue)
             if final_value < -1.0:
-                print(f"[DEBUG] Warning: Negative weight detected: {final_value:.4f} g (possible tare issue or container removed)")
+                # print(f"[DEBUG] Warning: Negative weight detected: {final_value:.4f} g (possible tare issue or container removed)")
             
             # Check for positive weight exceeding maximum
             if value > MAX_WEIGHT:

@@ -4,7 +4,6 @@ Loads system-wide configuration parameters from JSON files.
 """
 
 import json
-import os
 from pathlib import Path
 
 class ConfigLoader:
@@ -78,6 +77,60 @@ class ConfigLoader:
     def get_tamp_speed_max(self) -> int:
         """Get maximum tamp speed in mm/min"""
         return self.get("manipulator.tamp_speed_max", None)
+
+    # --- Trickler / powder dispensing ---
+
+    def get_trickler(self, key: str, default=None):
+        """Get a trickler configuration value by key name."""
+        return self.get(f"trickler.{key}", default)
+
+    def get_trickler_flow_ema_alpha(self) -> float:
+        return self.get_trickler("flow_ema_alpha", 0.3)
+
+    def get_trickler_yield_ema_alpha(self) -> float:
+        return self.get_trickler("yield_ema_alpha", 0.2)
+
+    def get_trickler_jam_yield_threshold(self) -> float:
+        return self.get_trickler("jam_yield_threshold", 0.001)
+
+    def get_trickler_jam_iter_threshold(self) -> int:
+        return int(self.get_trickler("jam_iter_threshold", 40))
+
+    def get_trickler_max_step_size_mm(self) -> float:
+        return self.get_trickler("max_step_size_mm", 4.0)
+
+    def get_trickler_min_step_size_mm(self) -> float:
+        return self.get_trickler("min_step_size_mm", 0.2)
+
+    def get_trickler_warmup_steps(self) -> int:
+        return int(self.get_trickler("warmup_steps", 3))
+
+    def get_trickler_warmup_max_step_mm(self) -> float:
+        return self.get_trickler("warmup_max_step_mm", 0.5)
+
+    def get_trickler_coarse_threshold_pct(self) -> float:
+        return self.get_trickler("coarse_threshold_pct", 0.9)
+
+    def get_trickler_finish_threshold_pct(self) -> float:
+        return self.get_trickler("finish_threshold_pct", 0.99)
+
+    def get_trickler_coarse_target_steps(self) -> int:
+        return int(self.get_trickler("coarse_target_steps", 8))
+
+    def get_trickler_coarse_feedrate(self) -> int:
+        return int(self.get_trickler("coarse_feedrate", 200))
+
+    def get_trickler_fine_feedrate(self) -> int:
+        return int(self.get_trickler("fine_feedrate", 300))
+
+    def get_trickler_coarse_vibration_amplitude(self) -> float:
+        return self.get_trickler("coarse_vibration_amplitude", 0.5)
+
+    def get_trickler_fine_vibration_amplitude(self) -> float:
+        return self.get_trickler("fine_vibration_amplitude", 0.2)
+
+    def get_trickler_max_dribble_step_mm(self) -> float:
+        return self.get_trickler("max_dribble_step_mm", 0.5)
 
 # Global config instance
 config = ConfigLoader()

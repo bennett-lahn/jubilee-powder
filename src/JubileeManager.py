@@ -28,8 +28,9 @@ Example:
             manager.disconnect()
 """
 
+import time
 import traceback
-from typing import Optional, List, TYPE_CHECKING
+from typing import Callable, Optional, List, TYPE_CHECKING
 from pathlib import Path
 
 if TYPE_CHECKING:
@@ -131,7 +132,9 @@ class JubileeManager:
         self.last_dispense_weight: Optional[float] = None
         self.last_hardness_result: Optional[float] = None
         self.last_hardness_error: Optional[str] = None
+        self.last_hardness_image_path: Optional[str] = None
         self.last_error: Optional[str] = None
+        self._on_jam_callback: Optional[Callable] = None
     
     @property
     def machine_read_only(self) -> Optional[Machine]:
@@ -225,7 +228,31 @@ class JubileeManager:
         if self.state_machine:
             return self.state_machine.context.piston_dispensers
         return []
-        
+
+    # ── Jam detection helpers ─────────────────────────────────────────────────
+
+    @property
+    def jam_detected(self) -> bool:
+        """True while the dispensing loop is blocked waiting for jam clearance."""
+        if self.state_machine and self.state_machine._executor:
+            return self.state_machine._executor.jam_detected
+        return False
+
+    def set_jam_callback(self, callback: Optional[Callable]) -> None:
+        """Register a callback invoked when a powder jam is detected.
+
+        The callback is called from the dispensing thread immediately before
+        it blocks.  It should be lightweight (e.g. set a flag in JobProgress).
+        """
+        self._on_jam_callback = callback
+        if self.state_machine and self.state_machine._executor:
+            self.state_machine._executor._on_jam_detected = callback
+
+    def clear_jam(self) -> None:
+        """Resume dispensing after the operator has cleared the blockage."""
+        if self.state_machine and self.state_machine._executor:
+            self.state_machine._executor.clear_jam()
+
     def connect(
         self,
         machine_address: Optional[str] = None,
@@ -297,6 +324,8 @@ class JubileeManager:
             before attempting to connect again.
         """
         try:
+            _t0 = time.monotonic()
+
             # Use config IP if no address provided
             if machine_address is None:
                 machine_address = config.get_duet_ip()
@@ -304,10 +333,13 @@ class JubileeManager:
             # Connect to machine
             real_machine = Machine(address=machine_address)
             real_machine.connect()
+            print(f"[TIMING] Duet connect: {time.monotonic() - _t0:.2f}s")
             
             # Connect to scale first (needed for state machine initialization)
+            _t1 = time.monotonic()
             self.scale = Scale(port=scale_port)
             self.scale.connect()
+            print(f"[TIMING] Scale connect: {time.monotonic() - _t1:.2f}s")
             
             # Get project root for config paths
             project_root = Path(__file__).parent.parent
@@ -326,6 +358,7 @@ class JubileeManager:
                 raise FileNotFoundError(f"State machine config not found: {config_path}")
             system_config_path = project_root / "jubilee_api_config" / "system_config.json"
             
+            _t2 = time.monotonic()
             self.state_machine = MotionPlatformStateMachine.from_config_file(
                 config_path,
                 real_machine,
@@ -365,6 +398,7 @@ class JubileeManager:
                 use_camera=False,
                 state_machine=self.state_machine,
             )
+            print(f"[TIMING] State machine + tools init: {time.monotonic() - _t2:.2f}s")
 
             # Ensure state machine context is set correctly for homing
             # Set z_height_id to mold_transfer_safe which is the default height after homing
@@ -377,14 +411,19 @@ class JubileeManager:
             # Home all axes (X, Y, Z, U, V) through state machine
             # This requires no tool picked up and no mold
             # Returns to global_ready position at mold_transfer_safe z-height
+            _t3 = time.monotonic()
             result = self.state_machine.validated_home_all()
+            print(f"[TIMING] validated_home_all (incl. post-home move + M400): {time.monotonic() - _t3:.2f}s")
             if not result.valid:
                 raise RuntimeError(f"Failed to home all axes: {result.reason}")
             
             # Load the manipulator tool (this registers it but doesn't pick it up)
+            _t4 = time.monotonic()
             self.machine_read_only.load_tool(self.manipulator)
             # self.machine_read_only.load_tool(self.hardness_tester_shore_a)
             # self.machine_read_only.load_tool(self.hardness_tester_shore_d)
+            print(f"[TIMING] load_tool: {time.monotonic() - _t4:.2f}s")
+            print(f"[TIMING] Total connect: {time.monotonic() - _t0:.2f}s")
             
             self.connected = True
             return True
@@ -659,7 +698,7 @@ class JubileeManager:
             self.manipulator.place_mold_on_scale()
             self.fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
-            self.manipulator.tamp(tamp_depth=3.0, tamp_speed=500)
+            self.manipulator.tamp(tamp_depth=10.0, tamp_speed=500)
             self.move_to_global_ready()
             self.move_to_dispenser()
             self.get_piston_from_dispenser()
@@ -682,6 +721,7 @@ class JubileeManager:
         tray_index: int,
         sample_id: str,
         mode: Optional[str] = None,
+        image_save_path=None,
     ) -> bool:
         """
         Select a Shore tester and delegate sample testing to it.
@@ -694,13 +734,17 @@ class JubileeManager:
                 raise RuntimeError("State machine not configured")
             self.last_hardness_result = None
             self.last_hardness_error = None
+            self.last_hardness_image_path = None
 
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
-            measurement = selected_tester.test_sample(tray_index, sample_id, self.state_machine)
+            measurement = selected_tester.test_sample(
+                tray_index, sample_id, self.state_machine, image_save_path=image_save_path
+            )
             if isinstance(measurement, dict):
                 self.last_hardness_result = measurement.get("result")
                 self.last_hardness_error = measurement.get("sample_error")
+                self.last_hardness_image_path = measurement.get("image_path")
             else:
                 self.last_hardness_result = None
                 self.last_hardness_error = "Hardness tester did not return measurement metadata."
@@ -712,6 +756,7 @@ class JubileeManager:
                     result=self.last_hardness_result,
                     sample_error=self.last_hardness_error,
                     measurement_mode=selected_tester.tester_mode,
+                    image_path=self.last_hardness_image_path,
                 )
             return True
         except Exception as e:
@@ -1018,10 +1063,15 @@ class JubileeManager:
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
-        
+
         if not self.scale:
             return False
-        
+
+        # Keep the executor's callback in sync with whatever the hardware
+        # manager registered via set_jam_callback().
+        if self.state_machine._executor is not None:
+            self.state_machine._executor._on_jam_detected = self._on_jam_callback
+
         result = self.state_machine.validated_fill_powder(
             target_weight=target_weight
         )

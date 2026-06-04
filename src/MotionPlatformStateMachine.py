@@ -1775,6 +1775,7 @@ class MotionPlatformStateMachine(StateMachine):
         sample_id: str | int,
         mode: Optional[str] = None,
         hardness_tester=None,
+        image_save_path=None,
     ) -> MoveValidationResult:
         """
         Validate and execute the hardness measurement at the current sample slot.
@@ -1797,6 +1798,7 @@ class MotionPlatformStateMachine(StateMachine):
             sample_id=str(sample_id),
             mode=mode,
             hardness_tester=hardness_tester,
+            image_save_path=image_save_path,
         )
 
     @staticmethod

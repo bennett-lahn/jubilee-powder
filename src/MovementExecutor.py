@@ -8,14 +8,16 @@ MotionPlatformStateMachine.
 The executor is owned by the state machine and is not accessed directly by other
 components, so all movements go through validation.
 """
+import threading
 import time
 
-from typing import Optional
+from typing import Callable, Optional
 from science_jubilee.Machine import Machine
 from src.Scale import Scale
 from src.HardnessTester import HardnessTester
 from src.PistonDispenser import PistonDispenser
 from src.MotionPlatformStateMachine import PositionType
+from src.ConfigLoader import ConfigLoader
 from jubilee_api_config.constants import FeedRate
 
 
@@ -27,7 +29,13 @@ class MovementExecutor:
     owned by MotionPlatformStateMachine and accessed through validated methods.
     """
     
-    def __init__(self, machine: Machine, scale: Optional[Scale] = None, feedrate: FeedRate = FeedRate.MEDIUM):
+    def __init__(
+        self,
+        machine: Machine,
+        scale: Optional[Scale] = None,
+        feedrate: FeedRate = FeedRate.MEDIUM,
+        on_jam_detected: Optional[Callable] = None,
+    ):
         """
         Initialize the movement executor with a machine reference.
         
@@ -35,6 +43,8 @@ class MovementExecutor:
             machine: The Jubilee Machine instance to control
             scale: Optional Scale instance (reference to JubileeManager's scale)
             feedrate: FeedRate enum value to control movement speed (default: MEDIUM)
+            on_jam_detected: Optional callback invoked when a powder jam is detected.
+                Called from the dispensing thread before blocking on user clearance.
         """
         self._machine = machine
         self._scale = scale
@@ -42,6 +52,13 @@ class MovementExecutor:
         self.last_fill_weight: Optional[float] = None
         self.last_hardness_result: Optional[float] = None
         self.last_hardness_error: Optional[str] = None
+        self.last_hardness_image_path: Optional[str] = None
+
+        # Jam handling: the dispensing loop blocks on this event when a jam is
+        # detected; clear_jam() sets it to allow the loop to resume.
+        self._jam_resume_event: threading.Event = threading.Event()
+        self._jam_resume_event.set()  # not jammed initially
+        self._on_jam_detected: Optional[Callable] = on_jam_detected
     
     @property
     def machine(self) -> Machine:
@@ -466,6 +483,7 @@ class MovementExecutor:
         sample_id: str,
         mode: Optional[str] = None,
         hardness_tester: HardnessTester = None,
+        image_save_path=None,
     ) -> bool:
         """
         Execute the hardness measurement at the current sample slot position.
@@ -483,6 +501,7 @@ class MovementExecutor:
         """
         self.last_hardness_result = None
         self.last_hardness_error = None
+        self.last_hardness_image_path = None
 
         # TODO: Issue the actual z-probe descent (e.g. G38.2 / vendor
         # probe routine) and capture the contact Z.
@@ -500,10 +519,15 @@ class MovementExecutor:
         reading = hardness_tester.read_display(
             debug=False,
             debug_prefix=f"hardness_{tray_index}_{sample_id}",
+            image_save_path=image_save_path,
         )
         measured_value, sample_error = hardness_tester._parse_hardness_reading(reading)
         self.last_hardness_result = measured_value
         self.last_hardness_error = sample_error
+        if image_save_path is not None:
+            from pathlib import Path as _Path
+            p = _Path(image_save_path)
+            self.last_hardness_image_path = str(image_save_path) if p.is_file() else None
         return True
 
     def execute_hardness_turn_on(
@@ -839,120 +863,253 @@ class MovementExecutor:
             print(f"Error moving to scale: {e}")
             return False
     
+    # ===== JAM DETECTION HELPERS =====
+
+    @property
+    def jam_detected(self) -> bool:
+        """True while the dispensing loop is blocked waiting for jam clearance."""
+        return not self._jam_resume_event.is_set()
+
+    def clear_jam(self) -> None:
+        """Resume dispensing after a jam has been physically cleared by the operator."""
+        self._jam_resume_event.set()
+
+    def _set_trickler_vibration(self, amplitude: float) -> None:
+        """Set trickler vibration servo amplitude (M42 P0). Amplitude 0 turns it off."""
+        self._machine.gcode(f"M42 P0 S{amplitude:.2f} F20000")
+
+    def _handle_jam(self) -> None:
+        """Called from the dispensing loop when a jam is detected.
+
+        Stops vibration, fires the on_jam_detected callback (which
+        signals the UI), then blocks until clear_jam() is called by the
+        operator-facing REST endpoint.
+        """
+        try:
+            self._set_trickler_vibration(0.0)
+            self._machine.gcode("M400")
+        except Exception as e:
+            print(f"[Jam] Warning: could not stop vibration: {e}")
+
+        self._jam_resume_event.clear()
+        print("[Jam] Powder jam detected - waiting for operator clearance.")
+
+        if self._on_jam_detected is not None:
+            try:
+                self._on_jam_detected()
+            except Exception as e:
+                print(f"[Jam] on_jam_detected callback raised: {e}")
+
+        self._jam_resume_event.wait()
+        print("[Jam] Jam cleared by operator - resuming dispensing.")
+
+    # ===== POWDER FILL =====
+
     def execute_fill_powder(
         self,
         target_weight: float
     ) -> bool:
         """
         Fill mold with powder using the trickler.
-        
-        Moved from JubileeManager._fill_powder()
-        
+
+        Uses SIR continuous weight streaming, every iteration reads the most
+        recent weight without issuing a blocking serial command.  Two per-step EMAs
+        (flow and yield, both in g/mm) drive adaptive step sizing and jam
+        detection.  If the yield EMA drops below the configured threshold for
+        enough consecutive steps, the loop pauses and waits for the operator to
+        clear the blockage via the REST API.
+
         Args:
-            target_weight: Target weight to fill
-            
+            target_weight: Target weight of powder to fill, in grams.
+
         Returns:
-            True if successful, False otherwise
+            True if the target was reached, False if an unrecoverable error
+            occurred.
         """
+        cfg = ConfigLoader()
+
+        flow_alpha        = cfg.get_trickler_flow_ema_alpha()
+        yield_alpha       = cfg.get_trickler_yield_ema_alpha()
+        jam_threshold     = cfg.get_trickler_jam_yield_threshold()
+        jam_iter_limit    = cfg.get_trickler_jam_iter_threshold()
+        max_step          = cfg.get_trickler_max_step_size_mm()
+        min_step          = cfg.get_trickler_min_step_size_mm()
+        warmup_steps      = cfg.get_trickler_warmup_steps()
+        warmup_max_step   = cfg.get_trickler_warmup_max_step_mm()
+        coarse_pct        = cfg.get_trickler_coarse_threshold_pct()
+        finish_pct        = cfg.get_trickler_finish_threshold_pct()
+        coarse_tgt_steps  = cfg.get_trickler_coarse_target_steps()
+        coarse_feedrate   = cfg.get_trickler_coarse_feedrate()
+        fine_feedrate     = cfg.get_trickler_fine_feedrate()
+        coarse_vib_amp    = cfg.get_trickler_coarse_vibration_amplitude()
+        fine_vib_amp      = cfg.get_trickler_fine_vibration_amplitude()
+        max_dribble_step  = cfg.get_trickler_max_dribble_step_mm()
+
+        coarse_feedrate_str = f"F{coarse_feedrate}"
+        fine_feedrate_str   = f"F{fine_feedrate}"
+        coarse_threshold    = coarse_pct * target_weight
+        finish_threshold    = finish_pct * target_weight
+
+        streaming_started = False
         try:
-            self._machine.gcode("M400") # Ensure all other actions have finished so mold is actually under trickler
-             # Determine feedrate string for G-code
-            feedrate_str = str("F200")
-            
-            threshold_90_percent = 0.9 * target_weight
-            max_step_size = 8                           # Maximum step size when weight is very low
-            min_step_size = 1.0                         # Minimum step size when approaching 90% threshold
-            feedback_step_size = 0.2
-            
-            # Track if threshold crossed
-            threshold_crossed = False
-            time.sleep(2) # Wait 2 seconds to stabilize
+            self._machine.gcode("M400")  # ensure prior moves are complete
+
             self._scale.tare()
             initial_weight = self._scale.get_weight(stable=True)
+            print(f"[Fill] Initial weight after tare: {initial_weight:.4f}g")
+            print(f"[Fill] Target: {target_weight:.4f}g  coarse: {coarse_threshold:.4f}g  finish: {finish_threshold:.4f}g")
 
-            print(f"Target: {target_weight:.4f}g, 90% threshold: {threshold_90_percent:.4f}g\n")
-            self._machine.gcode("G92 W0") # Reset trickler axis
-            self._machine.gcode("G91") # Set relative positioning mode
-            
-            iteration = 0
-            rolling_avg_alpha = 0.5 # Reactivity parameter for exponential rolling average
-            exp_rolling_avg = 0
+            self._scale.start_streaming()
+            streaming_started = True
+
+            self._machine.gcode("G92 W0")  # reset trickler axis
+            self._machine.gcode("G91")     # relative positioning
+
+            # Vibration stays on for the whole fill
+            current_vib_amp = coarse_vib_amp
+            self._set_trickler_vibration(current_vib_amp)
+
+            # EMA state (both in g/mm, updated once per motor step)
+            flow_ema          = 0.0
+            yield_ema         = 0.0
+            step_count        = 0
+            stagnant_count    = 0
+            motor_has_moved   = False
+            threshold_crossed = False
+
+            previous_weight = self._scale.get_stream_weight()
+
             while True:
-                iteration += 1
-                
-                # Get current weight (unstable) to determine behavior
-                current_weight = self._scale.get_weight(stable=False)
-                exp_rolling_avg = (rolling_avg_alpha * current_weight + ((1 - rolling_avg_alpha) * exp_rolling_avg))
-                
-                if current_weight >= threshold_90_percent:
-                    # Above 90% threshold: feedback loop mode
+                current_weight = self._scale.get_stream_weight()
+
+                if current_weight >= coarse_threshold:
+                    # ── Fine / feedback phase ─────────────────────────────
                     if not threshold_crossed:
-                        # First time crossing threshold - mark it
                         threshold_crossed = True
-                        print(f"Crossed 90% threshold at {current_weight:.4f}g. Entering feedback loop mode.")
-                    
-                    # Keep vibration off unless powder dispensing has slowed
-                    if exp_rolling_avg < 0.05:
-                        self._machine.gcode("M42 P0 S0.5 F20000") # Turn on vibration
-                    # Move -> unstable weight -> move
-                    self._machine.gcode(f"G1 W{feedback_step_size} {feedrate_str}")
+                        current_vib_amp = fine_vib_amp
+                        print(f"[Fill] Coarse threshold crossed at {current_weight:.4f}g")
+                        self._set_trickler_vibration(current_vib_amp)
+
+                    # Dynamic micro-burst: size calculated from remaining
+                    # distance to finish threshold normalised by yield EMA.
+                    # Clamped tightly so each burst is always tiny.
+                    remaining = max(0.0, finish_threshold - current_weight)
+                    if yield_ema > 0 and remaining > 0:
+                        step_size = remaining / yield_ema
+                    else:
+                        step_size = min_step
+                    step_size = max(min_step, min(max_dribble_step, step_size))
+
+                    weight_before_step = self._scale.get_stream_weight()
+                    # High-speed "flick" at fine_feedrate; vibration already running.
+                    self._machine.gcode(f"G1 W{step_size:.4f} {fine_feedrate_str}")
                     self._machine.gcode("M400")
-                    self._machine.gcode("M42 P0 S0.0 F20000") # Turn off vibration
-                    time.sleep(0.2) # Small sleep to promote scale settling
-                    
-                    # Get unstable weight readin
-                    try:
-                        unstable_weight = self._scale.get_weight(stable=False)
-                        
-                        # Check if within 1% of target weight or above target
-                        threshold_99_percent = 0.99 * target_weight
-                        if unstable_weight >= threshold_99_percent:
-                            time.sleep(2.0)
-                            
-                            # Final stable measurement to confirm
-                            final_weight = self._scale.get_weight(stable=True)
-                                                
-                            print(f"Final stable measurement: Weight={final_weight:.4f}g")
-                            
-                            # Check if stable weight is actually over threshold
-                            if final_weight >= threshold_99_percent:
-                                print(f"\nTarget weight of {target_weight:.4f}g reached!")
-                                self.last_fill_weight = final_weight
-                                break
-                            else:
-                                # Stable weight is below threshold, restart trickling
-                                print(f"Stable weight {final_weight:.4f}g is below threshold {threshold_99_percent:.4f}g. Restarting trickling...")
-                                continue
-                            
-                    except Exception as e:
-                        print(f"Error reading weight at iteration {iteration}: {e}")
-                        # Continue the loop even if there's an error
+                    motor_has_moved = True
+
+                    weight_after_step = self._scale.get_stream_weight()
+                    weight_gained     = max(0.0, weight_after_step - weight_before_step)
+                    step_yield        = weight_gained / step_size  # g/mm
+
+                    flow_ema  = flow_alpha  * step_yield + (1 - flow_alpha)  * flow_ema
+                    yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
+                    step_count += 1
+
+                    # Jam detection
+                    if flow_ema < jam_threshold:
+                        stagnant_count += 1
+                    else:
+                        stagnant_count = 0
+                    if stagnant_count >= jam_iter_limit:
+                        self._handle_jam()  # turns vibration off; blocks until cleared
+                        stagnant_count  = 0
+                        flow_ema        = 0.0
+                        yield_ema       = 0.0
+                        self._set_trickler_vibration(current_vib_amp)
+                        previous_weight = self._scale.get_stream_weight()
                         continue
+
+                    previous_weight = weight_after_step
+                    current_weight  = weight_after_step
+
+                    # Check for target reached.  Stop streaming so that the
+                    # blocking S (stable weight) command does not conflict with
+                    # the SIR stream; no sleep needed since S blocks until stable.
+                    if current_weight >= finish_threshold:
+                        self._set_trickler_vibration(0.0)  # off for stable scale read only
+                        self._scale.stop_streaming()
+                        streaming_started = False
+                        final_weight = self._scale.get_weight(stable=True)
+                        print(f"[Fill] Stable confirmation: {final_weight:.4f}g")
+                        if final_weight >= finish_threshold:
+                            print(f"[Fill] Target reached: {final_weight:.4f}g")
+                            self.last_fill_weight = final_weight
+                            break
+                        else:
+                            print(f"[Fill] Stable weight {final_weight:.4f}g below threshold, continuing...")
+                            self._scale.start_streaming()
+                            streaming_started = True
+                            self._set_trickler_vibration(current_vib_amp)
+                            previous_weight = self._scale.get_stream_weight()
+
                 else:
-                    # Below 90% threshold: big movements with vibration, stable measurements after each
-                    # Linear decrease: step_size decreases smoothly as weight approaches 90% threshold
-                    progress = max(0, current_weight / threshold_90_percent)  # 0 to 1
-                    step_size = max_step_size - ((max_step_size - min_step_size) * progress)
-                    
-                    # Move with vibration
-                    self._machine.gcode("M42 P0 S0.5 F20000") # Turn on vibration
-                    self._machine.gcode(f"G1 W{step_size}{feedrate_str}")
+                    # ── Coarse phase ──────────────────────────────────────
+                    # Determine step size using yield EMA once warmed up.
+                    if step_count < warmup_steps or yield_ema == 0.0:
+                        # Linear fallback during warmup, capped conservatively.
+                        progress  = max(0.0, current_weight / coarse_threshold)
+                        step_size = max_step - (max_step - min_step) * progress
+                        step_size = min(step_size, warmup_max_step if step_count < warmup_steps else max_step)
+                    else:
+                        target_remaining = coarse_threshold - current_weight
+                        step_size = target_remaining / (yield_ema * coarse_tgt_steps)
+                        step_size = max(min_step, min(max_step, step_size))
+
+                    weight_before_step = self._scale.get_stream_weight()
+                    self._machine.gcode(f"G1 W{step_size:.4f} {coarse_feedrate_str}")
                     self._machine.gcode("M400")
-                    self._machine.gcode("M42 P0 S0.0 F20000") # Turn off vibration
-                    time.sleep(0.1) # Small sleep to promote scale settling
-                    
-            
-            # Restore absolute positioning mode
-            self._machine.gcode("G90")
+                    motor_has_moved = True
+
+                    weight_after_step = self._scale.get_stream_weight()
+                    weight_gained     = max(0.0, weight_after_step - weight_before_step)
+                    step_yield        = weight_gained / step_size  # g/mm
+
+                    flow_ema  = flow_alpha  * step_yield + (1 - flow_alpha)  * flow_ema
+                    yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
+                    step_count += 1
+
+                    # Jam detection (only after warmup to avoid false triggers at start)
+                    if motor_has_moved and step_count > warmup_steps:
+                        if flow_ema < jam_threshold:
+                            stagnant_count += 1
+                        else:
+                            stagnant_count = 0
+                        if stagnant_count >= jam_iter_limit:
+                            self._handle_jam()
+                            stagnant_count  = 0
+                            flow_ema        = 0.0
+                            yield_ema       = 0.0
+                            self._set_trickler_vibration(current_vib_amp)
+                            previous_weight = self._scale.get_stream_weight()
+                            continue
+
+                    previous_weight = weight_after_step
+
             return True
+
         except Exception as e:
-            print(f"Error filling mold with powder: {e}")
-            # Restore absolute positioning mode on error
-            try:
-                self._machine.gcode("G90")
-            except:
-                pass
+            print(f"[Fill] Error filling mold with powder: {e}")
             return False
+        finally:
+            if streaming_started:
+                try:
+                    self._scale.stop_streaming()
+                except Exception as e:
+                    print(f"[Fill] Warning: stop_streaming failed: {e}")
+            try:
+                self._set_trickler_vibration(0.0)
+                self._machine.gcode("G90")  # restore absolute positioning
+            except Exception:
+                pass
         
     def execute_open_powder_dispenser_cover(self) -> bool:
         """
@@ -975,7 +1132,7 @@ class MovementExecutor:
     def execute_home_tamper(
         self,
         tamper_axis: str = 'V'
-    ) -> None:
+    ) -> bool:
         """
         Perform homing for the tamper axis (V-axis).
         

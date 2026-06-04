@@ -69,6 +69,8 @@ class JobLog:
         self._outcome: Optional[str] = None
 
         _FILES_DIR.mkdir(parents=True, exist_ok=True)
+        self._id: int = self._next_id()
+        self.image_dir: Path = _FILES_DIR / "images" / f"{self._id:04d}"
 
     # ------------------------------------------------------------------
     # Update helpers — called per completed item
@@ -109,6 +111,7 @@ class JobLog:
         sample_error: Optional[str] = None,
         status: Optional[str] = None,
         measurement_mode: Optional[str] = None,
+        image_path: Optional[str] = None,
     ) -> None:
         """
         Record the outcome of one hardness test sample.
@@ -136,17 +139,31 @@ class JobLog:
         existing_record = self._records.get(key, {})
         result_shore_a = existing_record.get("result_shore_a")
         result_shore_d = existing_record.get("result_shore_d")
+        image_path_shore_a = existing_record.get("image_path_shore_a")
+        image_path_shore_d = existing_record.get("image_path_shore_d")
 
         if measured_mode == "shore_a":
             result_shore_a = result
+            if image_path is not None:
+                image_path_shore_a = image_path
         elif measured_mode == "shore_d":
             result_shore_d = result
+            if image_path is not None:
+                image_path_shore_d = image_path
         elif mode == "shore_a_d":
             # For mixed mode fallback, infer pass from existing values.
             if result_shore_a is None:
                 result_shore_a = result
+                if image_path is not None:
+                    image_path_shore_a = image_path
             else:
                 result_shore_d = result
+                if image_path is not None:
+                    image_path_shore_d = image_path
+        else:
+            # Single-mode (non-dual): store image under whichever shore side matches.
+            if image_path is not None:
+                image_path_shore_a = image_path
 
         result_value = result
         if mode == "shore_a_d":
@@ -172,6 +189,8 @@ class JobLog:
             "result": result_value,
             "result_shore_a": result_shore_a,
             "result_shore_d": result_shore_d,
+            "image_path_shore_a": image_path_shore_a,
+            "image_path_shore_d": image_path_shore_d,
             "sample_error": sample_error,
             "status": resolved_status,
         }
@@ -240,6 +259,8 @@ class JobLog:
                         "result": None,
                         "result_shore_a": None,
                         "result_shore_d": None,
+                        "image_path_shore_a": None,
+                        "image_path_shore_d": None,
                         "sample_error": None,
                         "status": "incomplete",
                     },
@@ -251,7 +272,7 @@ class JobLog:
         return f"{tray_index}:{sample_id}"
 
     def _write(self) -> Path:
-        job_id = self._next_id()
+        job_id = self._id
         date_str = self._start_time.strftime("%Y-%m-%d")
         count = len(self._items)
 
