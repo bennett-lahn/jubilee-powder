@@ -9,10 +9,7 @@
  *   Left panel (fixed width)
  *     • Small ArcProgress — compact overview, secondary element
  *     • Cancel button     — small, graceful stop after current mold
- *     • Abort button      — larger danger button, requires two presses;
- *                           first press arms it (text → "Press Again!",
- *                           ring highlight); second press within 3 s fires;
- *                           auto-disarms if not confirmed
+ *     • Abort button      — larger danger button; one press sends emergency stop
  *   Right panel (flex-1)
  *     • WellGrid in 'result' variant — the primary display element
  *   Status line at the very bottom
@@ -160,12 +157,11 @@ function buildResultWells(rows, cols, job, jobType) {
 // HomeScreen
 // ---------------------------------------------------------------------------
 
-const ABORT_ARM_MS = 3000   // window to press abort a second time
-
 export default function HomeScreen() {
   const telemetry   = useJubileeStore((s) => s.telemetry)
   const cancelJob   = useJubileeStore((s) => s.cancelJob)
   const abortJob    = useJubileeStore((s) => s.abortJob)
+  const clearJam    = useJubileeStore((s) => s.clearJam)
   const fetchJobLog = useJubileeStore((s) => s.fetchJobLog)
   const jobLog      = useJubileeStore((s) => s.jobLog)
 
@@ -202,35 +198,26 @@ export default function HomeScreen() {
   // ── Cancel confirmation dialog ───────────────────────────────────────────
   const [cancelOpen, setCancelOpen] = useState(false)
 
-  // ── Abort double-press state ─────────────────────────────────────────────
-  const [abortArmed, setAbortArmed] = useState(false)
-  const abortTimerRef = useRef(null)
+  // ── Jam intervention ─────────────────────────────────────────────────────
+  const jamDetected = (telemetry.state === 'running') && (job?.jam_detected ?? false)
+  const jamWellId   = job?.jam_well_id ?? null
+  const [jamClearing, setJamClearing] = useState(false)
+
+  const handleClearJam = useCallback(async () => {
+    setJamClearing(true)
+    await clearJam()
+    setJamClearing(false)
+  }, [clearJam])
+
   const [actionStatus, setActionStatus] = useState('')
 
-  // Disarm when the job stops (e.g. cancelled from elsewhere)
-  useEffect(() => {
-    if (!job?.running) {
-      setAbortArmed(false)
-      clearTimeout(abortTimerRef.current)
-    }
-  }, [job?.running])
-
   const handleAbortClick = useCallback(async () => {
-    if (!abortArmed) {
-      // First press — arm the button
-      setAbortArmed(true)
-      abortTimerRef.current = setTimeout(() => setAbortArmed(false), ABORT_ARM_MS)
-    } else {
-      // Second press — fire
-      clearTimeout(abortTimerRef.current)
-      setAbortArmed(false)
-      setActionStatus('Aborting…')
-      const { ok, error } = await abortJob()
-      setActionStatus(ok
-        ? 'Emergency stop sent — machine is in ERROR state.'
-        : `Abort error: ${error}`)
-    }
-  }, [abortArmed, abortJob])
+    setActionStatus('Aborting…')
+    const { ok, error } = await abortJob()
+    setActionStatus(ok
+      ? 'Emergency stop sent — machine is in ERROR state.'
+      : `Abort error: ${error}`)
+  }, [abortJob])
 
   async function handleCancelConfirm() {
     setCancelOpen(false)
@@ -267,6 +254,18 @@ export default function HomeScreen() {
   const resultCols = jobType === 'hardness' ? SAMPLE_TRAY_COLS : DISPENSING_COLS
   const resultWells = buildResultWells(resultRows, resultCols, displayJob, jobType)
   const jobDate     = formatJobDate(displayJob)
+
+  // Most recent hardness reading image for the live feed.
+  const liveImageUrl = jobType === 'hardness'
+    ? (() => {
+        const items = displayJob?.items ?? []
+        for (let i = items.length - 1; i >= 0; i--) {
+          const url = items[i]?.image_path_shore_a ?? items[i]?.image_path_shore_d
+          if (url) return url
+        }
+        return null
+      })()
+    : null
 
   // ── Empty state ──────────────────────────────────────────────────────────
   if (!hasJobData && !jobLog) {
@@ -332,19 +331,29 @@ export default function HomeScreen() {
                 Cancel
               </Button>
 
-              {/* Abort: larger danger button, double-press to confirm */}
               <Button
                 size="md"
                 variant="danger"
                 onClick={handleAbortClick}
-                className={[
-                  'w-full transition-all duration-150',
-                  abortArmed ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-800' : '',
-                ].join(' ')}
+                className="w-full"
               >
-                {abortArmed ? 'Press Again!' : 'Abort'}
+                Abort
               </Button>
 
+            </div>
+          )}
+
+          {/* Live reading image — shown for hardness jobs when an image is available */}
+          {liveImageUrl && (
+            <div className="w-full flex flex-col gap-1">
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 select-none">
+                Live reading
+              </p>
+              <img
+                src={liveImageUrl}
+                alt="LCD display reading"
+                className="w-full rounded object-contain bg-slate-950"
+              />
             </div>
           )}
         </Card>
@@ -374,7 +383,6 @@ export default function HomeScreen() {
               selectCol={() => {}}
               variant="result"
               physicalLayout={DISPENSING_LAYOUT}
-              className="flex-1 min-h-0"
             />
           )}
         </Card>
@@ -413,6 +421,35 @@ export default function HomeScreen() {
         </p>
         <p className="text-sm text-slate-500">
           The machine will return to idle and be ready for a new job.
+        </p>
+      </Dialog>
+
+      {/* ── Jam intervention dialog ───────────────────────────────────────── */}
+      <Dialog
+        open={jamDetected}
+        title="Powder Flow Jam"
+        footer={
+          <Button
+            variant="outlined"
+            onClick={handleClearJam}
+            disabled={jamClearing}
+          >
+            {jamClearing ? 'Resuming...' : 'Blockage Cleared - Resume'}
+          </Button>
+        }
+      >
+        <p className="text-sm text-slate-300 mb-2">
+          Powder flow has stalled{jamWellId != null
+            ? <> on well <span className="font-semibold text-slate-100">{jamWellId}</span></>
+            : null
+          }.
+        </p>
+        <p className="text-sm text-slate-400 mb-2">
+          Clear the blockage in the trickler hopper, then press the button below
+          to resume dispensing.
+        </p>
+        <p className="text-xs text-slate-500">
+          To abandon this job entirely, use the Cancel or Abort buttons instead.
         </p>
       </Dialog>
 
