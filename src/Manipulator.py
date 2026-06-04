@@ -6,7 +6,7 @@ from science_jubilee.tools.Tool import (
 from src.trickler_labware import Mold
 from src.PistonDispenser import PistonDispenser
 import time
-from typing import Optional, Dict, Any, Union
+from typing import Any
 from pathlib import Path
 import json
 
@@ -53,22 +53,22 @@ class Manipulator(Tool):
         super().__init__(index, name)
         self.state_machine = state_machine  # Reference to MotionPlatformStateMachine
         
-        # Tamper axis configuration (loaded from system_config.json)
-        self.tamper_axis = 'V'  # Default axis for tamper movement
+        # Tamper axis (loaded from system_config.json in _load_manipulator_config)
+        self.tamper_axis: str = ""
         
         # TODO: tamper_speed should be derived from state machine feedrate default
         # For now, removed as it was only used in get_status() for reporting
 
         
-        # Load configuration from system_config.json if not provided
-        if config_source is None:
-            config_source = "system_config"
-        
-        config_dict = self._load_config(config_source)
-        if config_dict:
-            self._load_manipulator_config(config_dict)
+        if config_source is None or config_source == "system_config":
+            from src.ConfigLoader import config as _cfg
+            self.tamper_axis = _cfg.system.manipulator.tamper_axis
+        else:
+            config_dict = self._load_config(config_source)
+            if config_dict:
+                self._load_manipulator_config(config_dict)
 
-    def _load_config(self, config_source_param: Union[str, Dict[str, Any], None]) -> Optional[Dict[str, Any]]:
+    def _load_config(self, config_source_param: str | dict[str, Any] | None) -> dict[str, Any] | None:
         """
         Load configuration from either a file path string or a dict.
         
@@ -82,6 +82,9 @@ class Manipulator(Tool):
             # Config is already a dictionary
             return config_source_param
         elif isinstance(config_source_param, str):
+            if config_source_param == "system_config":
+                from src.ConfigLoader import config as system_config
+                return system_config.system.model_dump()
             # Config is a file path - load from JSON
             try:
                 # Get project root (parent of src directory)
@@ -111,21 +114,15 @@ class Manipulator(Tool):
             print("Exiting program.")
             exit()
     
-    def _load_manipulator_config(self, config_data: Dict[str, Any]):
-        """Load manipulator-specific configuration from config dict (only tamper_axis)."""
-        manipulator_config = config_data.get('manipulator', {})
-        
-        # Only load tamper axis
-        self.tamper_axis = manipulator_config.get('tamper_axis', self.tamper_axis)
+    def _load_manipulator_config(self, config_data: dict[str, Any]) -> None:
+        """Load tamper_axis from a pre-validated config dict (non-system_config sources)."""
+        self.tamper_axis = str(config_data["manipulator"]["tamper_axis"])
     
-    def _get_config_dict(self) -> Dict[str, Any]:
+    def _get_config_dict(self) -> dict[str, Any]:
         """
         Helper to package manipulator configuration for state machine calls.
         
-        Note: Only returns tamper_axis now. State machine should provide:
-        - tamper_travel_pos (from motion_platform_positions.json z_heights)
-        - safe_z (from motion_platform_positions.json z_heights)
-        - dispenser_safe_z (from motion_platform_positions.json z_heights)
+        Note: Only returns tamper_axis; Z policies use context z_height_id and motion z_heights.
         """
         return {
             'tamper_axis': self.tamper_axis,
@@ -138,7 +135,7 @@ class Manipulator(Tool):
             return self.state_machine.context.current_well
         return None
 
-    def home_tamper(self, machine_connection: Optional[Any] = None):
+    def home_tamper(self, machine_connection: Any | None = None):
         """
         Perform homing for the tamper axis (V-axis).
         
@@ -168,7 +165,7 @@ class Manipulator(Tool):
         if not result.valid:
             raise RuntimeError(f"Tamper homing failed: {result.reason}")
 
-    def tamp(self, tamp_depth: float = 40.0, tamp_speed: int = 2000):
+    def tamp(self, tamp_depth: float, tamp_speed: int):
         """
         Perform tamping action to compress powder in the held mold.
         
@@ -182,8 +179,8 @@ class Manipulator(Tool):
         After tamping, the V axis is automatically re-homed to ensure axis accuracy.
         
         Args:
-            tamp_depth: Target depth for tamping movement in mm (default 40.0)
-            tamp_speed: Speed for tamping movement in mm/min (default 2000)
+            tamp_depth: Target depth for tamping movement in mm
+            tamp_speed: Speed for tamping movement in mm/min
             
         Returns:
             True if successful
@@ -193,9 +190,8 @@ class Manipulator(Tool):
             ToolStateError: If tamping is not allowed in current state or parameters out of bounds
             
         Note:
-            Valid parameter ranges are defined in system_config.json under manipulator settings:
-            - tamp_depth_min/tamp_depth_max (default: 10-60 mm)
-            - tamp_speed_min/tamp_speed_max (default: 500-5000 mm/min)
+            Valid parameter ranges are defined in system_config.json under manipulator settings
+            (tamp_depth_min/max, tamp_speed_min/max).
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -271,7 +267,7 @@ class Manipulator(Tool):
         if not result.valid:
             raise ToolStateError(f"Cannot pick mold: {result.reason}")
 
-    def place_mold(self, well_id: str) -> Optional[Mold]:
+    def place_mold(self, well_id: str) -> Mold | None:
         """
         Place down the current mold and return it.
         

@@ -7,13 +7,15 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-_FILES_ROOT = Path(__file__).parent.parent.parent / "frontend" / "api" / "files"
+logger = logging.getLogger(__name__)
+
 _NA = "#N/A"
 
 _DISPENSING_CSV_COLUMNS = ["well", "target", "actual", "status"]
@@ -25,8 +27,8 @@ class LocalFile:
     """One file to place under the job folder staging root."""
 
     relative_path: str
-    source_path: Optional[Path] = None
-    content: Optional[str] = None
+    source_path: Path | None = None
+    content: str | None = None
 
 
 @dataclass
@@ -45,12 +47,41 @@ def load_job_payload(json_path: Path) -> dict:
     return json.loads(json_path.read_text(encoding="utf-8"))
 
 
-def build_artifacts(json_path: Path, files_root: Optional[Path] = None) -> JobArtifacts:
+def _require_metadata(payload: dict) -> dict:
+    meta = payload.get("metadata")
+    if not isinstance(meta, dict):
+        raise ValueError("Job log metadata is required")
+    if "job_type" not in meta:
+        raise ValueError("metadata.job_type is required")
+    if meta.get("id") is None:
+        raise ValueError("metadata.id is required")
+    return meta
+
+
+def _require_state(payload: dict, job_type: str) -> dict:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        raise ValueError("Job log state is required")
+    if job_type == "dispensing":
+        if "molds" not in state:
+            raise ValueError("state.molds is required for dispensing jobs")
+        if not isinstance(state["molds"], list):
+            raise ValueError("state.molds must be a list")
+    elif job_type == "hardness":
+        if "samples" not in state:
+            raise ValueError("state.samples is required for hardness jobs")
+        if not isinstance(state["samples"], list):
+            raise ValueError("state.samples must be a list")
+    return state
+
+
+def build_artifacts(json_path: Path, files_root: Path) -> JobArtifacts:
     """Return all files to upload for one completed job log."""
-    root = files_root or _FILES_ROOT
+    root = files_root
     payload = load_job_payload(json_path)
-    meta = payload.get("metadata", {})
-    job_type = meta.get("job_type", "")
+    meta = _require_metadata(payload)
+    job_type = meta["job_type"]
+    _require_state(payload, job_type)
 
     stem = job_folder_stem(json_path)
     artifacts = JobArtifacts(stem=stem)
@@ -61,7 +92,7 @@ def build_artifacts(json_path: Path, files_root: Optional[Path] = None) -> JobAr
     if job_type == "dispensing":
         _add_dispensing_csv(artifacts, stem, meta, payload)
     elif job_type == "hardness":
-        job_id = meta.get("id")
+        job_id = meta["id"]
         _add_hardness_tree(artifacts, stem, meta, payload, root, job_id)
     else:
         raise ValueError(f"Unsupported job_type for Drive export: {job_type!r}")
@@ -90,13 +121,13 @@ def format_csv(
 
 
 def resolve_image_path(
-    job_id: Optional[int],
-    image_ref: Optional[str],
+    job_id: int | None,
+    image_ref: str | None,
     files_root: Path,
     tray_index: Any,
     sample_index: int,
     pass_mode: str,
-) -> Optional[Path]:
+) -> Path | None:
     """Resolve a local image path from a JSON URL or predictable filename."""
     if image_ref:
         m = re.search(r"/api/files/images/(\d+)/([^/]+)$", str(image_ref))
@@ -141,7 +172,7 @@ def _pass_status(sample: dict, pass_mode: str) -> str:
 
 
 def _sample_in_pass(sample: dict, pass_mode: str) -> bool:
-    mode = sample.get("mode", "")
+    mode = sample["mode"]
     if pass_mode not in _hardness_passes(mode):
         return False
     if _pass_actual(sample, pass_mode) is not None:
@@ -150,12 +181,9 @@ def _sample_in_pass(sample: dict, pass_mode: str) -> bool:
 
 
 def _hardness_csv_row(sample: dict, pass_mode: str) -> dict[str, Any]:
-    tray_index = sample.get("tray_index")
-    if tray_index is None:
-        tray_index = _NA
     return {
-        "tray_index": tray_index,
-        "sample_index": sample.get("sample_index", _NA),
+        "tray_index": sample["tray_index"],
+        "sample_index": sample["sample_index"],
         "target": None,
         "actual": _pass_actual(sample, pass_mode),
         "status": _pass_status(sample, pass_mode),
@@ -164,12 +192,12 @@ def _hardness_csv_row(sample: dict, pass_mode: str) -> dict[str, Any]:
 
 def _add_dispensing_csv(artifacts: JobArtifacts, stem: str, meta: dict, payload: dict) -> None:
     rows = []
-    for mold in payload.get("state", {}).get("molds", []):
+    for mold in payload["state"]["molds"]:
         rows.append({
-            "well": mold.get("well_id"),
-            "target": mold.get("target_weight"),
+            "well": mold["well_id"],
+            "target": mold["target_weight"],
             "actual": mold.get("actual_weight"),
-            "status": mold.get("status"),
+            "status": mold["status"],
         })
     csv_text = format_csv(meta, rows, _DISPENSING_CSV_COLUMNS)
     artifacts.files.append(
@@ -183,12 +211,12 @@ def _add_hardness_tree(
     meta: dict,
     payload: dict,
     files_root: Path,
-    job_id: Optional[int],
+    job_id: int | None,
 ) -> None:
-    samples = payload.get("state", {}).get("samples", [])
+    samples = payload["state"]["samples"]
     passes_needed: set[str] = set()
     for sample in samples:
-        passes_needed.update(_hardness_passes(sample.get("mode", "")))
+        passes_needed.update(_hardness_passes(sample["mode"]))
 
     for pass_mode in ("shore_a", "shore_d"):
         if pass_mode not in passes_needed:
@@ -210,20 +238,28 @@ def _add_hardness_tree(
         )
 
         for sample in pass_samples:
-            tray = int(sample.get("tray_index", 0))
-            sample_index = sample.get("sample_index")
-            if sample_index is None:
-                continue
+            tray = int(sample["tray_index"])
+            sample_index = int(sample["sample_index"])
             img_key = f"image_path_{pass_mode}"
+            image_ref = sample.get(img_key)
             img_path = resolve_image_path(
                 job_id,
-                sample.get(img_key),
+                image_ref,
                 files_root,
                 tray,
-                int(sample_index),
+                sample_index,
                 pass_mode,
             )
             if img_path is None:
+                if image_ref:
+                    logger.info(
+                        "Skipping hardness image for job %s tray %s sample %s %s: %r not found",
+                        job_id,
+                        tray,
+                        sample_index,
+                        pass_mode,
+                        image_ref,
+                    )
                 continue
             filename = img_path.name
             artifacts.files.append(

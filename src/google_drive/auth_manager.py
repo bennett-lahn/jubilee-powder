@@ -15,8 +15,6 @@ Usage
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Optional
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -27,14 +25,12 @@ _SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-
 
 class GoogleAuthManager:
     """Loads service account credentials and vends an authenticated Drive client."""
 
     def __init__(self) -> None:
-        self._creds: Optional[Credentials] = None
+        self._creds: Credentials | None = None
         self._drive_service = None
 
     def get_drive_service(self):
@@ -60,11 +56,7 @@ class GoogleAuthManager:
 
     def _resolve_credentials_path(self) -> Path:
         cfg = ConfigLoader()
-        rel_path = cfg.get(
-            "google_drive.credentials_file",
-            "jubilee_api_config/service_account.json",
-        )
-        path = _PROJECT_ROOT / rel_path
+        path = cfg.get_google_drive_credentials_file()
         if not path.exists():
             raise FileNotFoundError(
                 f"Google service account credentials not found at {path}. "

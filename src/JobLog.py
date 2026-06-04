@@ -24,16 +24,18 @@ File naming
   count — number of planned items in the job
 """
 
+from __future__ import annotations
+
 import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.JubileeManager import JubileeManager
 
-_FILES_DIR = Path(__file__).parent.parent / "frontend" / "api" / "files"
+from src.ConfigLoader import config as _config
 
 _VALID_MEASUREMENT_MODES = frozenset({"shore_a", "shore_d"})
 
@@ -47,7 +49,7 @@ class JobLog:
         self,
         job_type: str,
         items: list[dict],
-        manager: Optional["JubileeManager"] = None,
+        manager: "JubileeManager" | None = None,
     ) -> None:
         self._job_type = job_type
         self._items = (
@@ -58,16 +60,17 @@ class JobLog:
         self._manager = manager
         self._records: dict[str, dict] = {}
         self._start_time = datetime.now()
-        self._outcome: Optional[str] = None
+        self._outcome: str | None = None
 
-        _FILES_DIR.mkdir(parents=True, exist_ok=True)
+        files_dir = _config.get_job_files_dir()
+        files_dir.mkdir(parents=True, exist_ok=True)
         self._id: int = self._next_id()
-        self.image_dir: Path = _FILES_DIR / "images" / f"{self._id:04d}"
+        self.image_dir: Path = files_dir / "images" / f"{self._id:04d}"
 
     def update_well(
         self,
         well_id: str,
-        actual_weight: Optional[float] = None,
+        actual_weight: float | None = None,
     ) -> None:
         """Record the outcome of one powder-dispensing well."""
         if actual_weight is None and self._manager is not None:
@@ -88,11 +91,11 @@ class JobLog:
         self,
         sample_index: int,
         tray_index: int,
-        result: Optional[float] = None,
-        sample_error: Optional[str] = None,
-        status: Optional[str] = None,
-        measurement_mode: Optional[str] = None,
-        image_path: Optional[str] = None,
+        result: float | None = None,
+        sample_error: str | None = None,
+        status: str | None = None,
+        measurement_mode: str | None = None,
+        image_path: str | None = None,
     ) -> None:
         """Record the outcome of one hardness pass for a sample.
 
@@ -175,7 +178,7 @@ class JobLog:
         self._outcome = outcome
         return self._write()
 
-    def _find_item(self, sample_index: int, tray_index: int) -> Optional[dict]:
+    def _find_item(self, sample_index: int, tray_index: int) -> dict | None:
         for item in self._items:
             if (
                 JobLog._item_sample_index(item) == sample_index
@@ -191,7 +194,7 @@ class JobLog:
     @staticmethod
     def _default_sample_record(item: dict) -> dict:
         mode = item["mode"]
-        tray_index = int(item.get("tray_index", 0))
+        tray_index = int(item["tray_index"])
         record = {
             "tray_index": tray_index,
             "sample_index": JobLog._item_sample_index(item),
@@ -211,7 +214,7 @@ class JobLog:
     @staticmethod
     def _ensure_pass_status_fields(record: dict) -> dict:
         """Set ``status_shore_a`` / ``status_shore_d`` for every pass this job uses."""
-        mode = record.get("mode", "")
+        mode = record["mode"]
         out = dict(record)
         if mode in ("shore_a", "shore_a_d"):
             if out.get("status_shore_a") is None:
@@ -224,10 +227,10 @@ class JobLog:
     @staticmethod
     def _resolve_sample_status(
         mode: str,
-        sample_error: Optional[str],
-        status_shore_a: Optional[str],
-        status_shore_d: Optional[str],
-        override: Optional[str],
+        sample_error: str | None,
+        status_shore_a: str | None,
+        status_shore_d: str | None,
+        override: str | None,
     ) -> str:
         if override:
             return override
@@ -260,7 +263,7 @@ class JobLog:
     def _next_id(self) -> int:
         """Return the next sequential job ID by scanning existing files."""
         max_id = 0
-        for f in _FILES_DIR.glob("*.json"):
+        for f in _config.get_job_files_dir().glob("*.json"):
             m = re.match(r"^(\d+)_", f.name)
             if m:
                 max_id = max(max_id, int(m.group(1)))
@@ -288,7 +291,7 @@ class JobLog:
         # hardness
         samples = []
         for item in self._items:
-            tray_index = int(item.get("tray_index", 0))
+            tray_index = int(item["tray_index"])
             sample_index = JobLog._item_sample_index(item)
             key = self._sample_record_key(tray_index, sample_index)
             samples.append(
@@ -319,7 +322,7 @@ class JobLog:
         )
 
         filename = f"{job_id:04d}_{date_str}_{self._job_type}_{count}.json"
-        path = _FILES_DIR / filename
+        path = _config.get_job_files_dir() / filename
 
         payload = {
             "metadata": {
@@ -336,9 +339,18 @@ class JobLog:
         return path
 
 
+_VALID_JOB_MODES = frozenset({"shore_a", "shore_d", "shore_a_d"})
+
+
 def _normalize_hardness_item(item: dict) -> dict:
-    """Ensure planned hardness items use integer tray_index and sample_index."""
+    """Ensure planned hardness items use integer tray_index, sample_index, and mode."""
     normalized = dict(item)
     normalized["tray_index"] = int(item["tray_index"])
     normalized["sample_index"] = int(item["sample_index"])
+    mode = item["mode"]
+    if mode not in _VALID_JOB_MODES:
+        raise ValueError(
+            f"hardness item mode must be one of {sorted(_VALID_JOB_MODES)}, got {mode!r}"
+        )
+    normalized["mode"] = mode
     return normalized

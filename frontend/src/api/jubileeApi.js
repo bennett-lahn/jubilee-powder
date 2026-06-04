@@ -37,6 +37,11 @@ export function fetchStatus() {
   return request('/status')
 }
 
+/** GET /api/config — machine settings from system_config.json */
+export function fetchMachineConfig() {
+  return request('/config')
+}
+
 // ---------------------------------------------------------------------------
 // Hardware lifecycle
 // ---------------------------------------------------------------------------

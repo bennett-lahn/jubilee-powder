@@ -28,9 +28,11 @@ Example:
             manager.disconnect()
 """
 
+from __future__ import annotations
+
 import time
 import traceback
-from typing import Callable, Optional, List, TYPE_CHECKING
+from typing import Callable, List, TYPE_CHECKING
 from pathlib import Path
 
 if TYPE_CHECKING:
@@ -119,25 +121,25 @@ class JubileeManager:
             - Dispenser counts can be zero if pistons are not needed
             - Feedrate affects all subsequent movements after connection
         """
-        self.scale: Optional[Scale] = None
-        self.manipulator: Optional[Manipulator] = None
-        self.hardness_tester_shore_a: Optional[HardnessTester] = None
-        self.hardness_tester_shore_d: Optional[HardnessTester] = None
-        self.state_machine: Optional[MotionPlatformStateMachine] = None
+        self.scale: Scale | None = None
+        self.manipulator: Manipulator | None = None
+        self.hardness_tester_shore_a: HardnessTester | None = None
+        self.hardness_tester_shore_d: HardnessTester | None = None
+        self.state_machine: MotionPlatformStateMachine | None = None
         self.connected: bool = False
         self._num_piston_dispensers: int = num_piston_dispensers
         self._num_pistons_per_dispenser: int = num_pistons_per_dispenser
         self._feedrate: FeedRate = feedrate
-        self.active_job_log: Optional["JobLog"] = None
-        self.last_dispense_weight: Optional[float] = None
-        self.last_hardness_result: Optional[float] = None
-        self.last_hardness_error: Optional[str] = None
-        self.last_hardness_image_path: Optional[str] = None
-        self.last_error: Optional[str] = None
-        self._on_jam_callback: Optional[Callable] = None
+        self.active_job_log: "JobLog" | None = None
+        self.last_dispense_weight: float | None = None
+        self.last_hardness_result: float | None = None
+        self.last_hardness_error: str | None = None
+        self.last_hardness_image_path: str | None = None
+        self.last_error: str | None = None
+        self._on_jam_callback: Callable | None = None
     
     @property
-    def machine_read_only(self) -> Optional[Machine]:
+    def machine_read_only(self) -> Machine | None:
         """
         Read-only access to the underlying Jubilee Machine instance.
         
@@ -179,7 +181,7 @@ class JubileeManager:
         return None
     
     @property
-    def deck(self) -> Optional[Deck]:
+    def deck(self) -> Deck | None:
         """
         Access to the deck configuration and labware layout.
         
@@ -238,7 +240,7 @@ class JubileeManager:
             return self.state_machine._executor.jam_detected
         return False
 
-    def set_jam_callback(self, callback: Optional[Callable]) -> None:
+    def set_jam_callback(self, callback: Callable | None) -> None:
         """Register a callback invoked when a powder jam is detected.
 
         The callback is called from the dispensing thread immediately before
@@ -255,9 +257,9 @@ class JubileeManager:
 
     def connect(
         self,
-        machine_address: Optional[str] = None,
-        scale_port: str = "/dev/ttyUSB0",
-        state_machine_config: Optional[str] = None
+        machine_address: str | None = None,
+        scale_port: str | None = None,
+        state_machine_config: str | None = None
     ) -> bool:
         """
         Connect to all hardware and initialize the system.
@@ -329,7 +331,9 @@ class JubileeManager:
             # Use config IP if no address provided
             if machine_address is None:
                 machine_address = config.get_duet_ip()
-            
+            if scale_port is None:
+                scale_port = config.get_scale_port()
+
             # Connect to machine
             real_machine = Machine(address=machine_address)
             real_machine.connect()
@@ -341,35 +345,38 @@ class JubileeManager:
             self.scale.connect()
             print(f"[TIMING] Scale connect: {time.monotonic() - _t1:.2f}s")
             
-            # Get project root for config paths
-            project_root = Path(__file__).parent.parent
-            
+            project_root = config.project_root
+
             # Initialize the state machine with the real machine and scale
             # The state machine owns the machine and controls all access to it
             if state_machine_config is None:
-                # Default to project root / jubilee_api_config / motion_platform_positions.json
-                config_path = project_root / "jubilee_api_config" / "motion_platform_positions.json"
+                config_path = config.get_motion_config_path()
             else:
                 config_path = Path(state_machine_config)
-                # If relative path, resolve relative to project root
                 if not config_path.is_absolute():
                     config_path = project_root / config_path
             if not config_path.exists():
                 raise FileNotFoundError(f"State machine config not found: {config_path}")
-            system_config_path = project_root / "jubilee_api_config" / "system_config.json"
-            
+
             _t2 = time.monotonic()
             self.state_machine = MotionPlatformStateMachine.from_config_file(
                 config_path,
                 real_machine,
                 scale=self.scale,
-                feedrate=self._feedrate,
-                system_config_path=system_config_path,
+                feedrate=config.get_default_feedrate(),
             )
             
             # Initialize deck and dispensers in state machine
-            # Deck config files are in jubilee_api_config directory
-            deck_config_path = project_root / "jubilee_api_config"
+            deck_config_path = config.get_jubilee_api_config_dir()
+            if self._num_piston_dispensers < 1:
+                raise ValueError(
+                    "num_piston_dispensers must be set from system_config before connect"
+                )
+            if self._num_pistons_per_dispenser < 0:
+                raise ValueError(
+                    "num_pistons_per_dispenser must be set from system_config before connect"
+                )
+
             self.state_machine.initialize_deck(config_path=str(deck_config_path))
             self.state_machine.initialize_dispensers(
                 num_piston_dispensers=self._num_piston_dispensers,
@@ -378,24 +385,21 @@ class JubileeManager:
 
             # Create manipulator with state machine reference
             # Config will default to system_config.json
-            manipulator_tool_cfg = config.get("tools.manipulator", {})
+            tool = config.system.tools.manipulator
             self.manipulator = Manipulator(
-                index=manipulator_tool_cfg.get("index", 0),
-                name=manipulator_tool_cfg.get("name", "manipulator"),
-                state_machine=self.state_machine
+                index=tool.index,
+                name=tool.name,
+                state_machine=self.state_machine,
             )
-            hardness_testers_cfg = config.get("hardness_testers", {})
-
+            testers = config.system.hardness_testers
             self.hardness_tester_shore_a = HardnessTester.from_system_config(
                 tester_mode="shore_a",
-                config_payload={"hardness_testers": hardness_testers_cfg},
-                use_camera=False,
+                cfg=testers.shore_a,
                 state_machine=self.state_machine,
             )
             self.hardness_tester_shore_d = HardnessTester.from_system_config(
                 tester_mode="shore_d",
-                config_payload={"hardness_testers": hardness_testers_cfg},
-                use_camera=False,
+                cfg=testers.shore_d,
                 state_machine=self.state_machine,
             )
             print(f"[TIMING] State machine + tools init: {time.monotonic() - _t2:.2f}s")
@@ -468,7 +472,7 @@ class JubileeManager:
             self.scale.disconnect()
         self.connected = False
     
-    def get_weight_stable(self) -> float:
+    def get_weight_stable(self) -> float | None:
         """
         Get current weight from scale, waiting for stability.
         
@@ -477,7 +481,8 @@ class JubileeManager:
         be recorded or used for decisions.
         
         Returns:
-            Weight in grams. Returns 0.0 if scale is not connected or on error.
+            Weight in grams, or ``None`` if the scale is not connected.
+            Scale communication errors propagate to the caller.
         
         Example:
             ```python
@@ -493,20 +498,16 @@ class JubileeManager:
         Note:
             - Waits for scale to report stable reading (may take 1-3 seconds)
             - More accurate than `get_weight_unstable()`
-            - Returns 0.0 on error rather than raising exceptions
-            - Check `scale.is_connected` if you need to distinguish no scale from zero weight
+            - Returns ``None`` when no scale is connected (distinct from zero weight)
         
         See Also:
             get_weight_unstable: For real-time weight monitoring without waiting
         """
         if self.scale and self.scale.is_connected:
-            try:
-                return self.scale.get_weight(stable=True)
-            except:
-                return 0.0
-        return 0.0
+            return self.scale.get_weight(stable=True)
+        return None
 
-    def get_weight_unstable(self) -> float:
+    def get_weight_unstable(self) -> float | None:
         """
         Get instantaneous weight from scale without waiting for stability.
         
@@ -515,7 +516,8 @@ class JubileeManager:
         for recorded measurements.
         
         Returns:
-            Current weight in grams. Returns 0.0 if scale is not connected or on error.
+            Current weight in grams, or ``None`` if the scale is not connected.
+            Scale communication errors propagate to the caller.
         
         Example:
             ```python
@@ -534,19 +536,16 @@ class JubileeManager:
             - Reading may still be changing (unstable)
             - Not suitable for decisions or permanent records
             - Use `get_weight_stable()` for measurements you'll record
-            - Returns 0.0 on error rather than raising exceptions
+            - Returns ``None`` when no scale is connected (distinct from zero weight)
         
         See Also:
             get_weight_stable: For accurate measurements after stabilization
         """
         if self.scale and self.scale.is_connected:
-            try:
-                return self.scale.get_weight(stable=False)
-            except:
-                return 0.0
-        return 0.0
+            return self.scale.get_weight(stable=False)
+        return None
 
-    def _hardness_tester_for_tool_id(self, tool_id: Optional[str]) -> Optional[HardnessTester]:
+    def _hardness_tester_for_tool_id(self, tool_id: str | None) -> HardnessTester | None:
         """Return the configured hardness tester whose name matches tool_id."""
         if not tool_id:
             return None
@@ -631,9 +630,13 @@ class JubileeManager:
         self.pickup_tool(required_tool)
         return True
     # TODO: This handles combined shore a+d testing inappropriately
-    def _resolve_hardness_tester(self, mode: Optional[str]) -> HardnessTester:
-        """Map hardness mode to the correct Shore tester/tool instance."""
-        normalized_mode = (mode or "shore_a").lower()
+    def _resolve_hardness_tester(self, mode: str | None) -> HardnessTester:
+        """Map hardness measurement pass (``shore_a`` / ``shore_d``) to a Shore tester."""
+        if not mode:
+            raise ValueError(
+                "hardness mode is required: pass 'shore_a' or 'shore_d' for the measurement pass"
+            )
+        normalized_mode = mode.lower()
         if normalized_mode == "shore_d":
             if not self.hardness_tester_shore_d:
                 raise ToolStateError("Shore-D hardness tester is not configured.")
@@ -724,7 +727,14 @@ class JubileeManager:
                 raise RuntimeError("State machine not configured")
 
             self.ensure_tool_active(self.manipulator)
-            
+
+            max_weight = config.get_max_weight_per_well()
+            if target_weight > max_weight:
+                raise ValueError(
+                    f"target_weight {target_weight}g exceeds safety.max_weight_per_well "
+                    f"({max_weight}g) in system_config.json"
+                )
+
             self.move_to_mold_slot(well_id)
             self.manipulator.pick_mold(well_id)
             self.move_to_global_ready()
@@ -732,7 +742,9 @@ class JubileeManager:
             self.manipulator.place_mold_on_scale()
             self.fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
-            self.manipulator.tamp(tamp_depth=10.0, tamp_speed=500)
+            tamp_depth, tamp_speed = config.get_tamp_defaults()
+            tamp_depth = min(float(tamp_depth), config.get_tamp_depth_max())
+            self.manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)
             self.move_to_global_ready()
             self.move_to_dispenser()
             self.get_piston_from_dispenser()
@@ -754,11 +766,13 @@ class JubileeManager:
         self,
         tray_index: int,
         sample_index: int,
-        mode: Optional[str] = None,
+        mode: str,
         image_save_path=None,
     ) -> bool:
         """
         Select a Shore tester and delegate sample testing to it.
+
+        ``mode`` must be ``shore_a`` or ``shore_d`` (the pass being measured).
         """
         if not self.connected:
             return False
@@ -799,7 +813,7 @@ class JubileeManager:
             traceback.print_exc()
             return False
 
-    def hardness_turn_on(self, mode: Optional[str] = None) -> bool:
+    def hardness_turn_on(self, mode: str | None = None) -> bool:
         """Select a Shore tester and delegate power-on to it."""
         if not self.connected:
             return False
@@ -814,7 +828,7 @@ class JubileeManager:
             print(f"Error turning on hardness tester: {e}")
             return False
 
-    def hardness_turn_off(self, mode: Optional[str] = None) -> bool:
+    def hardness_turn_off(self, mode: str | None = None) -> bool:
         """Select a Shore tester and delegate power-off to it."""
         if not self.connected:
             return False
@@ -829,7 +843,7 @@ class JubileeManager:
             print(f"Error turning off hardness tester: {e}")
             return False
 
-    def hardness_zero(self, mode: Optional[str] = None) -> bool:
+    def hardness_zero(self, mode: str | None = None) -> bool:
         """Select a Shore tester and delegate zeroing to it."""
         if not self.connected:
             return False

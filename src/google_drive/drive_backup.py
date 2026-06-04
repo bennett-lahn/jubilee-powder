@@ -9,28 +9,39 @@ import mimetypes
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from googleapiclient.http import MediaFileUpload
 
 from src.ConfigLoader import ConfigLoader
 from src.google_drive.auth_manager import GoogleAuthManager
-from src.google_drive.job_export import build_artifacts, job_folder_stem, stage_artifacts
+from src.google_drive.job_export import build_artifacts, stage_artifacts
 
 log = logging.getLogger(__name__)
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 
 
+def _escape_drive_query_literal(value: str) -> str:
+    """Escape a string for use inside single-quoted Drive API query literals."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 class JobDriveBackup:
     """Builds export artifacts from JobLog JSON and uploads them to Drive."""
 
-    def __init__(self, auth: Optional[GoogleAuthManager] = None) -> None:
+    def __init__(self, auth: GoogleAuthManager | None = None) -> None:
         self._auth = auth or GoogleAuthManager()
         self._cfg = ConfigLoader()
-        self._folder_id = self._cfg.get("google_drive.drive_folder_id", "")
-        self._last_upload: Optional[datetime] = None
-        self._last_error: Optional[str] = None
+        if self._cfg.get_google_drive_enabled():
+            folder_id = self._cfg.get_google_drive_folder_id().strip()
+            if not folder_id:
+                raise ValueError(
+                    "google_drive.drive_folder_id must be non-empty when "
+                    "google_drive.enabled is true"
+                )
+        self._folder_id = self._cfg.get_google_drive_folder_id()
+        self._last_upload: datetime | None = None
+        self._last_error: str | None = None
 
     @property
     def folder_id(self) -> str:
@@ -41,14 +52,14 @@ class JobDriveBackup:
         return bool(self._folder_id)
 
     @property
-    def last_upload(self) -> Optional[str]:
+    def last_upload(self) -> str | None:
         """ISO-8601 UTC timestamp of the last successful upload, or None."""
         if self._last_upload is None:
             return None
         return self._last_upload.isoformat()
 
     @property
-    def last_error(self) -> Optional[str]:
+    def last_error(self) -> str | None:
         return self._last_error
 
     def record_error(self, message: str) -> None:
@@ -63,7 +74,9 @@ class JobDriveBackup:
             )
 
         drive = self._auth.get_drive_service()
-        artifacts = build_artifacts(file_path)
+        artifacts = build_artifacts(
+            file_path, files_root=self._cfg.get_job_files_dir()
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             staging = Path(tmp)
@@ -80,8 +93,10 @@ class JobDriveBackup:
         )
 
     def _find_or_create_folder(self, drive, name: str, parent_id: str) -> str:
+        safe_name = _escape_drive_query_literal(name)
+        safe_parent = _escape_drive_query_literal(parent_id)
         query = (
-            f"name = '{name}' and '{parent_id}' in parents "
+            f"name = '{safe_name}' and '{safe_parent}' in parents "
             f"and mimeType = '{_FOLDER_MIME}' and trashed = false"
         )
         result = (

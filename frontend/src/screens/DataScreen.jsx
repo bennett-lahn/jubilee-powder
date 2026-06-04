@@ -20,13 +20,16 @@ import { Button, Card, StatusBadge } from '../components/ui'
 import WellGrid from '../components/WellGrid'
 import SampleTrayGrid, { sampleKeyForTray } from '../components/SampleTrayGrid'
 import ArcProgress from '../components/ArcProgress'
-
-const DISPENSING_ROWS = 4
-const DISPENSING_COLS = 6
-const SAMPLE_TRAY_ROWS = 5
-const SAMPLE_TRAY_COLS = 7
-const SAMPLE_TRAY_COUNT = 2
-const HARDNESS_ROWS = SAMPLE_TRAY_ROWS
+import {
+  DISPENSING_LAYOUT,
+  DISPENSING_ROWS,
+  DISPENSING_COLS,
+} from '../constants/dispensingBed'
+import {
+  HARDNESS_ROWS,
+  HARDNESS_COLS,
+  HARDNESS_TRAY_COUNT,
+} from '../constants/hardnessTray'
 
 // ---------------------------------------------------------------------------
 // Shared helpers (mirrors of HomeScreen equivalents)
@@ -43,11 +46,11 @@ function formatJobDate(job) {
 }
 
 function buildResultWells(rows, cols, job, jobType) {
-  const total = rows * cols
   const wells = {}
 
   if (jobType === 'hardness') {
-    for (let trayIndex = 0; trayIndex < SAMPLE_TRAY_COUNT; trayIndex++) {
+    const total = rows * cols
+    for (let trayIndex = 0; trayIndex < HARDNESS_TRAY_COUNT; trayIndex++) {
       for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
         const id = sampleKeyForTray(trayIndex, sampleIndex)
         wells[id] = {
@@ -63,8 +66,8 @@ function buildResultWells(rows, cols, job, jobType) {
       }
     }
   } else {
-    for (let i = 0; i < total; i++) {
-      wells[String(i)] = {
+    DISPENSING_LAYOUT.flat().filter((id) => id !== null).forEach((id) => {
+      wells[String(id)] = {
         selected: false, targetWeight: 0, currentWeight: 0,
         mode: 'none',
         status: 'excluded',
@@ -74,7 +77,7 @@ function buildResultWells(rows, cols, job, jobType) {
         resultShoreD: null,
         sampleError: null,
       }
-    }
+    })
   }
 
   const items = job?.items
@@ -200,7 +203,7 @@ function JobResultView({ job, onBack }) {
   const badge        = OUTCOME_BADGE[job.status] ?? { status: 'idle', label: job.status ?? 'Unknown' }
   const arcColor     = completed === total && total > 0 ? '#16a34a' : '#334155'
   const resultRows   = jobType === 'hardness' ? HARDNESS_ROWS : DISPENSING_ROWS
-  const resultCols   = jobType === 'hardness' ? SAMPLE_TRAY_COLS : DISPENSING_COLS
+  const resultCols   = jobType === 'hardness' ? HARDNESS_COLS : DISPENSING_COLS
   const resultWells  = buildResultWells(resultRows, resultCols, job, jobType)
   const unitLabel    = jobType === 'dispensing' ? 'molds' : 'samples'
 
@@ -344,7 +347,7 @@ function JobResultView({ job, onBack }) {
               toggleSample={() => {}}
               onSampleClick={handleSampleClick}
               variant="result"
-              trayCount={SAMPLE_TRAY_COUNT}
+              trayCount={HARDNESS_TRAY_COUNT}
               className="flex-1 min-h-0"
             />
           ) : (
@@ -356,6 +359,7 @@ function JobResultView({ job, onBack }) {
               selectRow={() => {}}
               selectCol={() => {}}
               variant="result"
+              physicalLayout={DISPENSING_LAYOUT}
               className="flex-1 min-h-0 min-w-0"
             />
           )}

@@ -1,12 +1,22 @@
 {
+    "paths": {
+        "job_files_dir": "frontend/api/files"
+    },
     "safety": {
         "max_weight_per_well": 10.0,
         "weight_tolerance": 0.001
     },
+    "server": {
+        "cors_origins": ["http://localhost:5173"],
+        "mock_hardware": true
+    },
     "machine": {
         "duet_ip": "192.168.1.2",
         "default_feedrate": 600,
-        "tamper_travel_position": 30
+        "tamper_travel_position": 30,
+        "scale_port": "/dev/ttyUSB0",
+        "num_dispensers": 1,
+        "pistons_per_dispenser": 2
     },
     "tools": {
         "manipulator": {
@@ -27,7 +37,9 @@
         "tamp_depth_min": 0.0,
         "tamp_depth_max": 9.0,
         "tamp_speed_min": 500,
-        "tamp_speed_max": 5000
+        "tamp_speed_max": 5000,
+        "tamp_depth_default": 9.0,
+        "tamp_speed_default": 500
     },
     "trickler": {
         "flow_ema_alpha":           0.3,
@@ -50,12 +62,12 @@
     "google_drive": {
         "enabled": false,
         "credentials_file": "jubilee_api_config/service_account.json",
-        "spreadsheet_id": "",
         "drive_folder_id": "",
-        "poll_interval_seconds": 30
+        "retry_interval_seconds": 60
     },
     "hardness_testers": {
         "shore_a": {
+            "use_camera": false,
             "tool": {
                 "index": 1,
                 "name": "shore_a_hardness_tester"
@@ -72,6 +84,7 @@
             "cam_usb_path": "/dev/shore_a_cam"
         },
         "shore_d": {
+            "use_camera": false,
             "tool": {
                 "index": 2,
                 "name": "shore_d_hardness_tester"

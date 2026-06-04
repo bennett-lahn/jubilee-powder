@@ -30,7 +30,7 @@ export default function ManualControlScreen() {
   const disconnectHardware = useJubileeStore((s) => s.disconnectHardware)
 
   // jubilee_ip is broadcast in every telemetry frame once hardware is connected
-  const jubileeIp = telemetry.jubilee_ip ?? 'jubilee.local'
+  const jubileeIp = telemetry.jubilee_ip ?? 'Not connected'
 
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [resultOpen,  setResultOpen]  = useState(false)

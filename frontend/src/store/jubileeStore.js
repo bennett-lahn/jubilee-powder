@@ -36,6 +36,11 @@ import {
   DISPENSING_WELL_COUNT,
 } from '../constants/dispensingBed'
 import {
+  HARDNESS_ROWS,
+  HARDNESS_COLS,
+  HARDNESS_TRAY_COUNT,
+} from '../constants/hardnessTray'
+import {
   fetchStatus,
   connectHardware as apiConnectHardware,
   disconnectHardware as apiDisconnectHardware,
@@ -55,10 +60,6 @@ function wsUrl() {
 }
 
 const RECONNECT_DELAY_MS = 1500
-
-const HARDNESS_ROWS = 5
-const HARDNESS_COLS = 7
-const HARDNESS_TRAY_COUNT = 2
 
 function initDispensingWells() {
   const wells = {}
@@ -100,7 +101,7 @@ export const useJubileeStore = create((set, get) => ({
     weight:     null,   // float | null  — live scale reading in grams
     state:      null,   // MachineState string | null
     connected:  false,  // bool — hw.connected (IDLE, RUNNING, HOMING are all "connected")
-    jubilee_ip: 'jubilee.local',
+    jubilee_ip: null,
     job:        null,   // job-progress object | null
     dispensers: [],     // DispenserStatus[] — updated alongside job progress
     clients:    null,   // number of connected browser tabs
@@ -191,7 +192,7 @@ export const useJubileeStore = create((set, get) => ({
             weight,
             state,
             connected:  connected  ?? false,
-            jubilee_ip: jubilee_ip ?? 'jubilee.local',
+            jubilee_ip: jubilee_ip ?? null,
             job,
             dispensers: dispensers ?? [],
             clients,

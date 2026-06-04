@@ -12,11 +12,10 @@ Transport:
     REST endpoints - discrete, low-frequency commands (connect, start job, stop job...)
     WebSocket /ws  - continuous 4 Hz telemetry pushed to every connected browser
 
-Switching between mock and real hardware:
-    Set ``MOCK_HARDWARE = True`` to use ``MockHardwareManager`` (UI development, no
-    physical hardware required). Set ``MOCK_HARDWARE = False`` to use
-    ``HardwareManager`` (production, real Jubilee + scale). Both classes expose an
-    identical public API so no other code needs to change.
+Mock vs real hardware:
+    Set ``server.mock_hardware`` in ``jubilee_api_config/system_config.json``, or
+    override at process start with ``JUBILEE_MOCK_HARDWARE=1`` (see ``_mock_hardware_enabled()``).
+    Both manager classes expose the same API.
 
 Example:
     From the frontend directory::
@@ -28,14 +27,17 @@ Example:
         uvicorn frontend.server:app --host 0.0.0.0 --port 8000 --reload
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
+import os
 import sys
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal, Union
 
 # Allow imports from the project root (src.JobLog etc.) when the server is
 # launched from either the frontend/ directory or the project root.
@@ -50,8 +52,7 @@ _backend_src = Path(__file__).parent / "src"
 if str(_backend_src) not in sys.path:
     sys.path.insert(0, str(_backend_src))
 
-_FILES_DIR = Path(__file__).parent / "api" / "files"
-_FILES_DIR.mkdir(parents=True, exist_ok=True)
+from src.ConfigLoader import config
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,21 +66,26 @@ from hardware_manager import HardwareManager, MockHardwareManager
 # ---------------------------------------------------------------------------
 # Optional Google Drive job log backup
 # ---------------------------------------------------------------------------
-_drive_backup: Optional["JobDriveBackup"] = None  # noqa: F821 — set in lifespan
-_drive_init_error: Optional[str] = None  # set when config enables Drive but init fails
+_drive_backup: "JobDriveBackup" | None = None  # noqa: F821 — set in lifespan
+_drive_init_error: str | None = None  # set when config enables Drive but init fails
 _pending_uploads: list[dict] = []  # {"path": Path, "attempts": int}
 
 
-def _load_drive_backup() -> tuple[Optional["JobDriveBackup"], Optional[str]]:
+def _files_dir() -> Path:
+    """Job log output directory from system_config.json."""
+    path = config.get_job_files_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _load_drive_backup() -> tuple["JobDriveBackup" | None, str | None]:
     """Return (JobDriveBackup, None) if enabled and init succeeds.
 
     Returns (None, None) when the feature is intentionally disabled in config.
     Returns (None, error_message) when enabled in config but initialisation fails.
     """
     try:
-        from src.ConfigLoader import ConfigLoader
-        cfg = ConfigLoader()
-        if not cfg.get("google_drive.enabled", False):
+        if not config.get_google_drive_enabled():
             return None, None
         from src.google_drive.drive_backup import JobDriveBackup
         return JobDriveBackup(), None
@@ -88,10 +94,36 @@ def _load_drive_backup() -> tuple[Optional["JobDriveBackup"], Optional[str]]:
         print(f"[Drive] Could not initialise JobDriveBackup: {msg}")
         return None, msg
 
-# ---------------------------------------------------------------------------
-# Toggle — flip to False when deploying on real hardware.
-# ---------------------------------------------------------------------------
-MOCK_HARDWARE: bool = False
+
+def _cors_origins() -> list[str]:
+    env = os.environ.get("JUBILEE_CORS_ORIGINS", "").strip()
+    if env:
+        return [o.strip() for o in env.split(",") if o.strip()]
+    return config.get_cors_origins()
+
+
+def _merge_hardware_config(body: HardwareConfig) -> HardwareConfig:
+    """Fill omitted connect fields from system_config.json."""
+    data = body.model_dump()
+    if data.get("machine_address") is None:
+        data["machine_address"] = config.get_duet_ip()
+    if data.get("scale_port") is None:
+        data["scale_port"] = config.get_scale_port()
+    if data.get("num_dispensers") is None:
+        data["num_dispensers"] = config.get_num_dispensers()
+    if data.get("pistons_per_dispenser") is None:
+        data["pistons_per_dispenser"] = config.get_pistons_per_dispenser()
+    return HardwareConfig(**data)
+
+
+def _mock_hardware_enabled() -> bool:
+    """Use mock hardware when config or env says so (env wins when set)."""
+    env = os.environ.get("JUBILEE_MOCK_HARDWARE", "").strip().lower()
+    if env in ("1", "true", "yes"):
+        return True
+    if env in ("0", "false", "no"):
+        return False
+    return config.get_mock_hardware()
 
 
 # =============================================================================
@@ -115,12 +147,20 @@ class HardnessSample(BaseModel):
 
 class StartPowderJobRequest(BaseModel):
     job_type: Literal["dispensing"] = "dispensing"
-    wells:    list[PowderWell] = Field(min_length=1, max_length=24)
+    wells:    list[PowderWell] = Field(
+        min_length=1,
+        max_length=24,
+        description="At most 24 wells per job (fixed API limit).",
+    )
 
 
 class StartHardnessJobRequest(BaseModel):
     job_type: Literal["hardness"] = "hardness"
-    samples:  list[HardnessSample] = Field(min_length=1, max_length=24)
+    samples:  list[HardnessSample] = Field(
+        min_length=1,
+        max_length=24,
+        description="At most 24 samples per job (fixed API limit).",
+    )
 
 
 # Discriminated union: FastAPI picks the correct model from the job_type field.
@@ -191,8 +231,8 @@ class ConnectionManager:
 # Module-level singletons
 # =============================================================================
 
-hw:        MockHardwareManager | HardwareManager = (
-    MockHardwareManager() if MOCK_HARDWARE else HardwareManager()
+hw: MockHardwareManager | HardwareManager = (
+    MockHardwareManager() if _mock_hardware_enabled() else HardwareManager()
 )
 ws_mgr   = ConnectionManager()
 progress = JobProgress()
@@ -230,8 +270,7 @@ async def telemetry_loop() -> None:
 
 async def drive_upload_retry_loop(backup: "JobDriveBackup") -> None:
     """Periodically retry failed job log uploads until they succeed."""
-    from src.ConfigLoader import ConfigLoader
-    interval = ConfigLoader().get("google_drive.retry_interval_seconds", 60)
+    interval = config.get_retry_interval_seconds()
     while True:
         await asyncio.sleep(interval)
         if _pending_uploads:
@@ -258,7 +297,7 @@ app = FastAPI(title="Jubilee Automation API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],   # Vite dev server
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -268,6 +307,24 @@ app.add_middleware(
 # =============================================================================
 # REST — hardware lifecycle
 # =============================================================================
+
+@app.get("/api/config")
+async def get_machine_config():
+    """Return machine settings from system_config.json for UI hydration."""
+    return {
+        "duet_ip": config.get_duet_ip(),
+        "scale_port": config.get_scale_port(),
+        "num_dispensers": config.get_num_dispensers(),
+        "pistons_per_dispenser": config.get_pistons_per_dispenser(),
+        "hardness_tray": {
+            "rows": 5,
+            "cols": 7,
+            "tray_count": 2,
+        },
+        "google_drive_enabled": config.get_google_drive_enabled(),
+        "mock_hardware": _mock_hardware_enabled(),
+    }
+
 
 @app.get("/api/status")
 async def get_status():
@@ -307,7 +364,8 @@ async def hardware_connect(config: HardwareConfig):
         raise HTTPException(status_code=400, detail="Already connected to hardware.")
     if hw.state == MachineState.HOMING:
         raise HTTPException(status_code=400, detail="Connection already in progress.")
-    asyncio.create_task(_run_connect(config))
+    merged = _merge_hardware_config(config)
+    asyncio.create_task(_run_connect(merged))
     return {"accepted": True, "message": "Connection initiated — monitor WebSocket state."}
 
 
@@ -352,7 +410,7 @@ async def start_job(body: JobRequest):
                 "Wait for the current operation to finish or resolve the error."
             ),
         )
-    if hw._manager is None:
+    if hasattr(hw, "_manager") and hw._manager is None:
         # Catches the race where disconnect() was called while a connect() was
         # still running: connect() can finish after disconnect() and leave state
         # as IDLE with _manager = None.  Force a clean disconnected state so
@@ -460,7 +518,7 @@ async def get_job_log():
 
     1. If a job ran in this server session (``progress`` has data), synthesise
        from in-memory state so the home screen updates in real time.
-    2. Otherwise read the most recent file from ``_FILES_DIR`` — the path taken
+    2. Otherwise read the most recent file from the configured job files dir - the path taken
        after a server restart when in-memory state is lost.
 
     Returns:
@@ -470,7 +528,7 @@ async def get_job_log():
     if progress.job_type is not None:
         return {"log": _build_progress_log()}
 
-    files = sorted(_FILES_DIR.glob("*.json"), reverse=True)
+    files = sorted(_files_dir().glob("*.json"), reverse=True)
     if not files:
         return {"log": None}
     try:
@@ -553,14 +611,18 @@ def _normalize_file_log(raw: dict) -> dict:
     items = state.get("molds") or state.get("samples") or []
     completed = sum(1 for it in items if it.get("status") == "complete")
 
+    error = raw.get("error")
+    if error is None:
+        error = meta.get("error")
+
     return {
         "job_type":   job_type,
         "started_at": None,
         "date":       meta.get("date"),
-        "status":     meta.get("outcome", "complete"),
+        "status":     meta.get("outcome", "unknown"),
         "completed":  completed,
         "total":      len(items),
-        "error":      None,
+        "error":      error,
         "items":      items,
     }
 
@@ -617,7 +679,7 @@ async def list_job_files():
         DataScreen.
     """
     entries = []
-    for f in sorted(_FILES_DIR.glob("*.json"), reverse=True):
+    for f in sorted(_files_dir().glob("*.json"), reverse=True):
         stat = f.stat()
         entries.append({
             "name":     f.name,
@@ -645,7 +707,7 @@ async def get_job_file(filename: str):
         HTTPException: 404 if the file does not exist or has the wrong extension.
         HTTPException: 500 if the file cannot be read or parsed.
     """
-    path = _FILES_DIR / filename
+    path = _files_dir() / filename
     if not path.exists() or path.suffix != ".json":
         raise HTTPException(status_code=404, detail="File not found.")
     try:
@@ -846,11 +908,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 # This block is intentionally placed after every API and WebSocket route so
 # that /api/* and /ws are never shadowed by the static mount.
 
-_IMAGES_DIR = _FILES_DIR / "images"
-_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+_images_dir = _files_dir() / "images"
+_images_dir.mkdir(parents=True, exist_ok=True)
 app.mount(
     "/api/files/images",
-    StaticFiles(directory=str(_IMAGES_DIR), html=False),
+    StaticFiles(directory=str(_images_dir), html=False),
     name="sample_images",
 )
 

@@ -11,7 +11,7 @@ components, so all movements go through validation.
 import threading
 import time
 
-from typing import Callable, Optional
+from typing import Callable
 from science_jubilee.Machine import Machine
 from src.Scale import Scale
 from src.HardnessTester import HardnessTester
@@ -19,6 +19,7 @@ from src.PistonDispenser import PistonDispenser
 from src.MotionPlatformStateMachine import PositionType
 from src.ConfigLoader import ConfigLoader
 from jubilee_api_config.constants import FeedRate
+from src.ConfigLoader import config as _system_config
 
 
 class MovementExecutor:
@@ -32,9 +33,9 @@ class MovementExecutor:
     def __init__(
         self,
         machine: Machine,
-        scale: Optional[Scale] = None,
-        feedrate: FeedRate = FeedRate.MEDIUM,
-        on_jam_detected: Optional[Callable] = None,
+        scale: Scale | None = None,
+        feedrate: FeedRate | int = FeedRate.MEDIUM,
+        on_jam_detected: Callable | None = None,
     ):
         """
         Initialize the movement executor with a machine reference.
@@ -42,23 +43,26 @@ class MovementExecutor:
         Args:
             machine: The Jubilee Machine instance to control
             scale: Optional Scale instance (reference to JubileeManager's scale)
-            feedrate: FeedRate enum value to control movement speed (default: MEDIUM)
+            feedrate: FeedRate enum or feedrate in mm/min (from machine.default_feedrate)
             on_jam_detected: Optional callback invoked when a powder jam is detected.
                 Called from the dispensing thread before blocking on user clearance.
         """
         self._machine = machine
         self._scale = scale
-        self._feedrate = feedrate.value
-        self.last_fill_weight: Optional[float] = None
-        self.last_hardness_result: Optional[float] = None
-        self.last_hardness_error: Optional[str] = None
-        self.last_hardness_image_path: Optional[str] = None
+        if isinstance(feedrate, FeedRate):
+            self._feedrate = feedrate.value
+        else:
+            self._feedrate = int(feedrate)
+        self.last_fill_weight: float | None = None
+        self.last_hardness_result: float | None = None
+        self.last_hardness_error: str | None = None
+        self.last_hardness_image_path: str | None = None
 
         # Jam handling: the dispensing loop blocks on this event when a jam is
         # detected; clear_jam() sets it to allow the loop to resume.
         self._jam_resume_event: threading.Event = threading.Event()
         self._jam_resume_event.set()  # not jammed initially
-        self._on_jam_detected: Optional[Callable] = on_jam_detected
+        self._on_jam_detected: Callable | None = on_jam_detected
     
     @property
     def machine(self) -> Machine:
@@ -74,7 +78,7 @@ class MovementExecutor:
         self,
         well_id: str,
         deck,
-        tamper_axis: str = 'V',
+        tamper_axis: str,
         tamper_travel_pos: float = 30.0,
         safe_z: float = 195.0,
         ready_x: float = None,
@@ -194,7 +198,7 @@ class MovementExecutor:
     
     def execute_place_mold_on_scale(
         self,
-        tamper_axis: str = 'V',
+        tamper_axis: str,
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
@@ -249,7 +253,7 @@ class MovementExecutor:
     
     def execute_pick_mold_from_scale(
         self,
-        tamper_axis: str = 'V',
+        tamper_axis: str,
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
@@ -302,9 +306,7 @@ class MovementExecutor:
     def execute_place_top_piston(
         self,
         piston_dispenser: PistonDispenser,
-        tamper_axis: str = 'V',
-        tamper_travel_pos: float = 34.0,
-        dispenser_safe_z: float = 254.0,
+        tamper_axis: str,
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
@@ -317,8 +319,6 @@ class MovementExecutor:
         Args:
             piston_dispenser: The PistonDispenser with position and piston info
             tamper_axis: Axis letter for tamper (default 'V')
-            tamper_travel_pos: Travel position for tamper axis (default 30.0 mm)
-            dispenser_safe_z: Safe Z height for dispenser (default 254.0 mm)
             ready_x: X coordinate of dispenser ready position (required)
             ready_y: Y coordinate of dispenser ready position (required)
             ready_z: Z coordinate of dispenser ready position (required)
@@ -331,7 +331,7 @@ class MovementExecutor:
             print(f"Placing top piston from dispenser {piston_dispenser.index}")
             
             feedrate = self._feedrate
-            feedrate_pickup = 2000 # TODO: hardcoded to minimum speed for smooth pickup, for now
+            feedrate_pickup = _system_config.get_default_feedrate()
             self._machine.move_to(y=175.7, s=feedrate_pickup) # Move into dispenser to dispense piston
             self._machine.gcode("M400") # Wait for previous command to finish
             self._machine.gcode("G4 S2") # Wait for 2 seconds
@@ -390,7 +390,10 @@ class MovementExecutor:
             self._machine.gcode("M400")
             
             # Return tamper to safe position
-            self._machine.move_to(v=30, s=feedrate)
+            self._machine.move_to(
+                v=_system_config.get_tamper_travel_position(),
+                s=feedrate,
+            )
             
             # Home V axis after tamping to ensure axis accuracy
             print("Homing V axis after tamp to ensure accuracy...")
@@ -407,11 +410,11 @@ class MovementExecutor:
     
     def execute_move_to_position(
         self,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        z: Optional[float] = None,
-        v: Optional[float] = None,
-        speed: Optional[int] = None
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+        v: float | None = None,
+        speed: int | None = None
     ) -> bool:
         """
         Execute a basic move to specified coordinates.
@@ -481,7 +484,7 @@ class MovementExecutor:
         self,
         tray_index: int,
         sample_id: str,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         hardness_tester: HardnessTester = None,
         image_save_path=None,
     ) -> bool:
@@ -532,7 +535,7 @@ class MovementExecutor:
 
     def execute_hardness_turn_on(
         self,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         servo_channel: int = None,
         press_angle: int = None,
         release_angle: int = None,
@@ -542,7 +545,7 @@ class MovementExecutor:
 
     def execute_hardness_turn_off(
         self,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         servo_channel: int = None,
         press_angle: int = None,
         release_angle: int = None,
@@ -552,7 +555,7 @@ class MovementExecutor:
 
     def execute_hardness_zero(
         self,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         servo_channel: int = None,
         press_angle: int = None,
         release_angle: int = None,
@@ -562,10 +565,10 @@ class MovementExecutor:
 
     def _actuate_servo(
         self,
-        mode: Optional[str],
-        servo_channel: Optional[int],
-        press_angle: Optional[int],
-        release_angle: Optional[int],
+        mode: str | None,
+        servo_channel: int | None,
+        press_angle: int | None,
+        release_angle: int | None,
         action: str,
     ) -> bool:
         """Send M280 press/release gcode for a single servo button actuation.
@@ -637,7 +640,7 @@ class MovementExecutor:
         global_ready_x: float,
         global_ready_y: float,
         global_ready_z: float,
-        global_ready_v: Optional[float] = None,
+        global_ready_v: float | None = None,
     ) -> bool:
         """
         Pick up a tool and re-center on global_ready.
@@ -682,7 +685,7 @@ class MovementExecutor:
         global_ready_x: float,
         global_ready_y: float,
         global_ready_z: float,
-        global_ready_v: Optional[float] = None,
+        global_ready_v: float | None = None,
     ) -> bool:
         """
         Park the current tool and re-center on global_ready.
@@ -737,7 +740,7 @@ class MovementExecutor:
         x: float,
         y: float,
         z: float,
-        v: Optional[float] = None,
+        v: float | None = None,
     ) -> bool:
         """
         Move to a specific mold slot position.
@@ -781,7 +784,7 @@ class MovementExecutor:
             
         Note:
             Z-height safety is enforced by state machine's z_height_policy validation.
-            SCALE_READY position requires z_height_policy: allowed=['dispenser_safe', 'mold_transfer_safe']
+            SCALE_READY position requires z_height_policy (typically mold_transfer_safe)
         
         Returns:
             True if successful, False otherwise.
@@ -853,7 +856,7 @@ class MovementExecutor:
             
         Note:
             Z-height safety is enforced by state machine's z_height_policy validation.
-            SCALE_READY position requires z_height_policy: allowed=['dispenser_safe', 'mold_transfer_safe']
+            SCALE_READY position requires z_height_policy (typically mold_transfer_safe)
         """
         try:
             feedrate = self._feedrate
@@ -1131,7 +1134,7 @@ class MovementExecutor:
 
     def execute_home_tamper(
         self,
-        tamper_axis: str = 'V'
+        tamper_axis: str,
     ) -> bool:
         """
         Perform homing for the tamper axis (V-axis).
@@ -1171,7 +1174,7 @@ class MovementExecutor:
     
     def execute_home_manipulator(
         self,
-        manipulator_axis: str = 'V'
+        manipulator_axis: str
     ) -> bool:
         """
         Home the manipulator axis (V).

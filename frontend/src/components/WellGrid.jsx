@@ -20,6 +20,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
+import { DISPENSING_ROWS, DISPENSING_COLS } from '../constants/dispensingBed'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,7 +50,7 @@ function initWells(rows, cols) {
   return wells
 }
 
-export function useWellGrid(rows = 4, cols = 6) {
+export function useWellGrid(rows = DISPENSING_ROWS, cols = DISPENSING_COLS) {
   const [wells, setWells] = useState(() => initWells(rows, cols))
 
   // Derived: IDs of currently selected wells (memoised for stable identity)

@@ -7,6 +7,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
+import {
+  HARDNESS_ROWS,
+  HARDNESS_COLS,
+  HARDNESS_TRAY_COUNT,
+} from '../constants/hardnessTray'
 
 const SHORE_LABELS = {
   shore_a:   'A',
@@ -56,7 +61,11 @@ function initSamples(rows, cols, trayCount) {
   return samples
 }
 
-export function useSampleTrayGrid(rows = 5, cols = 7, trayCount = 2) {
+export function useSampleTrayGrid(
+  rows = HARDNESS_ROWS,
+  cols = HARDNESS_COLS,
+  trayCount = HARDNESS_TRAY_COUNT,
+) {
   const [samples, setSamples] = useState(() => initSamples(rows, cols, trayCount))
 
   const selectedIds = useMemo(

@@ -4,13 +4,17 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple, TYPE_CHECKING
 
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
 from science_jubilee.decks.Deck import Deck
 from src.PistonDispenser import PistonDispenser
 from src.Scale import Scale
+from src.motion_config import (
+    load_motion_platform_config,
+    supported_tool_ids_from_system_config,
+)
 
 # Import FeedRate for type checking only (avoiding circular import)
 if TYPE_CHECKING:
@@ -35,9 +39,9 @@ class ZHeightPolicy:
     """Defines the z-height constraints that must be satisfied before a move."""
 
     allowed: frozenset[str] = field(default_factory=frozenset)
-    required: Optional[str] = None
+    required: str | None = None
 
-    def validate(self, z_height_id: Optional[str]) -> Optional[str]:
+    def validate(self, z_height_id: str | None) -> str | None:
         """Return a human readable error message if the policy is not satisfied."""
         if not self.required and not self.allowed:
             return "No z-height is permitted for this position."
@@ -62,10 +66,10 @@ class ZHeightPolicy:
 class MachineCoordinates:
     """Physical X, Y, Z, V coordinates for a position."""
     
-    x: Optional[float | str] = None
-    y: Optional[float | str] = None
-    z: Optional[float | str] = None  # Can be "USE_Z_HEIGHT_POLICY" or numeric
-    v: Optional[float | str] = None
+    x: float | str | None = None
+    y: float | str | None = None
+    z: float | str | None = None  # Can be "USE_Z_HEIGHT_POLICY" or numeric
+    v: float | str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,13 +86,13 @@ class PositionDescriptor:
     type: PositionType
     allowed_origins: frozenset[str]
     allowed_destinations: frozenset[str]
-    coordinates: Optional[MachineCoordinates] = None
+    coordinates: MachineCoordinates | None = None
     requirements: Mapping[str, object] = field(default_factory=dict)
     z_height_policy: ZHeightPolicy = field(default_factory=ZHeightPolicy)
     allows_tool_engagement: bool = False
     engagement_requirements: Mapping[str, object] = field(default_factory=dict)
     engagement_actions: frozenset[str] = field(default_factory=frozenset)
-    resource_id: Optional[str] = None
+    resource_id: str | None = None
     description: str = ""
     metadata: Dict[str, object] = field(default_factory=dict)
 
@@ -101,7 +105,7 @@ class ActionDescriptor:
     position_scope: frozenset[str]
     requirements: Mapping[str, object] = field(default_factory=dict)
     excludes: Mapping[str, object] = field(default_factory=dict)
-    required_tool_id: Optional[str] = None
+    required_tool_id: str | None = None
     requires_tool_engaged: bool = False
     blocked_when_engaged: bool = False
     description: str = ""
@@ -113,7 +117,7 @@ class ToolStatus:
 
     tool_id: str
     engaged: bool = False
-    ready_position_id: Optional[str] = None
+    ready_position_id: str | None = None
     metadata: Dict[str, object] = field(default_factory=dict)
 
 
@@ -122,18 +126,18 @@ class MotionContext:
     """Captures the mutable state of the motion platform."""
 
     position_id: str
-    z_height_id: Optional[str] = None
-    active_tool_id: Optional[str] = None
-    payload_state: Optional[str] = None
+    z_height_id: str | None = None
+    active_tool_id: str | None = None
+    payload_state: str | None = None
     tool_states: Dict[str, ToolStatus] = field(default_factory=dict)
-    pending_move: Optional["MoveRequest"] = None
-    engaged_ready_position_id: Optional[str] = None
-    engaged_tool_id: Optional[str] = None
+    pending_move: "MoveRequest" | None = None
+    engaged_ready_position_id: str | None = None
+    engaged_tool_id: str | None = None
     metadata: Dict[str, object] = field(default_factory=dict)
     # Platform state tracking
-    deck: Optional[Deck] = None
-    scale: Optional[Scale] = None  # Reference to scale object
-    current_well: Optional[object] = None  # Mold object representing the mold being carried
+    deck: Deck | None = None
+    scale: Scale | None = None  # Reference to scale object
+    current_well: object | None = None  # Mold object representing the mold being carried
     mold_on_scale: bool = False  # Whether the current mold is on the scale
     piston_dispensers: List[object] = field(default_factory=list)  # List of PistonDispenser objects
 
@@ -143,7 +147,7 @@ class MoveRequest:
     """Represents a requested transition for the motion platform."""
 
     target_position_id: str
-    action: Optional[str] = None
+    action: str | None = None
     metadata: Dict[str, object] = field(default_factory=dict)
 
 
@@ -152,15 +156,15 @@ class MoveValidationResult:
     """Encapsulates the outcome of a move validation."""
 
     valid: bool
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @dataclass
 class _ResolvedPositionResult:
     """Internal result for ready-position coordinate resolution."""
 
-    error: Optional[MoveValidationResult] = None
-    coords: Optional[Tuple[float, float, float, Optional[float]]] = None  # (x, y, z, v)
+    error: MoveValidationResult | None = None
+    coords: tuple[float, float, float, float | None] | None = None  # (x, y, z, v)
 
 
 class PositionRegistry:
@@ -175,112 +179,69 @@ class PositionRegistry:
         for position in positions:
             self.add_position(position)
 
-    @staticmethod
-    def _load_system_config_payload(path: str | Path) -> dict:
-        config_path = Path(path)
-        with config_path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-
-    @classmethod
-    def _load_supported_tool_ids_from_system_config(cls, path: str | Path) -> frozenset[str]:
-        payload = cls._load_system_config_payload(path)
-        return cls._extract_supported_tool_ids(payload)
-
-    @staticmethod
-    def _extract_supported_tool_ids(payload: dict) -> frozenset[str]:
-        tool_ids: set[str] = set()
-        tools_cfg = payload.get("tools", {})
-        if isinstance(tools_cfg, dict):
-            for tool_cfg in tools_cfg.values():
-                if isinstance(tool_cfg, dict):
-                    value = tool_cfg.get("name")
-                    if isinstance(value, str):
-                        tool_ids.add(value)
-        elif isinstance(tools_cfg, list):
-            for tool_cfg in tools_cfg:
-                if isinstance(tool_cfg, str):
-                    tool_ids.add(tool_cfg)
-                elif isinstance(tool_cfg, dict):
-                    value = tool_cfg.get("name")
-                    if isinstance(value, str):
-                        tool_ids.add(value)
-
-        hardness_testers_cfg = payload.get("hardness_testers", {})
-        if isinstance(hardness_testers_cfg, dict):
-            for tester_cfg in hardness_testers_cfg.values():
-                if not isinstance(tester_cfg, dict):
-                    continue
-                tool_cfg = tester_cfg.get("tool", {})
-                if not isinstance(tool_cfg, dict):
-                    continue
-                value = tool_cfg.get("name")
-                if isinstance(value, str):
-                    tool_ids.add(value)
-
-        return frozenset(tool_ids)
-
     @classmethod
     def from_config_file(
         cls,
         path: str | Path,
         *,
-        system_config_path: Optional[str | Path] = None,
+        system_config_path: str | Path | None = None,
     ) -> "PositionRegistry":
+        del system_config_path  # tool ids come from ConfigLoader.system
         config_path = Path(path)
         with config_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
 
-        # First pass: collect all positions to build type-to-id mapping
+        motion = load_motion_platform_config(payload)
+
         positions: list[PositionDescriptor] = []
         type_to_ids: Dict[str, set[str]] = {}
-        
-        for raw in payload.get("positions", []):
-            try:
-                position_type = PositionType[raw["type"]]
-            except KeyError as exc:
-                raise KeyError(f"Unknown position type '{raw['type']}'") from exc
 
-            position_id = raw["id"].lower()
-            type_name = raw["type"].lower()
-            
+        for raw in motion.positions:
+            try:
+                position_type = PositionType[raw.type]
+            except KeyError as exc:
+                raise KeyError(f"Unknown position type '{raw.type}'") from exc
+
+            position_id = raw.id.lower()
+            type_name = raw.type.lower()
+
             if type_name not in type_to_ids:
                 type_to_ids[type_name] = set()
             type_to_ids[type_name].add(position_id)
 
-            z_policy_config = raw.get("z_height_policy", {})
             z_policy = ZHeightPolicy(
-                allowed=frozenset(z_policy_config.get("allowed", [])),
-                required=z_policy_config.get("required"),
+                allowed=frozenset(raw.z_height_policy.allowed),
+                required=raw.z_height_policy.required,
             )
 
-            engagement_cfg = raw.get("engagement") or {}
-            
-            # Parse coordinates if present
-            coords_cfg = raw.get("coordinates")
+            engagement_cfg = raw.engagement
             coordinates = None
-            if coords_cfg:
+            if raw.coordinates is not None:
                 coordinates = MachineCoordinates(
-                    x=coords_cfg.get("x"),
-                    y=coords_cfg.get("y"),
-                    z=coords_cfg.get("z"),
-                    v=coords_cfg.get("v"),
+                    x=raw.coordinates.x,
+                    y=raw.coordinates.y,
+                    z=raw.coordinates.z,
+                    v=raw.coordinates.v,
                 )
 
-            # Store raw origins/destinations for now
             descriptor = PositionDescriptor(
                 identifier=position_id,
                 type=position_type,
-                allowed_origins=frozenset(raw.get("allowed_origins", [])),
-                allowed_destinations=frozenset(raw.get("allowed_destinations", [])),
+                allowed_origins=frozenset(raw.allowed_origins),
+                allowed_destinations=frozenset(raw.allowed_destinations),
                 coordinates=coordinates,
-                requirements=dict(raw.get("requirements", {})),
+                requirements=dict(raw.requirements),
                 z_height_policy=z_policy,
-                allows_tool_engagement=raw.get("allows_tool_engagement", False),
-                engagement_requirements=dict(engagement_cfg.get("requirements", {})),
-                engagement_actions=frozenset(engagement_cfg.get("allowed_actions", [])),
-                resource_id=raw.get("resource_id"),
-                description=raw.get("description", ""),
-                metadata=dict(raw.get("metadata", {})),
+                allows_tool_engagement=raw.allows_tool_engagement,
+                engagement_requirements=dict(
+                    engagement_cfg.requirements if engagement_cfg else {}
+                ),
+                engagement_actions=frozenset(
+                    engagement_cfg.allowed_actions if engagement_cfg else []
+                ),
+                resource_id=raw.resource_id,
+                description=raw.description,
+                metadata=dict(raw.metadata),
             )
             positions.append(descriptor)
 
@@ -320,31 +281,30 @@ class PositionRegistry:
 
         registry = cls(expanded_positions)
         registry._actions = {
-            action_cfg["id"]: ActionDescriptor(
-                identifier=action_cfg["id"],
-                position_scope=frozenset(action_cfg.get("position_scope", [])),
-                requirements=dict(action_cfg.get("requirements", {})),
-                excludes=dict(action_cfg.get("excludes", {})),
-                required_tool_id=action_cfg.get("required_tool_id"),
-                requires_tool_engaged=action_cfg.get("requires_tool_engaged", False),
-                blocked_when_engaged=action_cfg.get("blocked_when_engaged", False),
-                description=action_cfg.get("description", ""),
+            action_cfg.id: ActionDescriptor(
+                identifier=action_cfg.id,
+                position_scope=frozenset(action_cfg.position_scope),
+                requirements=dict(action_cfg.requirements),
+                excludes=dict(action_cfg.excludes),
+                required_tool_id=action_cfg.required_tool_id,
+                requires_tool_engaged=action_cfg.requires_tool_engaged,
+                blocked_when_engaged=action_cfg.blocked_when_engaged,
+                description=action_cfg.description,
             )
-            for action_cfg in payload.get("actions", [])
+            for action_cfg in motion.actions
         }
-        system_config = Path(system_config_path) if system_config_path else config_path.with_name("system_config.json")
-        if system_config.exists():
-            sys_payload = cls._load_system_config_payload(system_config)
-            registry._supported_tool_ids = cls._extract_supported_tool_ids(sys_payload)
-        registry._z_heights = dict(payload.get("z_heights", {}))
-        
-        tolerance_cfg = payload.get("coordinate_tolerance", {})
+        registry._supported_tool_ids = supported_tool_ids_from_system_config()
+        registry._z_heights = {
+            z_id: entry.model_dump() for z_id, entry in motion.z_heights.items()
+        }
+
+        tolerance_cfg = motion.coordinate_tolerance
         registry._coordinate_tolerance = {
             axis: value
             for axis, value in tolerance_cfg.items()
             if axis != "description" and isinstance(value, (int, float))
         }
-        
+
         return registry
 
     def add_position(self, position: PositionDescriptor) -> None:
@@ -361,7 +321,7 @@ class PositionRegistry:
     def has(self, identifier: str) -> bool:
         return identifier in self._positions
 
-    def find_first_of_type(self, position_type: PositionType) -> Optional[PositionDescriptor]:
+    def find_first_of_type(self, position_type: PositionType) -> PositionDescriptor | None:
         for descriptor in self._positions.values():
             if descriptor.type == position_type:
                 return descriptor
@@ -396,8 +356,8 @@ class PositionRegistry:
         machine_y: float,
         machine_z: float,
         machine_v: float,
-        current_z_height_id: Optional[str] = None,
-    ) -> Optional[str]:
+        current_z_height_id: str | None = None,
+    ) -> str | None:
         """
         Validate that the machine is actually at the expected coordinates for a position.
 
@@ -411,7 +371,7 @@ class PositionRegistry:
         coords = position.coordinates
         tolerance = self._coordinate_tolerance
 
-        def check_coord(axis: str, expected: Optional[float | str], actual: float) -> Optional[str]:
+        def check_coord(axis: str, expected: float | str | None, actual: float) -> str | None:
             """Check if a single coordinate is within tolerance."""
             if expected is None:
                 return None
@@ -482,14 +442,13 @@ class MotionPlatformStateMachine(StateMachine):
     disengage_tool = tool_engaged.to(idle)
     abort_motion = moving.to(idle)
 
-    def __init__(self, registry: PositionRegistry, machine: Machine, *, context: Optional[MotionContext] = None, scale: Optional[Scale] = None, feedrate: 'FeedRate' = None) -> None:
+    def __init__(self, registry: PositionRegistry, machine: Machine, *, context: MotionContext | None = None, scale: Scale | None = None, feedrate: 'FeedRate' = None) -> None:
         # Import MovementExecutor locally to avoid circular import
         from src.MovementExecutor import MovementExecutor
-        from jubilee_api_config.constants import FeedRate as FR
-        
-        # Handle default feedrate
+
         if feedrate is None:
-            feedrate = FR.MEDIUM
+            from src.ConfigLoader import config as _cfg
+            feedrate = _cfg.get_default_feedrate()
         
         self._registry = registry
         self._actions = registry.actions
@@ -510,16 +469,23 @@ class MotionPlatformStateMachine(StateMachine):
         self._executor = MovementExecutor(machine, scale=scale, feedrate=feedrate)
         super().__init__()
 
+    @staticmethod
+    def _axis_or_config(axis: str | None) -> str:
+        if axis is not None:
+            return axis
+        from src.ConfigLoader import config as _cfg
+        return _cfg.system.manipulator.tamper_axis
+
     @classmethod
     def from_config_file(
         cls,
         path: str | Path,
         machine: Machine,
         *,
-        context_overrides: Optional[Mapping[str, object]] = None,
-        scale: Optional[Scale] = None,
+        context_overrides: Mapping[str, object] | None = None,
+        scale: Scale | None = None,
         feedrate: 'FeedRate' = None,
-        system_config_path: Optional[str | Path] = None,
+        system_config_path: str | Path | None = None,
     ) -> "MotionPlatformStateMachine":
         registry = PositionRegistry.from_config_file(path, system_config_path=system_config_path)
         initial_descriptor = registry.find_first_of_type(PositionType.GLOBAL_READY)
@@ -549,7 +515,7 @@ class MotionPlatformStateMachine(StateMachine):
     # Platform State Initialization
     # ---------------------------------------------------------------------
     
-    def initialize_deck(self, deck_name: str = "weight_well_deck", config_path: Optional[str] = None):
+    def initialize_deck(self, deck_name: str = "weight_well_deck", config_path: str | None = None):
         """
         Initialize the deck with weight wells in each slot.
         
@@ -577,7 +543,11 @@ class MotionPlatformStateMachine(StateMachine):
                     # Register labware with the slot
                     self.context.deck.slots[str(i)].has_labware = True
                     self.context.deck.slots[str(i)].labware = labware
-                    self.context.deck.safe_z = labware.dimensions.get("zDimension", 10)
+                    if "zDimension" not in labware.dimensions:
+                        raise ValueError(
+                            "mold_labware.json dimensions must include zDimension"
+                        )
+                    self.context.deck.safe_z = labware.dimensions["zDimension"]
                     
                     for well_name in labware.wells.keys():
                         # Skip empty mold slot names
@@ -666,7 +636,7 @@ class MotionPlatformStateMachine(StateMachine):
         dispensers[index].num_pistons = num_pistons
         return True
 
-    def get_mold_from_deck(self, well_id: str) -> Optional[object]:
+    def get_mold_from_deck(self, well_id: str) -> object | None:
         """
         Get a mold object from the deck by mold slot ID.
         
@@ -713,7 +683,7 @@ class MotionPlatformStateMachine(StateMachine):
         return self._executor.machine
 
     @property
-    def last_fill_weight(self) -> Optional[float]:
+    def last_fill_weight(self) -> float | None:
         """The final stable weight reading from the most recent successful powder fill."""
         return self._executor.last_fill_weight
 
@@ -789,7 +759,7 @@ class MotionPlatformStateMachine(StateMachine):
             execution_func=self._executor.execute_pick_mold,
             well_id=well_id,
             deck=self.context.deck,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
+            tamper_axis=manipulator_config['tamper_axis'],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
@@ -810,7 +780,7 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_place_mold(
         self,
         well_id: str,
-        manipulator_config: Optional[Dict[str, object]] = None
+        manipulator_config: Dict[str, object] | None = None
     ) -> MoveValidationResult:
         """
         Validate and execute placing a mold in a mold slot.
@@ -901,7 +871,7 @@ class MotionPlatformStateMachine(StateMachine):
         result = self._validate_and_execute(
             action_id="place_mold_on_scale",
             execution_func=self._executor.execute_place_mold_on_scale,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
+            tamper_axis=manipulator_config['tamper_axis'],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
@@ -957,7 +927,7 @@ class MotionPlatformStateMachine(StateMachine):
         result = self._validate_and_execute(
             action_id="pick_mold_from_scale",
             execution_func=self._executor.execute_pick_mold_from_scale,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
+            tamper_axis=manipulator_config['tamper_axis'],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
@@ -1025,8 +995,7 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="retrieve_piston",
             execution_func=self._executor.execute_place_top_piston,
             piston_dispenser=piston_dispenser,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            dispenser_safe_z=manipulator_config.get('dispenser_safe_z', 254.0),
+            tamper_axis=manipulator_config['tamper_axis'],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
@@ -1042,8 +1011,8 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_tamp(
         self,
         manipulator_config: Dict[str, object],
-        tamp_depth: float = 40.0,
-        tamp_speed: int = 2000
+        tamp_depth: float,
+        tamp_speed: int,
     ) -> MoveValidationResult:
         """
         Validate and execute tamping action.
@@ -1055,8 +1024,8 @@ class MotionPlatformStateMachine(StateMachine):
         
         Args:
             manipulator_config: Configuration dict for the manipulator
-            tamp_depth: Target depth for tamping movement in mm (default 40.0)
-            tamp_speed: Speed for tamping movement in mm/min (default 2000)
+            tamp_depth: Target depth for tamping movement in mm (from system_config.json)
+            tamp_speed: Speed for tamping movement in mm/min (from system_config.json)
             
         Returns:
             MoveValidationResult with outcome
@@ -1108,7 +1077,7 @@ class MotionPlatformStateMachine(StateMachine):
         return self._validate_and_execute(
             action_id="tamp_mold",
             execution_func=self._executor.execute_tamp,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
+            tamper_axis=manipulator_config['tamper_axis'],
             tamp_depth=tamp_depth,
             tamp_speed=tamp_speed
         )
@@ -1182,9 +1151,9 @@ class MotionPlatformStateMachine(StateMachine):
 
     def _validate_and_execute(
         self,
-        target_position_id: Optional[str] = None,
-        action_id: Optional[str] = None,
-        additional_requirements: Optional[Dict[str, object]] = None,
+        target_position_id: str | None = None,
+        action_id: str | None = None,
+        additional_requirements: Dict[str, object] | None = None,
         execution_func=None,
         **execution_kwargs
     ) -> MoveValidationResult:
@@ -1270,7 +1239,7 @@ class MotionPlatformStateMachine(StateMachine):
     def _validate_and_execute_move(
         self,
         target_position_id: str,
-        additional_requirements: Optional[Dict[str, object]] = None,
+        additional_requirements: Dict[str, object] | None = None,
         execution_func=None,
         **execution_kwargs
     ) -> MoveValidationResult:
@@ -1388,7 +1357,7 @@ class MotionPlatformStateMachine(StateMachine):
     def _validate_and_execute_action(
         self,
         action_id: str,
-        additional_requirements: Optional[Dict[str, object]] = None,
+        additional_requirements: Dict[str, object] | None = None,
         execution_func=None,
         **execution_kwargs
     ) -> MoveValidationResult:
@@ -1773,7 +1742,7 @@ class MotionPlatformStateMachine(StateMachine):
         self,
         tray_index: str | int,
         sample_id: str | int,
-        mode: Optional[str] = None,
+        mode: str | None = None,
         hardness_tester=None,
         image_save_path=None,
     ) -> MoveValidationResult:
@@ -1854,7 +1823,7 @@ class MotionPlatformStateMachine(StateMachine):
 
         return channel, int(press_angle), int(release_angle), None
 
-    def validated_hardness_turn_on(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_turn_on(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-on button actuation.
 
@@ -1874,7 +1843,7 @@ class MotionPlatformStateMachine(StateMachine):
             release_angle=release,
         )
 
-    def validated_hardness_turn_off(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_turn_off(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-off button actuation.
 
@@ -1894,7 +1863,7 @@ class MotionPlatformStateMachine(StateMachine):
             release_angle=release,
         )
 
-    def validated_hardness_zero(self, mode: Optional[str] = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_zero(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
         """
         Validate and execute hardness tester zero button actuation.
 
@@ -2014,7 +1983,7 @@ class MotionPlatformStateMachine(StateMachine):
 
     def validated_home_tamper(
         self,
-        tamper_axis: str = 'V'
+        tamper_axis: str | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute tamper homing (uses home_manipulator action).
@@ -2027,17 +1996,15 @@ class MotionPlatformStateMachine(StateMachine):
         This establishes accurate positioning by using the mold bottom as a reference point.
         
         Args:
-            tamper_axis: Axis letter for tamper (default 'V')
-            
+            tamper_axis: Axis letter for tamper; defaults to ``manipulator.tamper_axis`` in system config.
+
         Returns:
             MoveValidationResult with outcome
         """
-        # No domain-specific validation needed for homing
-        # Execute through generic validation framework using home_manipulator action
         return self._validate_and_execute(
             action_id="home_manipulator",
             execution_func=self._executor.execute_home_tamper,
-            tamper_axis=tamper_axis
+            tamper_axis=self._axis_or_config(tamper_axis),
         )
 
     def validated_home_all(
@@ -2073,7 +2040,7 @@ class MotionPlatformStateMachine(StateMachine):
     
     def validated_home_manipulator(
         self,
-        manipulator_axis: str = 'V'
+        manipulator_axis: str | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute homing for the manipulator axis (V).
@@ -2081,15 +2048,15 @@ class MotionPlatformStateMachine(StateMachine):
         Requires no mold picked up (payload_state should be "empty").
         
         Args:
-            manipulator_axis: Axis letter for manipulator (default 'V')
-            
+            manipulator_axis: Axis letter for manipulator; defaults to ``manipulator.tamper_axis`` in system config.
+
         Returns:
             MoveValidationResult with outcome
         """
         return self._validate_and_execute(
             action_id="home_manipulator",
             execution_func=self._executor.execute_home_manipulator,
-            manipulator_axis=manipulator_axis
+            manipulator_axis=self._axis_or_config(manipulator_axis),
         )
     
     def validated_home_trickler(
@@ -2326,8 +2293,7 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="retrieve_piston",
             execution_func=self._executor.execute_place_top_piston,
             piston_dispenser=piston_dispenser,
-            tamper_axis=manipulator_config.get('tamper_axis', 'V'),
-            dispenser_safe_z=manipulator_config.get('dispenser_safe_z', 254.0),
+            tamper_axis=manipulator_config['tamper_axis'],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
@@ -2577,9 +2543,9 @@ class MotionPlatformStateMachine(StateMachine):
     def update_context(
         self,
         *,
-        active_tool_id: Optional[str] = None,
-        payload_state: Optional[str] = None,
-        z_height_id: Optional[str] = None,
+        active_tool_id: str | None = None,
+        payload_state: str | None = None,
+        z_height_id: str | None = None,
     ) -> None:
         """Convenience helper to mutate commonly updated context properties."""
         if active_tool_id is not None:
@@ -2663,7 +2629,7 @@ class MotionPlatformStateMachine(StateMachine):
         if issue:
             raise RuntimeError(f"Cannot exit tool-engaged state: {issue}")
 
-    def _validate_requirements(self, requirements: Mapping[str, object]) -> Optional[str]:
+    def _validate_requirements(self, requirements: Mapping[str, object]) -> str | None:
         """Validate context attributes against a requirements mapping."""
         for key, expected in requirements.items():
             actual = getattr(self.context, key, None)
@@ -2679,7 +2645,7 @@ class MotionPlatformStateMachine(StateMachine):
                 )
         return None
 
-    def _validate_excludes(self, excludes: Mapping[str, object]) -> Optional[str]:
+    def _validate_excludes(self, excludes: Mapping[str, object]) -> str | None:
         """Validate that context attributes do not match excluded values."""
         for key, excluded in excludes.items():
             actual = getattr(self.context, key, None)

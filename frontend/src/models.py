@@ -8,7 +8,6 @@ shared as mutable state between server endpoints and the hardware manager.
 """
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -37,11 +36,14 @@ class MachineState(str, Enum):
 # =============================================================================
 
 class HardwareConfig(BaseModel):
-    """Sent from the Settings screen when the user clicks Connect."""
-    num_dispensers:        int           = Field(default=1, ge=0)
-    pistons_per_dispenser: int           = Field(default=2, ge=0)
-    machine_address:       Optional[str] = None   # None → read from system_config.json
-    scale_port:            str           = "/dev/ttyUSB0"
+    """Sent from the Settings screen when the user clicks Connect.
+
+    Omitted or null fields are filled from system_config.json on the server.
+    """
+    num_dispensers:        int | None = Field(default=None, ge=0)
+    pistons_per_dispenser: int | None = Field(default=None, ge=0)
+    machine_address:       str | None = None
+    scale_port:            str | None = None
 
 
 class DispenserStatus(BaseModel):
@@ -76,15 +78,15 @@ class JobProgress:
 
     def __init__(self) -> None:
         self.running:      bool          = False
-        self.job_type:     Optional[str] = None
+        self.job_type:     str | None = None
         self.completed:    int           = 0
         self.total:        int           = 0
-        self.current_item: Optional[str] = None
-        self.error:        Optional[str] = None
-        self.started_at:   Optional[str] = None   # ISO-8601 UTC string
+        self.current_item: str | None = None
+        self.error:        str | None = None
+        self.started_at:   str | None = None   # ISO-8601 UTC string
         self.items:        list          = []      # ordered list of item dicts from the job request
         self.jam_detected: bool          = False
-        self.jam_well_id:  Optional[str] = None
+        self.jam_well_id:  str | None = None
 
     @staticmethod
     def item_id(item: dict) -> str:

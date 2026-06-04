@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
+import { fetchMachineConfig } from '../api/jubileeApi'
 import { Button, Card, TextInput, StatusBadge } from '../components/ui'
 
 // ---------------------------------------------------------------------------
@@ -205,12 +206,30 @@ export default function SettingsScreen() {
   const dispenserEditsLocked = !isIdle
   const dispensers = telemetry.dispensers ?? []
 
-  // Form state
-  const [numDispensers,       setNumDispensers]       = useState('1')
-  const [pistonsPerDispenser, setPistonsPerDispenser] = useState('2')
-  const [jubileeIp,           setJubileeIp]           = useState('192.168.1.2')
-  const [scalePort,           setScalePort]           = useState('/dev/ttyUSB0')
+  // Form state (hydrated from GET /api/config on mount)
+  const [numDispensers,       setNumDispensers]       = useState('')
+  const [pistonsPerDispenser, setPistonsPerDispenser] = useState('')
+  const [jubileeIp,           setJubileeIp]           = useState('')
+  const [scalePort,           setScalePort]           = useState('')
   const [statusMsg,           setStatusMsg]           = useState('')
+  const [configError,         setConfigError]         = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchMachineConfig()
+      .then((cfg) => {
+        if (cancelled) return
+        setNumDispensers(String(cfg.num_dispensers ?? ''))
+        setPistonsPerDispenser(String(cfg.pistons_per_dispenser ?? ''))
+        setJubileeIp(cfg.duet_ip ?? '')
+        setScalePort(cfg.scale_port ?? '')
+        setConfigError(null)
+      })
+      .catch((err) => {
+        if (!cancelled) setConfigError(err.message)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const numD = parseInt(numDispensers,       10)
   const numP = parseInt(pistonsPerDispenser, 10)
@@ -220,12 +239,14 @@ export default function SettingsScreen() {
   async function handleConnect() {
     if (!inputsValid || inputsLocked) return
     setStatusMsg('')
-    const result = await connectHardware({
+    const body = {
       num_dispensers:        numD,
       pistons_per_dispenser: numP,
       machine_address:       jubileeIp.trim() || null,
-      scale_port:            scalePort.trim() || '/dev/ttyUSB0',
-    })
+    }
+    const scale = scalePort.trim()
+    if (scale) body.scale_port = scale
+    const result = await connectHardware(body)
     if (!result.ok) {
       setStatusMsg(`Request failed: ${result.error}`)
     }
@@ -317,6 +338,12 @@ export default function SettingsScreen() {
           <h3 className="text-sm font-semibold uppercase tracking-widest text-slate-400">
             Connection Configuration
           </h3>
+
+          {configError && (
+            <p className="text-xs text-amber-400">
+              Could not load defaults from server: {configError}
+            </p>
+          )}
 
           <TextInput
             label="Jubilee IP Address or Hostname"

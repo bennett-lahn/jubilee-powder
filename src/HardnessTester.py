@@ -5,9 +5,12 @@ import re
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 import numpy as np
 from science_jubilee.tools.Tool import Tool
+
+if TYPE_CHECKING:
+    from src.ConfigLoader import HardnessTesterConfig
 
 # Optional package for creating animated debug GIFs
 try:
@@ -17,10 +20,6 @@ except ImportError:
     IMAGEIO_AVAILABLE = False
     print("WARNING: imageio not available. Debug GIF generation is disabled.")
 
-
-DEFAULT_CALIBRATION_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "jubilee_api_config", "lcd_calibration.json")
-)
 
 """
 SEGMENT-BASED LCD READING FOR 7-SEGMENT DISPLAYS
@@ -75,19 +74,19 @@ class HardnessTester(Tool):
 
     def __init__(
         self,
-        num_digits=4,
-        cam_usb_path: Optional[str] = None,
-        use_camera=True,
+        calibration_path: str,
+        num_digits: int = 4,
+        cam_usb_path: str | None = None,
+        use_camera: bool = True,
         index: int = 1,
         name: str = "HardnessTester",
         tester_mode: str = "shore_a",
-        calibration_path: str = DEFAULT_CALIBRATION_PATH,
-        tip_length_mm: Optional[float] = None,
-        servo: Optional[str] = None,
-        power_press_angle: Optional[int] = None,
-        power_release_angle: Optional[int] = None,
-        zero_press_angle: Optional[int] = None,
-        zero_release_angle: Optional[int] = None,
+        tip_length_mm: float | None = None,
+        servo: str | None = None,
+        power_press_angle: int | None = None,
+        power_release_angle: int | None = None,
+        zero_press_angle: int | None = None,
+        zero_release_angle: int | None = None,
         state_machine=None,
         threshold_bias: int = 15,
         sharpen_strength: float = 31,
@@ -169,7 +168,7 @@ class HardnessTester(Tool):
         self.morph_open = morph_open
 
         # Integer cv2 camera index resolved from cam_usb_path at open time.
-        self._resolved_cam_index: Optional[int] = None
+        self._resolved_cam_index: int | None = None
         
         # Digit ROI boundaries (will be set via calibration or manually)
         # Format: [(x1, y1, x2, y2), ...] for each digit
@@ -193,48 +192,31 @@ class HardnessTester(Tool):
     def from_system_config(
         cls,
         tester_mode: str,
-        config_payload: dict,
+        cfg: "HardnessTesterConfig",
         num_digits: int = 4,
-        use_camera: bool = True,
         state_machine=None,
     ) -> "HardnessTester":
-        """Build a configured Shore tester instance from system config."""
-        testers_cfg = config_payload.get("hardness_testers", {})
-        if tester_mode not in testers_cfg:
-            raise KeyError(f"Unknown hardness tester mode '{tester_mode}' in system config")
-
-        tester_cfg = testers_cfg[tester_mode]
-        calibration_path = tester_cfg.get("lcd_calibration_path", DEFAULT_CALIBRATION_PATH)
+        """Build a configured Shore tester from validated ``HardnessTesterConfig``."""
+        calibration_path = cfg.lcd_calibration_path
         if calibration_path and not os.path.isabs(calibration_path):
             project_root = Path(__file__).resolve().parent.parent
             calibration_path = str(project_root / calibration_path)
 
-        button_servos = tester_cfg.get("button_servos", {})
-        tool_cfg = tester_cfg.get("tool", {})
-        cam_usb_path = tester_cfg.get("cam_usb_path") or None
-
-        def _require_angle(key: str) -> int:
-            if key not in button_servos:
-                raise KeyError(
-                    f"Missing required key '{key}' in button_servos for "
-                    f"'{tester_mode}' in system config"
-                )
-            return int(button_servos[key])
-
+        servos = cfg.button_servos
         return cls(
             num_digits=num_digits,
-            cam_usb_path=cam_usb_path,
-            use_camera=use_camera,
-            index=tool_cfg.get("index", 1),
-            name=tool_cfg.get("name", f"{tester_mode}_hardness_tester"),
+            cam_usb_path=cfg.cam_usb_path or None,
+            use_camera=cfg.use_camera,
+            index=cfg.tool.index,
+            name=cfg.tool.name,
             tester_mode=tester_mode,
             calibration_path=calibration_path,
-            tip_length_mm=tester_cfg.get("tip_length_mm"),
-            servo=button_servos.get("servo"),
-            power_press_angle=_require_angle("power_press_angle"),
-            power_release_angle=_require_angle("power_release_angle"),
-            zero_press_angle=_require_angle("zero_press_angle"),
-            zero_release_angle=_require_angle("zero_release_angle"),
+            tip_length_mm=cfg.tip_length_mm,
+            servo=servos.servo,
+            power_press_angle=servos.power_press_angle,
+            power_release_angle=servos.power_release_angle,
+            zero_press_angle=servos.zero_press_angle,
+            zero_release_angle=servos.zero_release_angle,
             state_machine=state_machine,
         )
 
@@ -311,7 +293,7 @@ class HardnessTester(Tool):
             return True
         raise RuntimeError(f"Display state is indeterminate: unexpected reading '{reading}'")
 
-    def _parse_hardness_reading(self, reading: Optional[str]) -> tuple[Optional[float], Optional[str]]:
+    def _parse_hardness_reading(self, reading: str | None) -> tuple[float | None, str | None]:
         """Convert a consensus LCD string to a hardness float."""
         if reading is None:
             return None, "No consensus OCR reading was captured."
@@ -334,7 +316,7 @@ class HardnessTester(Tool):
         sample_id: str | int,
         state_machine,
         image_save_path=None,
-    ) -> dict[str, Optional[float | str]]:
+    ) -> dict[str, float | str | None]:
         """
         Execute one hardness sample operation via the state machine move/action path.
 
@@ -506,7 +488,7 @@ class HardnessTester(Tool):
         self._init_camera()
 
     @staticmethod
-    def resolve_cam_index_from_usb_path(usb_path: str) -> Optional[int]:
+    def resolve_cam_index_from_usb_path(usb_path: str) -> int | None:
         """Resolve a USB/v4l by-path string to an integer OpenCV camera index.
 
         Handles:
@@ -940,9 +922,16 @@ class HardnessTester(Tool):
             return consensus_result
         return None
     
-    def calibrate(self, frame=None, image_path=None, save_calibration=True, calibration_path=DEFAULT_CALIBRATION_PATH):
+    def calibrate(
+        self,
+        frame=None,
+        image_path=None,
+        save_calibration=True,
+        calibration_path: str | None = None,
+    ):
         """
         Interactive GUI calibration using an OpenCV popup window.
+        Uses ``self.calibration_path`` when ``calibration_path`` is omitted.
 
         ROI phase
         ---------
@@ -972,6 +961,11 @@ class HardnessTester(Tool):
             True if calibration was completed and saved successfully
         """
         import json
+
+        if calibration_path is None:
+            calibration_path = self.calibration_path
+        if not calibration_path:
+            raise ValueError("calibration_path is required for calibrate()")
 
         # --- 1. Acquire frame -----------------------------------------------
         if frame is None:
@@ -1229,16 +1223,20 @@ class HardnessTester(Tool):
 
         return True
     
-    def load_calibration(self, filepath=DEFAULT_CALIBRATION_PATH):
+    def load_calibration(self, filepath: str | None = None):
         """
         Load calibration from file.
         
         Args:
-            filepath: Path to calibration JSON file
+            filepath: Path to calibration JSON file (defaults to self.calibration_path)
             
         Returns:
             True if loaded successfully
         """
+        filepath = filepath or self.calibration_path
+        if not filepath:
+            print("WARNING: No calibration path configured")
+            return False
         try:
             import json
             with open(filepath, 'r', encoding='utf-8') as f:
@@ -1268,6 +1266,16 @@ class HardnessTester(Tool):
         
 
 
+_CLI_DEFAULT_CALIBRATION = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "jubilee_api_config",
+        "lcd_calibration_shore_a.json",
+    )
+)
+
+
 def main():
     """
     Test the segment-based LCD reader.
@@ -1283,7 +1291,7 @@ def main():
     parser.add_argument(
         "--calibration",
         type=str,
-        default=DEFAULT_CALIBRATION_PATH,
+        default=_CLI_DEFAULT_CALIBRATION,
         help="Path to calibration JSON file",
     )
     parser.add_argument(
@@ -1343,6 +1351,7 @@ def main():
     reader = HardnessTester(
         num_digits=4,
         use_camera=(args.image is None),
+        calibration_path=args.calibration,
         sharpen_strength=args.sharpen_strength,
         sharpen_blur_radius=args.sharpen_blur_radius,
         threshold_bias=args.threshold_bias,
@@ -1393,7 +1402,7 @@ def main():
     print("=" * 80)
 
 
-def test_with_image(image_path, calibration_file=DEFAULT_CALIBRATION_PATH):
+def test_with_image(image_path, calibration_file=_CLI_DEFAULT_CALIBRATION):
     """
     Simple test function to read LCD from a single image.
     
@@ -1401,9 +1410,12 @@ def test_with_image(image_path, calibration_file=DEFAULT_CALIBRATION_PATH):
         image_path: Path to LCD image
         calibration_file: Path to calibration file (optional)
     """
-    reader = HardnessTester(num_digits=4, use_camera=False)
-    
-    # Load calibration if available
+    reader = HardnessTester(
+        num_digits=4,
+        use_camera=False,
+        calibration_path=calibration_file,
+    )
+
     if os.path.exists(calibration_file):
         reader.load_calibration(calibration_file)
     

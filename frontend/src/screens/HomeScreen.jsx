@@ -32,12 +32,11 @@ import {
   DISPENSING_ROWS,
   DISPENSING_COLS,
 } from '../constants/dispensingBed'
-
-
-const SAMPLE_TRAY_ROWS = 5
-const SAMPLE_TRAY_COLS = 7
-const SAMPLE_TRAY_COUNT = 2
-const HARDNESS_ROWS = SAMPLE_TRAY_ROWS
+import {
+  HARDNESS_ROWS,
+  HARDNESS_COLS,
+  HARDNESS_TRAY_COUNT,
+} from '../constants/hardnessTray'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,7 +79,7 @@ function buildResultWells(rows, cols, job, jobType) {
 
   if (jobType === 'hardness') {
     const total = rows * cols
-    for (let trayIndex = 0; trayIndex < SAMPLE_TRAY_COUNT; trayIndex++) {
+    for (let trayIndex = 0; trayIndex < HARDNESS_TRAY_COUNT; trayIndex++) {
       for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
         const id = sampleKeyForTray(trayIndex, sampleIndex)
         wells[id] = {
@@ -253,7 +252,7 @@ export default function HomeScreen() {
       : '#334155' // slate-700
 
   const resultRows = jobType === 'hardness' ? HARDNESS_ROWS : DISPENSING_ROWS
-  const resultCols = jobType === 'hardness' ? SAMPLE_TRAY_COLS : DISPENSING_COLS
+  const resultCols = jobType === 'hardness' ? HARDNESS_COLS : DISPENSING_COLS
   const resultWells = buildResultWells(resultRows, resultCols, displayJob, jobType)
   const jobDate     = formatJobDate(displayJob)
 
@@ -372,7 +371,7 @@ export default function HomeScreen() {
               cols={resultCols}
               toggleSample={() => {}}
               variant="result"
-              trayCount={SAMPLE_TRAY_COUNT}
+              trayCount={HARDNESS_TRAY_COUNT}
               className="flex-1 min-h-0"
             />
           ) : (

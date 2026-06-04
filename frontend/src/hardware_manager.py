@@ -35,6 +35,7 @@ if str(_project_root) not in sys.path:
 # models.py is a sibling in the same directory; it is already importable by
 # the time this module is loaded because server.py adds frontend/src/ to
 # sys.path before importing hardware_manager.
+
 from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 
 
@@ -169,7 +170,7 @@ class MockHardwareManager:
 
     def __init__(self) -> None:
         self.state:   MachineState  = MachineState.DISCONNECTED
-        self._config: HardwareConfig = HardwareConfig()
+        self._config: HardwareConfig | None = None
         self._dispensers: list[DispenserStatus] = []
         self._t0:         float = time.monotonic()
         self._scale_base: float = 50.0
@@ -181,8 +182,10 @@ class MockHardwareManager:
         return self.state != MachineState.DISCONNECTED
 
     @property
-    def jubilee_ip(self) -> str:
-        return self._config.machine_address or "mock.local"
+    def jubilee_ip(self) -> str | None:
+        if not self.connected or self._config is None:
+            return None
+        return self._config.machine_address
 
     # ── Connection lifecycle ───────────────────────────────────────────────────
 
@@ -207,6 +210,7 @@ class MockHardwareManager:
     async def disconnect(self) -> None:
         """Clear dispenser state and set machine state to DISCONNECTED."""
         self._dispensers = []
+        self._config = None
         self.state = MachineState.DISCONNECTED
 
     # ── Scale reads ───────────────────────────────────────────────────────────
@@ -321,7 +325,7 @@ class MockHardwareManager:
                 for i, sample in enumerate(samples):
                     if not progress.running:
                         break
-                    required_passes = _hardness_passes(sample.get("mode", "none"))
+                    required_passes = _hardness_passes(sample["mode"])
                     if pass_mode not in required_passes:
                         continue
                     if progress.items[i].get("status") == "error":
@@ -372,7 +376,7 @@ class HardwareManager:
 
     def __init__(self) -> None:
         self.state:    MachineState   = MachineState.DISCONNECTED
-        self._config:  HardwareConfig = HardwareConfig()
+        self._config:  HardwareConfig | None = None
         self._manager                 = None   # JubileeManager instance
 
     # ── Properties ────────────────────────────────────────────────────────────
@@ -383,8 +387,10 @@ class HardwareManager:
         return self.state != MachineState.DISCONNECTED and self._manager is not None
 
     @property
-    def jubilee_ip(self) -> str:
-        return self._config.machine_address or "http://192.168.1.2:8080"
+    def jubilee_ip(self) -> str | None:
+        if not self.connected or self._config is None:
+            return None
+        return self._config.machine_address
 
     # ── Connection lifecycle ───────────────────────────────────────────────────
 
@@ -428,29 +434,30 @@ class HardwareManager:
         if self._manager is not None:
             await asyncio.to_thread(self._manager.disconnect)
             self._manager = None
+        self._config = None
         self.state = MachineState.DISCONNECTED
 
     # ── Scale reads ───────────────────────────────────────────────────────────
 
-    async def get_weight_unstable(self) -> float:
+    async def get_weight_unstable(self) -> float | None:
         """Read the current (unstable) scale weight without waiting for stability.
 
         Returns:
-            float: Scale reading in grams, or ``0.0`` if hardware is not connected.
+            Scale reading in grams, or ``None`` if hardware is not connected.
         """
         if self._manager and self._manager.connected:
             return await asyncio.to_thread(self._manager.get_weight_unstable)
-        return 0.0
+        return None
 
-    async def get_weight_stable(self) -> float:
+    async def get_weight_stable(self) -> float | None:
         """Read the scale weight after waiting for a stable reading.
 
         Returns:
-            float: Stable scale reading in grams, or ``0.0`` if not connected.
+            Stable scale reading in grams, or ``None`` if not connected.
         """
         if self._manager and self._manager.connected:
             return await asyncio.to_thread(self._manager.get_weight_stable)
-        return 0.0
+        return None
 
     # ── Dispenser management ──────────────────────────────────────────────────
 
@@ -573,7 +580,7 @@ class HardwareManager:
                 for i, sample in enumerate(samples):
                     if not progress.running:
                         break
-                    required_passes = _hardness_passes(sample.get("mode", "none"))
+                    required_passes = _hardness_passes(sample["mode"])
                     if pass_mode not in required_passes:
                         continue
                     if progress.items[i].get("status") == "error":
