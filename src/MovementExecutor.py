@@ -232,7 +232,6 @@ class MovementExecutor:
 
         try:
             print("Placing mold on scale...")
-            self._scale.tare()
             feedrate = self._feedrate
             self._machine.move(
                 dy=38, s=feedrate
@@ -1015,9 +1014,13 @@ class MovementExecutor:
             stagnant_count = 0
             motor_has_moved = False
             threshold_crossed = False
+            last_stream_timestamp: float | None = None
 
             while True:
-                current_weight = self._scale.get_stream_weight()
+                # Do not run a new dispense iteration on stale stream data.
+                current_weight, last_stream_timestamp = (
+                    self._scale.wait_for_next_stream_weight(last_stream_timestamp)
+                )
 
                 if current_weight >= coarse_threshold:
                     # ── Fine / feedback phase ─────────────────────────────
@@ -1039,13 +1042,15 @@ class MovementExecutor:
                         step_size = min_step
                     step_size = max(min_step, min(max_dribble_step, step_size))
 
-                    weight_before_step = self._scale.get_stream_weight()
+                    weight_before_step = current_weight
                     # High-speed "flick" at fine_feedrate; vibration already running.
                     self._machine.gcode(f"G1 W{step_size:.4f} {fine_feedrate_str}")
                     self._machine.gcode("M400")
                     motor_has_moved = True
 
-                    weight_after_step = self._scale.get_stream_weight()
+                    weight_after_step, last_stream_timestamp = (
+                        self._scale.wait_for_next_stream_weight(last_stream_timestamp)
+                    )
                     weight_gained = max(0.0, weight_after_step - weight_before_step)
                     step_yield = weight_gained / step_size  # g/mm
 
@@ -1089,6 +1094,7 @@ class MovementExecutor:
                             )
                             self._scale.start_streaming()
                             streaming_started = True
+                            last_stream_timestamp = None
                             self._set_trickler_vibration(current_vib_amp)
 
                 else:
@@ -1107,12 +1113,14 @@ class MovementExecutor:
                         step_size = target_remaining / (yield_ema * coarse_tgt_steps)
                         step_size = max(min_step, min(max_step, step_size))
 
-                    weight_before_step = self._scale.get_stream_weight()
+                    weight_before_step = current_weight
                     self._machine.gcode(f"G1 W{step_size:.4f} {coarse_feedrate_str}")
                     self._machine.gcode("M400")
                     motor_has_moved = True
 
-                    weight_after_step = self._scale.get_stream_weight()
+                    weight_after_step, last_stream_timestamp = (
+                        self._scale.wait_for_next_stream_weight(last_stream_timestamp)
+                    )
                     weight_gained = max(0.0, weight_after_step - weight_before_step)
                     step_yield = weight_gained / step_size  # g/mm
 

@@ -329,6 +329,10 @@ class Scale:
         """
         Clear the busy flag and wake exactly one thread that is waiting on
         the monitor (if any).
+
+        Includes a 0.5 s inter-command sleep to prevent EC,02 "not ready"
+        errors when the scale needs a moment after executing a command before
+        it can accept the next one.
         """
         with self._cmd_condition:
             # Scale should be ready at this point, but sending another command too soon after receiving an ACK can cause EC,02 not ready error
@@ -574,6 +578,10 @@ class Scale:
         Acquire exclusive access to the scale, execute the command, update
         the weight cache when appropriate, and release access.
 
+        While SIR streaming is active, only Cancel (C) may be sent to the
+        scale. Any other command in streaming mode is undefined behavior
+        and raises ScaleException.
+
         Args:
             cmd: Command string to send
             expect_data: If True, expects a data response after ACK
@@ -584,6 +592,12 @@ class Scale:
         Raises:
             ScaleException: If command fails after retries or ACK timeout
         """
+        if self._streaming and cmd != "C":
+            raise ScaleException(
+                f"Cannot send command '{cmd}' while SIR streaming is active. "
+                "Call stop_streaming() before issuing scale commands."
+            )
+
         self._acquire_busy()
         try:
             result = self._execute_command(cmd, expect_data)
@@ -971,6 +985,10 @@ class Scale:
         Runs until ``_streaming`` is cleared by ``stop_streaming()``.
         Only ``ST,`` and ``US,`` lines update the cache; ``EC,`` lines are
         logged but do not crash the thread.  All other content is ignored.
+
+        While ``_streaming`` is True, this thread has exclusive ownership of
+        the serial read path. Other methods must not read from serial during
+        this time and should consume cached values instead.
         """
         while self._streaming:
             try:
@@ -1004,6 +1022,42 @@ class Scale:
         if ts is not None and time.time() - ts > 2.0:
             raise ScaleException("get_stream_weight: stream data is stale (>2 s)")
         return self._parse_weight(msg, expect_stable=False)
+
+    def get_stream_weight_with_timestamp(self) -> tuple[float, float]:
+        """
+        Return the latest stream weight and its timestamp.
+        """
+        with self._stream_lock:
+            msg = self._last_weight_message
+            ts = self._last_weight_time
+
+        if not self._streaming or msg is None or ts is None:
+            raise ScaleException(
+                "get_stream_weight_with_timestamp: not streaming or no data yet"
+            )
+        if time.time() - ts > 2.0:
+            raise ScaleException(
+                "get_stream_weight_with_timestamp: stream data is stale (>2 s)"
+            )
+        return self._parse_weight(msg, expect_stable=False), ts
+
+    def wait_for_next_stream_weight(
+        self,
+        last_timestamp: float | None,
+        timeout_s: float = 2.5,
+        poll_interval_s: float = 0.01,
+    ) -> tuple[float, float]:
+        """Block until a newer stream sample than ``last_timestamp`` exists."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            weight, ts = self.get_stream_weight_with_timestamp()
+            if last_timestamp is None or ts > last_timestamp:
+                return weight, ts
+            time.sleep(poll_interval_s)
+
+        raise ScaleException(
+            "wait_for_next_stream_weight: timed out waiting for a fresh stream sample"
+        )
 
     # --- Standard weight commands ---
 
