@@ -3,13 +3,13 @@ MotionPlatformExecutor - Low-level movement execution for validated state machin
 
 This module contains all the physical movement execution logic for the Jubilee
 motion platform. All methods assume validation has already occurred in the
-MotionPlatformStateMachine. 
+MotionPlatformStateMachine.
 
 The executor is owned by the state machine and is not accessed directly by other
 components, so all movements go through validation.
 """
+
 import threading
-import time
 
 from typing import Callable
 from science_jubilee.Machine import Machine
@@ -25,11 +25,11 @@ from src.ConfigLoader import config as _system_config
 class MovementExecutor:
     """
     Executes physical movements on the machine after state machine validation.
-    
+
     This class should not be instantiated directly by user code. Instead, it is
     owned by MotionPlatformStateMachine and accessed through validated methods.
     """
-    
+
     def __init__(
         self,
         machine: Machine,
@@ -39,7 +39,7 @@ class MovementExecutor:
     ):
         """
         Initialize the movement executor with a machine reference.
-        
+
         Args:
             machine: The Jubilee Machine instance to control
             scale: Optional Scale instance (reference to JubileeManager's scale)
@@ -63,17 +63,17 @@ class MovementExecutor:
         self._jam_resume_event: threading.Event = threading.Event()
         self._jam_resume_event.set()  # not jammed initially
         self._on_jam_detected: Callable | None = on_jam_detected
-    
+
     @property
     def machine(self) -> Machine:
         """
-        Read-only access to machine for state queries only. 
+        Read-only access to machine for state queries only.
         Queries should not modify platform state.
         """
         return self._machine
-    
+
     # ===== MANIPULATOR MOVEMENTS =====
-    
+
     def execute_pick_mold(
         self,
         well_id: str,
@@ -84,14 +84,14 @@ class MovementExecutor:
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
-        ready_v: float = None
+        ready_v: float = None,
     ) -> bool:
         """
         Execute the physical movements to pick up a mold from a mold slot.
-        
+
         Assumes the toolhead is above the chosen mold slot at safe_z height
         with tamper axis in travel position.
-        
+
         Args:
             well_id: Mold slot identifier (numerical string "0" through "17")
             deck: The Deck object with mold configuration
@@ -102,7 +102,7 @@ class MovementExecutor:
             ready_y: Y coordinate of mold slot ready position (required)
             ready_z: Z coordinate of mold slot ready position (required)
             ready_v: V coordinate of mold slot ready position (required)
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -112,19 +112,19 @@ class MovementExecutor:
         try:
             # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
             slot_index = int(well_id)
-            
+
             if 0 <= slot_index <= 17 and str(slot_index) in deck.slots:
                 slot = deck.slots[str(slot_index)]
-                if slot.has_labware and hasattr(slot.labware, 'wells'):
+                if slot.has_labware and hasattr(slot.labware, "wells"):
                     if well_id in slot.labware.wells:
                         well = slot.labware.wells[well_id]
         except Exception:
             pass
-        
+
         try:
-            well_name = well.name if (well and hasattr(well, 'name')) else well_id
+            well_name = well.name if (well and hasattr(well, "name")) else well_id
             print(f"Picking up mold: {well_name}")
-            
+
             feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
             self._machine.move_to(z=40, s=feedrate)
@@ -134,12 +134,14 @@ class MovementExecutor:
             self._machine.move_to(z=95, s=feedrate)
 
             # Move back to ready position, if not already there
-            self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
+            self._machine.move_to(
+                x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
+            )
             return True
         except Exception as e:
             print(f"Error picking up mold from mold slot {well_id}: {e}")
             return False
-    
+
     def execute_place_mold(
         self,
         well_id: str,
@@ -147,11 +149,11 @@ class MovementExecutor:
         ready_x: float,
         ready_y: float,
         ready_z: float,
-        ready_v: float
+        ready_v: float,
     ) -> bool:
         """
         Execute the physical movements to place a mold in a mold slot.
-        
+
         Args:
             well_id: Mold slot identifier (numerical string "0" through "17")
             deck: The Deck object with mold configuration
@@ -159,7 +161,7 @@ class MovementExecutor:
             ready_y: Y coordinate of mold slot ready position (required)
             ready_z: Z coordinate of mold slot ready position (required)
             ready_v: V coordinate of mold slot ready position (required)
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -168,19 +170,19 @@ class MovementExecutor:
         try:
             # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
             slot_index = int(well_id)
-            
+
             if 0 <= slot_index <= 17 and str(slot_index) in deck.slots:
                 slot = deck.slots[str(slot_index)]
-                if slot.has_labware and hasattr(slot.labware, 'wells'):
+                if slot.has_labware and hasattr(slot.labware, "wells"):
                     if well_id in slot.labware.wells:
                         well = slot.labware.wells[well_id]
         except Exception:
             pass
-        
+
         try:
-            well_name = well.name if (well and hasattr(well, 'name')) else well_id
+            well_name = well.name if (well and hasattr(well, "name")) else well_id
             print(f"Placing mold: {well_name}")
-            
+
             feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
             self._machine.move(dy=23, s=feedrate)
@@ -188,35 +190,37 @@ class MovementExecutor:
             self._machine.move(dy=-23, s=feedrate)
             self._machine.move_to(v=30, s=feedrate)
             self._machine.move_to(z=95, s=feedrate)
-            
+
             # Move back to ready position, if not already there
-            self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
+            self._machine.move_to(
+                x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
+            )
             return True
         except Exception as e:
             print(f"Error placing mold in mold slot {well_id}: {e}")
             return False
-    
+
     def execute_place_mold_on_scale(
         self,
         tamper_axis: str,
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
-        ready_v: float = None
+        ready_v: float = None,
     ) -> bool:
         """
         Execute movements to place mold on scale.
-        
+
         Assumes the gantry has been moved to the scale ready spot location in front of and
         above the scale.
-        
+
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
             ready_x: X coordinate of scale ready position (required)
             ready_y: Y coordinate of scale ready position (required)
             ready_z: Z coordinate of scale ready position (required)
             ready_v: V coordinate of scale ready position (required)
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -225,24 +229,32 @@ class MovementExecutor:
             raise RuntimeError("Scale not configured in MovementExecutor")
         if self._machine is None:
             raise RuntimeError("Jubilee not configured in MovementExecutor")
-        
+
         try:
             print("Placing mold on scale...")
             self._scale.tare()
             feedrate = self._feedrate
-            self._machine.move(dy=38, s=feedrate)    # Move from ready position towards scale
+            self._machine.move(
+                dy=38, s=feedrate
+            )  # Move from ready position towards scale
             self._machine.move_to(v=67, s=feedrate)  # Move mold to fit under trickler
-            self._machine.gcode("M208 Z32.5:155")      # Move bed up so well fits under trickler, relax z-limit to do so
+            self._machine.gcode(
+                "M208 Z32.5:155"
+            )  # Move bed up so well fits under trickler, relax z-limit to do so
             self._machine.move_to(z=34.5, s=feedrate)
             self._machine.move(dy=7, s=feedrate)
             # TODO: open chute
             self._machine.move_to(z=32.5, s=feedrate)
             self._machine.move(dy=19, s=feedrate)
-            self._machine.gcode("M208 Z27:155")      # Move bed up so well is resting on scale, relax z-limit to do so
-            self._machine.move_to(z=27, s=feedrate) # Place mold on scale
+            self._machine.gcode(
+                "M208 Z27:155"
+            )  # Move bed up so well is resting on scale, relax z-limit to do so
+            self._machine.move_to(z=27, s=feedrate)  # Place mold on scale
 
             # Post-place retreat: move away from scale and mold.
-            self._machine.move(dy=-19, s= feedrate)   # Back off mold so tool isn't touching
+            self._machine.move(
+                dy=-19, s=feedrate
+            )  # Back off mold so tool isn't touching
             # This sequence is intentionally undone in execute_pick_mold_from_scale.
             self._machine.move_to(z=34.5, s=feedrate)
             self._machine.move(dy=-7)
@@ -250,27 +262,27 @@ class MovementExecutor:
         except Exception as e:
             print(f"Error placing mold on scale: {e}")
             return False
-    
+
     def execute_pick_mold_from_scale(
         self,
         tamper_axis: str,
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
-        ready_v: float = None
+        ready_v: float = None,
     ) -> bool:
         """
         Execute movements to pick mold from scale.
-        
+
         Only call if a mold has been placed under the trickler.
-        
+
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
             ready_x: X coordinate of scale ready position (required)
             ready_y: Y coordinate of scale ready position (required)
             ready_z: Z coordinate of scale ready position (required)
             ready_v: V coordinate of scale ready position (required)
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -288,21 +300,24 @@ class MovementExecutor:
             self._machine.move(dy=19, s=feedrate)
 
             # Phase 2: execute the existing pickup and retreat sequence.
-            self._machine.move(dy=1, s=feedrate)          # Return to model position
-            self._machine.move_to(z=32.5, s=feedrate)     # Pick up mold off scale
-            self._machine.gcode("M208 Z34.5:155")         # Revert z-limit to protect tool
-            self._machine.move(dy=-19, s=feedrate)        # Move mold from under trickler
-            self._machine.move_to(z=34.5, s=feedrate)     # Move within z-limits
-            self._machine.move(dy=-7, s=feedrate)         # Move all the way back from under trickler
+            self._machine.move(dy=1, s=feedrate)  # Return to model position
+            self._machine.move_to(z=32.5, s=feedrate)  # Pick up mold off scale
+            self._machine.gcode("M208 Z34.5:155")  # Revert z-limit to protect tool
+            self._machine.move(dy=-19, s=feedrate)  # Move mold from under trickler
+            self._machine.move_to(z=34.5, s=feedrate)  # Move within z-limits
+            self._machine.move(
+                dy=-7, s=feedrate
+            )  # Move all the way back from under trickler
             self._machine.move_to(z=ready_z, s=feedrate)  # Move mold out from trickler
-            self._machine.move_to(v=30, s=feedrate)       # Move tool to travel position
-            self._machine.move(dy=-39, s=feedrate)        # Restore y position to position before mold was placed
+            self._machine.move_to(v=30, s=feedrate)  # Move tool to travel position
+            self._machine.move(
+                dy=-39, s=feedrate
+            )  # Restore y position to position before mold was placed
             return True
         except Exception as e:
             print(f"Error picking mold from scale: {e}")
             return False
 
-    
     def execute_place_top_piston(
         self,
         piston_dispenser: PistonDispenser,
@@ -310,12 +325,12 @@ class MovementExecutor:
         ready_x: float = None,
         ready_y: float = None,
         ready_z: float = None,
-        ready_v: float = None
+        ready_v: float = None,
     ) -> bool:
         """
         # TODO: DO NOT RUN THIS WITH MORE THAN ONE DISPENSER AS IT CURRENTLY USES ABSOLUTE COORDINATES, NOT RELATIVE
         Execute movements to place top piston on current mold.
-        
+
         Args:
             piston_dispenser: The PistonDispenser with position and piston info
             tamper_axis: Axis letter for tamper (default 'V')
@@ -323,109 +338,114 @@ class MovementExecutor:
             ready_y: Y coordinate of dispenser ready position (required)
             ready_z: Z coordinate of dispenser ready position (required)
             ready_v: V coordinate of dispenser ready position (required)
-        
+
         Returns:
             True if successful, False otherwise.
         """
         try:
             print(f"Placing top piston from dispenser {piston_dispenser.index}")
-            
+
             feedrate = self._feedrate
             feedrate_pickup = _system_config.get_default_feedrate()
-            self._machine.move_to(y=175.7, s=feedrate_pickup) # Move into dispenser to dispense piston
-            self._machine.gcode("M400") # Wait for previous command to finish
-            self._machine.gcode("G4 S2") # Wait for 2 seconds
-            self._machine.move_to(v=21, s=feedrate) # Move tool up to pickup piston
-            self._machine.move_to(y=140, s=feedrate) # Move away from dispenser
-            self._machine.move_to(v=8, s=feedrate) # Push piston into mold TODO: Should be more like ~v=6
-            self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate) 
-            
+            self._machine.move_to(
+                y=175.7, s=feedrate_pickup
+            )  # Move into dispenser to dispense piston
+            self._machine.gcode("M400")  # Wait for previous command to finish
+            self._machine.gcode("G4 S2")  # Wait for 2 seconds
+            self._machine.move_to(v=21, s=feedrate)  # Move tool up to pickup piston
+            self._machine.move_to(y=140, s=feedrate)  # Move away from dispenser
+            self._machine.move_to(
+                v=8, s=feedrate
+            )  # Push piston into mold TODO: Should be more like ~v=6
+            self._machine.move_to(
+                x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
+            )
+
             return True
         except Exception as e:
-            print(f"Error placing top piston from dispenser {piston_dispenser.index}: {e}")
+            print(
+                f"Error placing top piston from dispenser {piston_dispenser.index}: {e}"
+            )
             return False
-    
+
     def execute_tamp(
-        self,
-        tamper_axis: str,
-        tamp_depth: float,
-        tamp_speed: int
+        self, tamper_axis: str, tamp_depth: float, tamp_speed: int
     ) -> bool:
         """
         Execute tamping movements at the scale_ready position.
-        
+
         Tamping compresses powder in a mold held by the manipulator to:
         1. Reduce powder volume so the top piston can fit
         2. Minimize airborne powder when inserting the top piston
-        
+
         After tamping, the V axis is homed to ensure axis accuracy.
-        
+
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
             tamp_depth: How deep to tamp within mold (mm)
             tamp_speed: Speed for tamper movement in mm/min
-        
+
         Returns:
             True if successful, False otherwise.
-            
+
         Note:
             Parameter bounds are validated by the state machine before this method is called.
-            Valid ranges are configured in system_config.json (manipulator.tamp_depth_min/max, 
+            Valid ranges are configured in system_config.json (manipulator.tamp_depth_min/max,
             manipulator.tamp_speed_min/max).
         """
         try:
             print("Executing tamp at scale_ready position...")
-            
+
             feedrate = tamp_speed
 
             # Save current v value to return to after tamping
             current_position = self._machine.get_position()
-            saved_v = float(current_position.get('V'))
-            
+            saved_v = float(current_position.get("V"))
+
             # Move tamper until it is just outside mold
             self._machine.move_to(v=2, s=feedrate)
-            
+
             # Move by requested tamp depth
             self._machine.move_to(v=tamp_depth, s=feedrate)
             self._machine.gcode("M400")
-            
+
             # Return tamper to safe position
             self._machine.move_to(
                 v=_system_config.get_tamper_travel_position(),
                 s=feedrate,
             )
-            
+
             # Home V axis after tamping to ensure axis accuracy
             print("Homing V axis after tamp to ensure accuracy...")
             self.execute_home_tamper(tamper_axis)
             self._machine.move_to(v=saved_v, s=feedrate)
-            
+
             print("Tamping complete")
             return True
         except Exception as e:
             print(f"Error during tamp: {e}")
             return False
-    
+
     # ===== BASIC MOVEMENTS =====
-    
+
     def execute_move_to_position(
         self,
         x: float | None = None,
         y: float | None = None,
         z: float | None = None,
         v: float | None = None,
-        speed: int | None = None
+        speed: int | None = None,
     ) -> bool:
         """
         Execute a basic move to specified coordinates.
-        
+
         Args:
             x: X coordinate (None to skip)
             y: Y coordinate (None to skip)
             z: Z coordinate (None to skip)
             v: V/manipulator coordinate (None to skip)
             speed: Movement speed in mm/min (None to use configured feedrate)
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -438,12 +458,7 @@ class MovementExecutor:
             print(f"Error executing basic move: {e}")
             return False
 
-    def execute_move_to_sample_tray(
-        self,
-        x: float,
-        y: float,
-        z: float
-    ) -> bool:
+    def execute_move_to_sample_tray(self, x: float, y: float, z: float) -> bool:
         """
         Move the hardness tester to a sample tray ready coordinate.
 
@@ -516,7 +531,9 @@ class MovementExecutor:
             f"probed_top_z={probed_top_z})"
         )
         if hardness_tester is None:
-            self.last_hardness_error = "Hardness tester instance was not provided for OCR."
+            self.last_hardness_error = (
+                "Hardness tester instance was not provided for OCR."
+            )
             return True
 
         reading = hardness_tester.read_display(
@@ -529,8 +546,11 @@ class MovementExecutor:
         self.last_hardness_error = sample_error
         if image_save_path is not None:
             from pathlib import Path as _Path
+
             p = _Path(image_save_path)
-            self.last_hardness_image_path = str(image_save_path) if p.is_file() else None
+            self.last_hardness_image_path = (
+                str(image_save_path) if p.is_file() else None
+            )
         return True
 
     def execute_hardness_turn_on(
@@ -541,7 +561,9 @@ class MovementExecutor:
         release_angle: int = None,
     ) -> bool:
         """Press and release the power button on the specified Shore tester."""
-        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "turn_on")
+        return self._actuate_servo(
+            mode, servo_channel, press_angle, release_angle, "turn_on"
+        )
 
     def execute_hardness_turn_off(
         self,
@@ -551,7 +573,9 @@ class MovementExecutor:
         release_angle: int = None,
     ) -> bool:
         """Press and release the power button on the specified Shore tester (to turn off)."""
-        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "turn_off")
+        return self._actuate_servo(
+            mode, servo_channel, press_angle, release_angle, "turn_off"
+        )
 
     def execute_hardness_zero(
         self,
@@ -561,7 +585,9 @@ class MovementExecutor:
         release_angle: int = None,
     ) -> bool:
         """Press and release the zero button on the specified Shore tester."""
-        return self._actuate_servo(mode, servo_channel, press_angle, release_angle, "zero")
+        return self._actuate_servo(
+            mode, servo_channel, press_angle, release_angle, "zero"
+        )
 
     def _actuate_servo(
         self,
@@ -597,7 +623,6 @@ class MovementExecutor:
             print(f"Error actuating servo (mode={mode}, action={action}): {e}")
             return False
 
-
     def execute_home_all(self, registry) -> bool:
         """Home all axes and return to global_ready position.
 
@@ -625,7 +650,17 @@ class MovementExecutor:
                 x = _to_float(coords.x)
                 y = _to_float(coords.y)
                 z = _to_float(z_height)
-                v = coords.v if (coords.v is not None and (not isinstance(coords.v, str) or not coords.v.startswith("PLACEHOLDER"))) else None
+                v = (
+                    coords.v
+                    if (
+                        coords.v is not None
+                        and (
+                            not isinstance(coords.v, str)
+                            or not coords.v.startswith("PLACEHOLDER")
+                        )
+                    )
+                    else None
+                )
 
                 if x is not None or y is not None or z is not None or v is not None:
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=self._feedrate)
@@ -633,7 +668,7 @@ class MovementExecutor:
         except Exception as e:
             print(f"Error homing all axes: {e}")
             return False
-    
+
     def execute_pickup_tool(
         self,
         tool,
@@ -720,10 +755,10 @@ class MovementExecutor:
         except Exception as e:
             print(f"Error parking tool: {e}")
             return False
-    
+
     def execute_home_xyz(self) -> bool:
         """Home X, Y, Z axes.
-        
+
         Returns:
             True if successful, False otherwise.
         """
@@ -734,7 +769,7 @@ class MovementExecutor:
         except Exception as e:
             print(f"Error homing XYZ axes: {e}")
             return False
-    
+
     def execute_move_to_mold_slot(
         self,
         x: float,
@@ -765,38 +800,36 @@ class MovementExecutor:
             print(f"Error moving to well: {e}")
             print(f"Coordinate: x={x}, y={y}, z={z}, v={v}")
             return False
-    
+
     def execute_move_to_scale(
-        self,
-        ready_x: float,
-        ready_y: float,
-        ready_z: float,
-        ready_v: float
+        self, ready_x: float, ready_y: float, ready_z: float, ready_v: float
     ) -> bool:
         """
         Execute movement to the scale ready location.
-        
+
         Args:
             ready_x: X coordinate of scale ready position (required)
             ready_y: Y coordinate of scale ready position (required)
             ready_z: Z coordinate of scale ready position (required)
             ready_v: V coordinate of scale ready position (required)
-            
+
         Note:
             Z-height safety is enforced by state machine's z_height_policy validation.
             SCALE_READY position requires z_height_policy (typically mold_transfer_safe)
-        
+
         Returns:
             True if successful, False otherwise.
         """
         try:
             feedrate = self._feedrate
-            self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
+            self._machine.move_to(
+                x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
+            )
             return True
         except Exception as e:
             print(f"Error moving to scale ready position: {e}")
             return False
-    
+
     def get_machine_position(self) -> dict:
         """Get current machine position.
 
@@ -805,7 +838,13 @@ class MovementExecutor:
                 response (science_jubilee returns None on HTTP failure, which
                 surfaces as TypeError or AttributeError inside get_position).
         """
-        _DUET_COMM_ERRORS = (TypeError, AttributeError, ConnectionError, TimeoutError, OSError)
+        _DUET_COMM_ERRORS = (
+            TypeError,
+            AttributeError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        )
         try:
             pos = self._machine.get_position()
         except _DUET_COMM_ERRORS as exc:
@@ -817,15 +856,15 @@ class MovementExecutor:
                 "Failed to read machine position: get_position() returned None"
             )
         return pos
-    
+
     def get_machine_axes_homed(self) -> list:
         """Get list of which axes are homed."""
-        return getattr(self._machine, 'axes_homed', [False, False, False, False])
+        return getattr(self._machine, "axes_homed", [False, False, False, False])
 
     def wait_for_moves_to_finish(self) -> None:
         """
         Wait for all buffered moves to complete execution.
-        
+
         Executes the M400 G-code command, which blocks until all previously
         buffered moves in the machine's internal buffer have been executed.
         This ensures the Python program does not advance past the physical
@@ -834,38 +873,36 @@ class MovementExecutor:
         self._machine.gcode("M400")
 
     def execute_move_to_scale_location(
-        self,
-        ready_x: float,
-        ready_y: float,
-        ready_z: float,
-        ready_v: float
+        self, ready_x: float, ready_y: float, ready_z: float, ready_v: float
     ) -> bool:
         """
         Move to the scale ready location.
-        
+
         Moved from JubileeManager._move_to_scale()
-        
+
         Args:
             ready_x: X coordinate of scale ready position (required)
             ready_y: Y coordinate of scale ready position (required)
             ready_z: Z coordinate of scale ready position (required)
             ready_v: V coordinate of scale ready position (required)
-        
+
         Returns:
             True if successful, False otherwise
-            
+
         Note:
             Z-height safety is enforced by state machine's z_height_policy validation.
             SCALE_READY position requires z_height_policy (typically mold_transfer_safe)
         """
         try:
             feedrate = self._feedrate
-            self._machine.move_to(x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate)
+            self._machine.move_to(
+                x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
+            )
             return True
         except Exception as e:
             print(f"Error moving to scale: {e}")
             return False
-    
+
     # ===== JAM DETECTION HELPERS =====
 
     @property
@@ -908,10 +945,7 @@ class MovementExecutor:
 
     # ===== POWDER FILL =====
 
-    def execute_fill_powder(
-        self,
-        target_weight: float
-    ) -> bool:
+    def execute_fill_powder(self, target_weight: float) -> bool:
         """
         Fill mold with powder using the trickler.
 
@@ -931,27 +965,27 @@ class MovementExecutor:
         """
         cfg = ConfigLoader()
 
-        flow_alpha        = cfg.get_trickler_flow_ema_alpha()
-        yield_alpha       = cfg.get_trickler_yield_ema_alpha()
-        jam_threshold     = cfg.get_trickler_jam_yield_threshold()
-        jam_iter_limit    = cfg.get_trickler_jam_iter_threshold()
-        max_step          = cfg.get_trickler_max_step_size_mm()
-        min_step          = cfg.get_trickler_min_step_size_mm()
-        warmup_steps      = cfg.get_trickler_warmup_steps()
-        warmup_max_step   = cfg.get_trickler_warmup_max_step_mm()
-        coarse_pct        = cfg.get_trickler_coarse_threshold_pct()
-        finish_pct        = cfg.get_trickler_finish_threshold_pct()
-        coarse_tgt_steps  = cfg.get_trickler_coarse_target_steps()
-        coarse_feedrate   = cfg.get_trickler_coarse_feedrate()
-        fine_feedrate     = cfg.get_trickler_fine_feedrate()
-        coarse_vib_amp    = cfg.get_trickler_coarse_vibration_amplitude()
-        fine_vib_amp      = cfg.get_trickler_fine_vibration_amplitude()
-        max_dribble_step  = cfg.get_trickler_max_dribble_step_mm()
+        flow_alpha = cfg.get_trickler_flow_ema_alpha()
+        yield_alpha = cfg.get_trickler_yield_ema_alpha()
+        jam_threshold = cfg.get_trickler_jam_yield_threshold()
+        jam_iter_limit = cfg.get_trickler_jam_iter_threshold()
+        max_step = cfg.get_trickler_max_step_size_mm()
+        min_step = cfg.get_trickler_min_step_size_mm()
+        warmup_steps = cfg.get_trickler_warmup_steps()
+        warmup_max_step = cfg.get_trickler_warmup_max_step_mm()
+        coarse_pct = cfg.get_trickler_coarse_threshold_pct()
+        finish_pct = cfg.get_trickler_finish_threshold_pct()
+        coarse_tgt_steps = cfg.get_trickler_coarse_target_steps()
+        coarse_feedrate = cfg.get_trickler_coarse_feedrate()
+        fine_feedrate = cfg.get_trickler_fine_feedrate()
+        coarse_vib_amp = cfg.get_trickler_coarse_vibration_amplitude()
+        fine_vib_amp = cfg.get_trickler_fine_vibration_amplitude()
+        max_dribble_step = cfg.get_trickler_max_dribble_step_mm()
 
         coarse_feedrate_str = f"F{coarse_feedrate}"
-        fine_feedrate_str   = f"F{fine_feedrate}"
-        coarse_threshold    = coarse_pct * target_weight
-        finish_threshold    = finish_pct * target_weight
+        fine_feedrate_str = f"F{fine_feedrate}"
+        coarse_threshold = coarse_pct * target_weight
+        finish_threshold = finish_pct * target_weight
 
         streaming_started = False
         try:
@@ -960,27 +994,27 @@ class MovementExecutor:
             self._scale.tare()
             initial_weight = self._scale.get_weight(stable=True)
             print(f"[Fill] Initial weight after tare: {initial_weight:.4f}g")
-            print(f"[Fill] Target: {target_weight:.4f}g  coarse: {coarse_threshold:.4f}g  finish: {finish_threshold:.4f}g")
+            print(
+                f"[Fill] Target: {target_weight:.4f}g  coarse: {coarse_threshold:.4f}g  finish: {finish_threshold:.4f}g"
+            )
 
             self._scale.start_streaming()
             streaming_started = True
 
             self._machine.gcode("G92 W0")  # reset trickler axis
-            self._machine.gcode("G91")     # relative positioning
+            self._machine.gcode("G91")  # relative positioning
 
             # Vibration stays on for the whole fill
             current_vib_amp = coarse_vib_amp
             self._set_trickler_vibration(current_vib_amp)
 
             # EMA state (both in g/mm, updated once per motor step)
-            flow_ema          = 0.0
-            yield_ema         = 0.0
-            step_count        = 0
-            stagnant_count    = 0
-            motor_has_moved   = False
+            flow_ema = 0.0
+            yield_ema = 0.0
+            step_count = 0
+            stagnant_count = 0
+            motor_has_moved = False
             threshold_crossed = False
-
-            previous_weight = self._scale.get_stream_weight()
 
             while True:
                 current_weight = self._scale.get_stream_weight()
@@ -990,7 +1024,9 @@ class MovementExecutor:
                     if not threshold_crossed:
                         threshold_crossed = True
                         current_vib_amp = fine_vib_amp
-                        print(f"[Fill] Coarse threshold crossed at {current_weight:.4f}g")
+                        print(
+                            f"[Fill] Coarse threshold crossed at {current_weight:.4f}g"
+                        )
                         self._set_trickler_vibration(current_vib_amp)
 
                     # Dynamic micro-burst: size calculated from remaining
@@ -1010,10 +1046,10 @@ class MovementExecutor:
                     motor_has_moved = True
 
                     weight_after_step = self._scale.get_stream_weight()
-                    weight_gained     = max(0.0, weight_after_step - weight_before_step)
-                    step_yield        = weight_gained / step_size  # g/mm
+                    weight_gained = max(0.0, weight_after_step - weight_before_step)
+                    step_yield = weight_gained / step_size  # g/mm
 
-                    flow_ema  = flow_alpha  * step_yield + (1 - flow_alpha)  * flow_ema
+                    flow_ema = flow_alpha * step_yield + (1 - flow_alpha) * flow_ema
                     yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
                     step_count += 1
 
@@ -1024,21 +1060,21 @@ class MovementExecutor:
                         stagnant_count = 0
                     if stagnant_count >= jam_iter_limit:
                         self._handle_jam()  # turns vibration off; blocks until cleared
-                        stagnant_count  = 0
-                        flow_ema        = 0.0
-                        yield_ema       = 0.0
+                        stagnant_count = 0
+                        flow_ema = 0.0
+                        yield_ema = 0.0
                         self._set_trickler_vibration(current_vib_amp)
-                        previous_weight = self._scale.get_stream_weight()
                         continue
 
-                    previous_weight = weight_after_step
-                    current_weight  = weight_after_step
+                    current_weight = weight_after_step
 
                     # Check for target reached.  Stop streaming so that the
                     # blocking S (stable weight) command does not conflict with
                     # the SIR stream; no sleep needed since S blocks until stable.
                     if current_weight >= finish_threshold:
-                        self._set_trickler_vibration(0.0)  # off for stable scale read only
+                        self._set_trickler_vibration(
+                            0.0
+                        )  # off for stable scale read only
                         self._scale.stop_streaming()
                         streaming_started = False
                         final_weight = self._scale.get_weight(stable=True)
@@ -1048,20 +1084,24 @@ class MovementExecutor:
                             self.last_fill_weight = final_weight
                             break
                         else:
-                            print(f"[Fill] Stable weight {final_weight:.4f}g below threshold, continuing...")
+                            print(
+                                f"[Fill] Stable weight {final_weight:.4f}g below threshold, continuing..."
+                            )
                             self._scale.start_streaming()
                             streaming_started = True
                             self._set_trickler_vibration(current_vib_amp)
-                            previous_weight = self._scale.get_stream_weight()
 
                 else:
                     # ── Coarse phase ──────────────────────────────────────
                     # Determine step size using yield EMA once warmed up.
                     if step_count < warmup_steps or yield_ema == 0.0:
                         # Linear fallback during warmup, capped conservatively.
-                        progress  = max(0.0, current_weight / coarse_threshold)
+                        progress = max(0.0, current_weight / coarse_threshold)
                         step_size = max_step - (max_step - min_step) * progress
-                        step_size = min(step_size, warmup_max_step if step_count < warmup_steps else max_step)
+                        step_size = min(
+                            step_size,
+                            warmup_max_step if step_count < warmup_steps else max_step,
+                        )
                     else:
                         target_remaining = coarse_threshold - current_weight
                         step_size = target_remaining / (yield_ema * coarse_tgt_steps)
@@ -1073,10 +1113,10 @@ class MovementExecutor:
                     motor_has_moved = True
 
                     weight_after_step = self._scale.get_stream_weight()
-                    weight_gained     = max(0.0, weight_after_step - weight_before_step)
-                    step_yield        = weight_gained / step_size  # g/mm
+                    weight_gained = max(0.0, weight_after_step - weight_before_step)
+                    step_yield = weight_gained / step_size  # g/mm
 
-                    flow_ema  = flow_alpha  * step_yield + (1 - flow_alpha)  * flow_ema
+                    flow_ema = flow_alpha * step_yield + (1 - flow_alpha) * flow_ema
                     yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
                     step_count += 1
 
@@ -1088,14 +1128,11 @@ class MovementExecutor:
                             stagnant_count = 0
                         if stagnant_count >= jam_iter_limit:
                             self._handle_jam()
-                            stagnant_count  = 0
-                            flow_ema        = 0.0
-                            yield_ema       = 0.0
+                            stagnant_count = 0
+                            flow_ema = 0.0
+                            yield_ema = 0.0
                             self._set_trickler_vibration(current_vib_amp)
-                            previous_weight = self._scale.get_stream_weight()
                             continue
-
-                    previous_weight = weight_after_step
 
             return True
 
@@ -1113,7 +1150,7 @@ class MovementExecutor:
                 self._machine.gcode("G90")  # restore absolute positioning
             except Exception:
                 pass
-        
+
     def execute_open_powder_dispenser_cover(self) -> bool:
         """
         Placeholder for powder dispenser cover open actuation.
@@ -1138,79 +1175,77 @@ class MovementExecutor:
     ) -> bool:
         """
         Perform homing for the tamper axis (V-axis).
-        
+
         This homing process can be performed while holding a mold without a top piston.
         The homing uses the mold itself as a reference:
         - Start position: v=2 (tamper inserted into mold)
         - End position: v=-7 (tamper touching bottom of mold)
-        
+
         This establishes accurate positioning by using the mold bottom as a reference point.
-        
+
         Moved from Manipulator.home_tamper()
-        
+
         Args:
             tamper_axis: Axis letter for tamper (default 'V')
-            
+
         Raises:
             RuntimeError: If axes are not properly homed before attempting tamper homing
         """
         # Check if axes are homed
-        axes_homed = getattr(self._machine, 'axes_homed', [False, False, False, False])
-        axis_names = ['X', 'Y', 'Z', 'U']
+        axes_homed = getattr(self._machine, "axes_homed", [False, False, False, False])
+        axis_names = ["X", "Y", "Z", "U"]
         not_homed = [axis_names[i] for i in range(4) if not axes_homed[i]]
-        
+
         if not_homed:
             print(f"Axes not homed: {', '.join(not_homed)}")
             raise RuntimeError(
                 f"X, Y, Z, and U axes must be homed before homing the tamper "
                 f"({tamper_axis}) axis."
             )
-        
+
         # Perform homing for tamper axis
         self._machine.gcode(f'M98 P"home{tamper_axis.lower()}.g"')
-        
+
         print(f"Homing complete. {tamper_axis} axis position reset to 0.0mm")
         return True
-    
-    def execute_home_manipulator(
-        self,
-        manipulator_axis: str
-    ) -> bool:
+
+    def execute_home_manipulator(self, manipulator_axis: str) -> bool:
         """
         Home the manipulator axis (V).
-        
+
         Args:
             manipulator_axis: Axis letter for manipulator (default 'V')
-            
+
         Returns:
             True if successful, False otherwise
         """
         try:
             # Perform homing for manipulator axis
             self._machine.gcode(f'M98 P"home{manipulator_axis.lower()}.g"')
-            print(f"Manipulator ({manipulator_axis}) homing complete. Position reset to 0.0mm")
+            print(
+                f"Manipulator ({manipulator_axis}) homing complete. Position reset to 0.0mm"
+            )
             return True
         except Exception as e:
             print(f"Error homing manipulator: {e}")
             return False
-    
-    def execute_home_trickler(
-        self,
-        trickler_axis: str = 'W'
-    ) -> bool:
+
+    def execute_home_trickler(self, trickler_axis: str = "W") -> bool:
         """
         Home the trickler axis (W).
-        
+
         Args:
             trickler_axis: Axis letter for trickler (default 'W')
-            
+
         Returns:
             True if successful, False otherwise
         """
         try:
             # Trickler can be homed at any time, no prerequisites
             self._machine.gcode(f'M98 P"home{trickler_axis.lower()}.g"')
-            print(f"Trickler ({trickler_axis}) homing complete. Position reset to 0.0mm")
+            print(
+                f"Trickler ({trickler_axis}) homing complete. Position reset to 0.0mm"
+            )
             return True
         except Exception as e:
             print(f"Error homing trickler: {e}")

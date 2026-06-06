@@ -1,34 +1,10 @@
-import cv2
-import glob
-import os
-import re
-import time
-from collections import Counter
-from pathlib import Path
-from typing import TYPE_CHECKING
-import numpy as np
-from science_jubilee.tools.Tool import Tool
-
-if TYPE_CHECKING:
-    from src.ConfigLoader import HardnessTesterConfig
-
-# Optional package for creating animated debug GIFs
-try:
-    import imageio.v2 as imageio
-    IMAGEIO_AVAILABLE = True
-except ImportError:
-    IMAGEIO_AVAILABLE = False
-    print("WARNING: imageio not available. Debug GIF generation is disabled.")
-
-
-"""
-SEGMENT-BASED LCD READING FOR 7-SEGMENT DISPLAYS
+"""Segment-based LCD reading for 7-segment displays.
 
 INSTALLATION:
 Required:
     pip install opencv-python
     pip install imageio  # For bundling debug images into animated GIFs
-    
+
 Optional (Raspberry Pi):
     pip install opencv-python  # For camera capture
 
@@ -41,36 +17,69 @@ Phase 1: Image Acquisition & Advanced Preprocessing
     - Direct camera capture with automatic camera settings
     - Grayscale conversion for primary preprocessing
     - CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    
+
 Phase 2: Segment Analysis Logic
     - Extract individual digit ROIs
     - Map 7 segments per digit (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
     - Count active pixels in each segment
-    
+
 Phase 3: Recognition via Lookup Table
     - Map segment patterns to digits using predefined lookup table
 """
+
+import glob
+import os
+import re
+import time
+from collections import Counter
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import cv2
+import numpy as np
+from science_jubilee.tools.Tool import Tool
+
+if TYPE_CHECKING:
+    from src.ConfigLoader import HardnessTesterConfig
+
+# Optional package for creating animated debug GIFs
+try:
+    import imageio.v2 as imageio
+
+    IMAGEIO_AVAILABLE = True
+except ImportError:
+    IMAGEIO_AVAILABLE = False
+    print("WARNING: imageio not available. Debug GIF generation is disabled.")
+
 
 class HardnessTester(Tool):
     """
     LCD 7-Segment Display Reader using segment detection instead of OCR.
     """
-    
+
     # Segment order: (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
     DIGITS_LOOKUP = {
-        (0, 0, 0, 0, 0, 0, 0): 'OFF',
-        (1, 1, 1, 0, 1, 1, 1): '0',
-        (0, 0, 1, 0, 0, 1, 0): '1',
-        (1, 0, 1, 1, 1, 0, 1): '2',
-        (1, 0, 1, 1, 0, 1, 1): '3',
-        (0, 1, 1, 1, 0, 1, 0): '4',
-        (1, 1, 0, 1, 0, 1, 1): '5',
-        (1, 1, 0, 1, 1, 1, 1): '6',
-        (1, 0, 1, 0, 0, 1, 0): '7',
-        (1, 1, 1, 1, 1, 1, 1): '8',
-        (1, 1, 1, 1, 0, 1, 1): '9',
+        (0, 0, 0, 0, 0, 0, 0): "OFF",
+        (1, 1, 1, 0, 1, 1, 1): "0",
+        (0, 0, 1, 0, 0, 1, 0): "1",
+        (1, 0, 1, 1, 1, 0, 1): "2",
+        (1, 0, 1, 1, 0, 1, 1): "3",
+        (0, 1, 1, 1, 0, 1, 0): "4",
+        (1, 1, 0, 1, 0, 1, 1): "5",
+        (1, 1, 0, 1, 1, 1, 1): "6",
+        (1, 0, 1, 0, 0, 1, 0): "7",
+        (1, 1, 1, 1, 1, 1, 1): "8",
+        (1, 1, 1, 1, 0, 1, 1): "9",
     }
-    SEGMENT_ORDER = ('top', 'top_left', 'top_right', 'middle', 'bottom_left', 'bottom_right', 'bottom')
+    SEGMENT_ORDER = (
+        "top",
+        "top_left",
+        "top_right",
+        "middle",
+        "bottom_left",
+        "bottom_right",
+        "bottom",
+    )
 
     def __init__(
         self,
@@ -97,7 +106,7 @@ class HardnessTester(Tool):
     ):
         """
         Initialize the LCD reader.
-        
+
         Args:
             num_digits: Number of digits in the display (default: 4)
             cam_usb_path: Filesystem path to the camera USB device
@@ -169,18 +178,18 @@ class HardnessTester(Tool):
 
         # Integer cv2 camera index resolved from cam_usb_path at open time.
         self._resolved_cam_index: int | None = None
-        
+
         # Digit ROI boundaries (will be set via calibration or manually)
         # Format: [(x1, y1, x2, y2), ...] for each digit
         self.digit_rois = None
-        
+
         # Segment polygons (absolute pixel coordinates)
         # Format: [{segment_name: [(x, y), ...], ...}, ...] for each digit
         self.segment_points = None
-        
+
         # Threshold for segment detection (proportion of pixels that must be active)
         self.segment_threshold = 0.5
-        
+
         # cv2.VideoCapture handle (opened on demand)
         self.cap = None
 
@@ -230,7 +239,9 @@ class HardnessTester(Tool):
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
-        result = self.state_machine.validated_hardness_turn_on(mode=self.tester_mode, hardness_tester=self)
+        result = self.state_machine.validated_hardness_turn_on(
+            mode=self.tester_mode, hardness_tester=self
+        )
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness turn-on action failed")
         return True
@@ -241,7 +252,9 @@ class HardnessTester(Tool):
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
-        result = self.state_machine.validated_hardness_turn_off(mode=self.tester_mode, hardness_tester=self)
+        result = self.state_machine.validated_hardness_turn_off(
+            mode=self.tester_mode, hardness_tester=self
+        )
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness turn-off action failed")
         return True
@@ -252,12 +265,13 @@ class HardnessTester(Tool):
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
-        result = self.state_machine.validated_hardness_zero(mode=self.tester_mode, hardness_tester=self)
+        result = self.state_machine.validated_hardness_zero(
+            mode=self.tester_mode, hardness_tester=self
+        )
         if not result.valid:
             raise RuntimeError(result.reason or "Hardness zero action failed")
         return True
 
-    @staticmethod
     def is_display_zero(self, debug=False, debug_prefix="display_zero") -> bool:
         """
         Run a consensus display capture and check whether value is 0000-0005.
@@ -286,14 +300,20 @@ class HardnessTester(Tool):
         """
         reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
         if reading is None:
-            raise RuntimeError("Display state is indeterminate: no consensus reading available")
+            raise RuntimeError(
+                "Display state is indeterminate: no consensus reading available"
+            )
         if reading == "OFF":
             return False
         if reading.isdigit():
             return True
-        raise RuntimeError(f"Display state is indeterminate: unexpected reading '{reading}'")
+        raise RuntimeError(
+            f"Display state is indeterminate: unexpected reading '{reading}'"
+        )
 
-    def _parse_hardness_reading(self, reading: str | None) -> tuple[float | None, str | None]:
+    def _parse_hardness_reading(
+        self, reading: str | None
+    ) -> tuple[float | None, str | None]:
         """Convert a consensus LCD string to a hardness float."""
         if reading is None:
             return None, "No consensus OCR reading was captured."
@@ -333,7 +353,9 @@ class HardnessTester(Tool):
         if not tray_result.valid:
             raise RuntimeError(tray_result.reason or "Move to sample tray failed")
 
-        sample_result = state_machine.validated_move_to_hardness_sample(tray_index, sample_id)
+        sample_result = state_machine.validated_move_to_hardness_sample(
+            tray_index, sample_id
+        )
         if not sample_result.valid:
             raise RuntimeError(sample_result.reason or "Move to hardness sample failed")
 
@@ -356,38 +378,37 @@ class HardnessTester(Tool):
             "image_path": image_path,
         }
 
-
     def _default_segment_templates(self):
         """
         Define default segment polygons as proportions of a digit ROI.
         Each segment is represented as a polygon.
-        
+
         Returns:
             Dictionary mapping segment names to point lists [(x, y), ...]
         """
         return {
             # Horizontal segments: trapezoids with outer face larger.
-            'top': [
+            "top": [
                 (0.06, 0.02),
                 (0.94, 0.02),
                 (0.82, 0.12),
                 (0.18, 0.12),
             ],
             # Vertical segments: trapezoids with outer face larger.
-            'top_left': [
+            "top_left": [
                 (0.03, 0.06),
                 (0.22, 0.12),
                 (0.18, 0.44),
                 (0.00, 0.49),
             ],
-            'top_right': [
+            "top_right": [
                 (0.97, 0.06),
                 (1.00, 0.49),
                 (0.82, 0.44),
                 (0.78, 0.12),
             ],
             # Middle segment: two trapezoids merged (long faces inward).
-            'middle': [
+            "middle": [
                 (0.10, 0.50),
                 (0.26, 0.43),
                 (0.74, 0.43),
@@ -395,19 +416,19 @@ class HardnessTester(Tool):
                 (0.74, 0.57),
                 (0.26, 0.57),
             ],
-            'bottom_left': [
+            "bottom_left": [
                 (0.00, 0.51),
                 (0.18, 0.56),
                 (0.22, 0.88),
                 (0.03, 0.95),
             ],
-            'bottom_right': [
+            "bottom_right": [
                 (1.00, 0.51),
                 (0.97, 0.95),
                 (0.78, 0.88),
                 (0.82, 0.56),
             ],
-            'bottom': [
+            "bottom": [
                 (0.18, 0.88),
                 (0.82, 0.88),
                 (0.94, 0.98),
@@ -434,11 +455,13 @@ class HardnessTester(Tool):
             for segment_name in self.SEGMENT_ORDER:
                 points = []
                 for px, py in templates[segment_name]:
-                    points.append((x1 + int(round(px * width)), y1 + int(round(py * height))))
+                    points.append(
+                        (x1 + int(round(px * width)), y1 + int(round(py * height)))
+                    )
                 digit_segments[segment_name] = points
             segment_points.append(digit_segments)
         return segment_points
-    
+
     def _init_camera(self):
         """Initialize cv2.VideoCapture by resolving cam_usb_path to a device index.
 
@@ -510,7 +533,7 @@ class HardnessTester(Tool):
             return int(str(usb_path).strip())
         try:
             real_path = os.path.realpath(usb_path)
-            m = re.search(r'/dev/video(\d+)$', real_path)
+            m = re.search(r"/dev/video(\d+)$", real_path)
             if m:
                 return int(m.group(1))
         except (OSError, ValueError):
@@ -534,14 +557,14 @@ class HardnessTester(Tool):
             cap.release()
         return available
 
-    def capture_image(self, save=False, output_path='lcd_capture.jpg'):
+    def capture_image(self, save=False, output_path="lcd_capture.jpg"):
         """
         Capture an image from the camera.
-        
+
         Args:
             save: Whether to save the captured image
             output_path: Path to save the image
-            
+
         Returns:
             numpy array (BGR format) or None if capture failed
         """
@@ -593,35 +616,37 @@ class HardnessTester(Tool):
     def preprocess_frame(self, frame, debug=False, debug_prefix="debug"):
         """
         Phase 1: Image Acquisition & Advanced Preprocessing
-        
+
         Converts frame to grayscale and applies CLAHE to enhance LCD segment
         contrast.
-        
+
         Args:
             frame: Input BGR frame from camera
             debug: Whether to save debug images
             debug_prefix: Prefix for debug image filenames
-            
+
         Returns:
             Binary image with enhanced LCD segments
         """
         if frame is None:
             raise ValueError("Input frame is None")
-        
+
         if debug:
             cv2.imwrite(f"{debug_prefix}_step1_original.png", frame)
-        
+
         # Step 1: Convert BGR to grayscale (primary path)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step2_gray.png", gray)
-        
+
         # Step 2 (optional): Unsharp masking to recover blurred edges
         # sharpened = original + strength * (original - blurred)
         if self.sharpen_strength > 0.0:
             radius = self.sharpen_blur_radius | 1  # ensure odd
             blurred = cv2.GaussianBlur(gray, (radius, radius), 0)
-            gray = cv2.addWeighted(gray, 1.0 + self.sharpen_strength, blurred, -self.sharpen_strength, 0)
+            gray = cv2.addWeighted(
+                gray, 1.0 + self.sharpen_strength, blurred, -self.sharpen_strength, 0
+            )
             if debug:
                 cv2.imwrite(f"{debug_prefix}_step3_sharpened.png", gray)
 
@@ -630,42 +655,48 @@ class HardnessTester(Tool):
         enhanced = clahe.apply(gray)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step4_clahe.png", enhanced)
-        
+
         # Step 4: Threshold to create binary image
         # Compute Otsu's threshold, then apply a bias to reduce sensitivity to
         # localized dark artifacts (e.g. camera lens reflection in the center).
-        otsu_thresh, _ = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        otsu_thresh, _ = cv2.threshold(
+            enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
         adjusted_thresh = max(0, int(otsu_thresh) - self.threshold_bias)
         _, binary = cv2.threshold(enhanced, adjusted_thresh, 255, cv2.THRESH_BINARY)
         if debug:
             cv2.imwrite(f"{debug_prefix}_step5_binary.png", binary)
-        
+
         # Step 5: Morphological operations to clean up noise
         kernel = cv2.getStructuringElement(
             cv2.MORPH_RECT,
             (self.morph_kernel_size, self.morph_kernel_size),
         )
         if self.morph_open:
-            cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=self.morph_iterations)
+            cleaned = cv2.morphologyEx(
+                binary, cv2.MORPH_OPEN, kernel, iterations=self.morph_iterations
+            )
         else:
             cleaned = binary
-        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=self.morph_iterations)
+        cleaned = cv2.morphologyEx(
+            cleaned, cv2.MORPH_CLOSE, kernel, iterations=self.morph_iterations
+        )
         if debug:
             cv2.imwrite(f"{debug_prefix}_step6_cleaned.png", cleaned)
-        
+
         return cleaned
 
     def set_digit_rois(self, rois):
         """
         Set the ROI boundaries for each digit.
-        
+
         Args:
             rois: List of tuples [(x1, y1, x2, y2), ...] for each digit
         """
         if len(rois) != self.num_digits:
             raise ValueError(f"Expected {self.num_digits} ROIs, got {len(rois)}")
         self.digit_rois = rois
-    
+
     def _save_segment_roi_debug_overlay(self, binary_frame, debug_prefix):
         """
         Save an overlay image showing all segment ROIs on the final binary frame.
@@ -687,7 +718,9 @@ class HardnessTester(Tool):
                 polygon = self._normalize_polygon_point_order(points)
                 if polygon is None:
                     continue
-                cv2.polylines(overlay, [polygon], isClosed=True, color=(0, 255, 0), thickness=1)
+                cv2.polylines(
+                    overlay, [polygon], isClosed=True, color=(0, 255, 0), thickness=1
+                )
 
         cv2.imwrite(f"{debug_prefix}_step7_segment_rois.png", overlay)
 
@@ -759,18 +792,18 @@ class HardnessTester(Tool):
         gif_path = f"{debug_prefix}_debug.gif"
         imageio.mimsave(gif_path, frames, duration=durations, loop=0)
         print(f"Debug GIF saved to {gif_path}")
-    
+
     def analyze_segment(self, binary_frame, digit_idx, segment_name):
         """
         Phase 3: Segment Analysis Logic
-        
+
         Analyzes a single segment within a digit ROI to determine if it's active.
-        
+
         Args:
             binary_frame: Full preprocessed binary image
             digit_idx: Index of digit in display
             segment_name: Name of the segment ('top', 'middle', etc.)
-            
+
         Returns:
             1 if segment is active (ON), 0 if inactive (OFF)
         """
@@ -799,44 +832,44 @@ class HardnessTester(Tool):
         # Count dark (zero) pixels as active segment pixels.
         non_zero_pixels = cv2.countNonZero(segment_masked)
         active_pixels = total_pixels - non_zero_pixels
-        
+
         # Return 1 if more than threshold percentage are active
         return 1 if (active_pixels / total_pixels) > self.segment_threshold else 0
-    
+
     def recognize_digit(self, binary_frame, digit_idx, debug=False):
         """
         Phase 4: Recognition via Lookup Table
-        
+
         Recognizes a single digit by analyzing all 7 segments.
-        
+
         Args:
             binary_frame: Full preprocessed binary image
             digit_idx: Index of digit in display
             debug: Whether to print debug information
-            
+
         Returns:
             Recognized digit as string or '?' if not recognized
         """
         if binary_frame is None:
-            return '?'
-        
+            return "?"
+
         # Analyze all 7 segments in order
         segments = (
-            self.analyze_segment(binary_frame, digit_idx, 'top'),
-            self.analyze_segment(binary_frame, digit_idx, 'top_left'),
-            self.analyze_segment(binary_frame, digit_idx, 'top_right'),
-            self.analyze_segment(binary_frame, digit_idx, 'middle'),
-            self.analyze_segment(binary_frame, digit_idx, 'bottom_left'),
-            self.analyze_segment(binary_frame, digit_idx, 'bottom_right'),
-            self.analyze_segment(binary_frame, digit_idx, 'bottom'),
+            self.analyze_segment(binary_frame, digit_idx, "top"),
+            self.analyze_segment(binary_frame, digit_idx, "top_left"),
+            self.analyze_segment(binary_frame, digit_idx, "top_right"),
+            self.analyze_segment(binary_frame, digit_idx, "middle"),
+            self.analyze_segment(binary_frame, digit_idx, "bottom_left"),
+            self.analyze_segment(binary_frame, digit_idx, "bottom_right"),
+            self.analyze_segment(binary_frame, digit_idx, "bottom"),
         )
-        
+
         if debug:
             print(f"  Segment pattern: {segments}")
-        
+
         # Look up digit in lookup table
-        return self.DIGITS_LOOKUP.get(segments, '?')
-    
+        return self.DIGITS_LOOKUP.get(segments, "?")
+
     def _read_display_from_frame(self, frame, debug=False, debug_prefix="debug"):
         """Decode the LCD value from a single BGR frame."""
         if frame is None:
@@ -844,7 +877,7 @@ class HardnessTester(Tool):
 
         # Preprocess frame
         binary = self.preprocess_frame(frame, debug=debug, debug_prefix=debug_prefix)
-        
+
         # Calibration ROIs are required (auto-detection disabled)
         if self.segment_points is None:
             print("No calibrated segment points loaded. Please calibrate first.")
@@ -852,7 +885,7 @@ class HardnessTester(Tool):
 
         if debug:
             self._save_segment_roi_debug_overlay(binary, debug_prefix)
-        
+
         # Read each digit
         result = []
         for i in range(self.num_digits):
@@ -864,12 +897,14 @@ class HardnessTester(Tool):
         if debug:
             self._save_debug_gif(debug_prefix)
 
-        return ''.join(result)
+        return "".join(result)
 
-    def read_display(self, frame=None, debug=False, debug_prefix="debug", image_save_path=None):
+    def read_display(
+        self, frame=None, debug=False, debug_prefix="debug", image_save_path=None
+    ):
         """
         Complete pipeline: Read all digits from LCD display.
-        
+
         Args:
             frame: Input BGR frame. If provided, decode once and return result.
                    If None, collect 10 readings and return strict majority.
@@ -880,12 +915,14 @@ class HardnessTester(Tool):
                 consensus result is saved; if consensus fails the last captured
                 frame is used as a fallback.  Parent directories are created
                 automatically.  Has no effect when ``frame`` is supplied.
-            
+
         Returns:
             String with recognized digits or None if reading failed
         """
         if frame is not None:
-            return self._read_display_from_frame(frame, debug=debug, debug_prefix=debug_prefix)
+            return self._read_display_from_frame(
+                frame, debug=debug, debug_prefix=debug_prefix
+            )
 
         frames = self._collect_timed_frames(frame_count=10, total_duration_s=1.0)
         if frames is None:
@@ -915,13 +952,11 @@ class HardnessTester(Tool):
                     (f for f, r in zip(frames, read_results) if r == consensus_result),
                     frames[-1],
                 )
-                import cv2 as _cv2
-                from pathlib import Path as _Path
-                _Path(image_save_path).parent.mkdir(parents=True, exist_ok=True)
-                _cv2.imwrite(str(image_save_path), save_frame)
+                Path(image_save_path).parent.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(image_save_path), save_frame)
             return consensus_result
         return None
-    
+
     def calibrate(
         self,
         frame=None,
@@ -999,53 +1034,53 @@ class HardnessTester(Tool):
 
         # --- 3. Segment colours ---------------------------------------------
         SEG_COLORS = {
-            'top':          (0,   255, 255),
-            'top_left':     (0,   165, 255),
-            'top_right':    (0,   255,   0),
-            'middle':       (255,   0, 255),
-            'bottom_left':  (255, 165,   0),
-            'bottom_right': (0,     0, 255),
-            'bottom':       (255,   0,   0),
+            "top": (0, 255, 255),
+            "top_left": (0, 165, 255),
+            "top_right": (0, 255, 0),
+            "middle": (255, 0, 255),
+            "bottom_left": (255, 165, 0),
+            "bottom_right": (0, 0, 255),
+            "bottom": (255, 0, 0),
         }
 
         # --- 4. Mutable state dict ------------------------------------------
         s = {
-            'phase':       'roi',
-            'digit_idx':   0,
-            'segment_idx': 0,
-            'rois':        [],
-            'pending_roi': None,   # (x1,y1,x2,y2) image-coords, not yet confirmed
-            'drag_origin': None,   # display (x,y) of mouse-down
-            'all_segs':    [],     # [{seg_name: [(x,y),...]}] per digit
-            'cur_pts':     [],     # working vertices for the active segment
-            'default_segs': None, # populated after ROI phase
-            'mouse':       [0, 0],
-            'done':        False,
-            'cancelled':   False,
+            "phase": "roi",
+            "digit_idx": 0,
+            "segment_idx": 0,
+            "rois": [],
+            "pending_roi": None,  # (x1,y1,x2,y2) image-coords, not yet confirmed
+            "drag_origin": None,  # display (x,y) of mouse-down
+            "all_segs": [],  # [{seg_name: [(x,y),...]}] per digit
+            "cur_pts": [],  # working vertices for the active segment
+            "default_segs": None,  # populated after ROI phase
+            "mouse": [0, 0],
+            "done": False,
+            "cancelled": False,
         }
 
         # --- 5. Mouse callback ----------------------------------------------
-        def on_mouse(event, x, y, flags, _param):
-            s['mouse'] = [x, y]
-            if s['phase'] == 'roi':
+        def on_mouse(event, x, y, _flags, _param):
+            s["mouse"] = [x, y]
+            if s["phase"] == "roi":
                 if event == cv2.EVENT_LBUTTONDOWN:
-                    s['drag_origin'] = (x, y)
-                    s['pending_roi'] = None
-                elif event == cv2.EVENT_MOUSEMOVE and s['drag_origin']:
-                    ox, oy = s['drag_origin']
+                    s["drag_origin"] = (x, y)
+                    s["pending_roi"] = None
+                elif event == cv2.EVENT_MOUSEMOVE and s["drag_origin"]:
+                    ox, oy = s["drag_origin"]
                     ix1, iy1 = to_img(min(ox, x), min(oy, y))
                     ix2, iy2 = to_img(max(ox, x), max(oy, y))
-                    s['pending_roi'] = (ix1, iy1, ix2, iy2)
-                elif event == cv2.EVENT_LBUTTONUP and s['drag_origin']:
-                    ox, oy = s['drag_origin']
-                    s['drag_origin'] = None
+                    s["pending_roi"] = (ix1, iy1, ix2, iy2)
+                elif event == cv2.EVENT_LBUTTONUP and s["drag_origin"]:
+                    ox, oy = s["drag_origin"]
+                    s["drag_origin"] = None
                     if abs(x - ox) > 5 and abs(y - oy) > 5:
                         ix1, iy1 = to_img(min(ox, x), min(oy, y))
                         ix2, iy2 = to_img(max(ox, x), max(oy, y))
-                        s['pending_roi'] = (ix1, iy1, ix2, iy2)
-            elif s['phase'] == 'segment':
+                        s["pending_roi"] = (ix1, iy1, ix2, iy2)
+            elif s["phase"] == "segment":
                 if event == cv2.EVENT_LBUTTONDOWN:
-                    s['cur_pts'].append(to_img(x, y))
+                    s["cur_pts"].append(to_img(x, y))
 
         # --- 6. Render function ---------------------------------------------
         def render():
@@ -1054,64 +1089,90 @@ class HardnessTester(Tool):
             canvas[:disp_h] = base
 
             # Confirmed ROIs (green)
-            for i, (x1, y1, x2, y2) in enumerate(s['rois']):
+            for i, (x1, y1, x2, y2) in enumerate(s["rois"]):
                 dx1, dy1 = to_disp(x1, y1)
                 dx2, dy2 = to_disp(x2, y2)
                 cv2.rectangle(canvas, (dx1, dy1), (dx2, dy2), (0, 255, 0), 2)
-                cv2.putText(canvas, f"D{i}", (dx1 + 2, dy1 + 14),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+                cv2.putText(
+                    canvas,
+                    f"D{i}",
+                    (dx1 + 2, dy1 + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
 
-            if s['phase'] == 'roi':
+            if s["phase"] == "roi":
                 # Pending ROI (cyan)
-                if s['pending_roi']:
-                    x1, y1, x2, y2 = s['pending_roi']
+                if s["pending_roi"]:
+                    x1, y1, x2, y2 = s["pending_roi"]
                     dx1, dy1 = to_disp(x1, y1)
                     dx2, dy2 = to_disp(x2, y2)
                     cv2.rectangle(canvas, (dx1, dy1), (dx2, dy2), (0, 255, 255), 2)
-                    cv2.putText(canvas, f"D{s['digit_idx']}", (dx1 + 2, dy1 + 14),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+                    cv2.putText(
+                        canvas,
+                        f"D{s['digit_idx']}",
+                        (dx1 + 2, dy1 + 14),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
                 # Live drag preview
-                if s['drag_origin']:
-                    ox, oy = s['drag_origin']
-                    mx, my = s['mouse']
-                    cv2.rectangle(canvas,
-                                  (min(ox, mx), min(oy, my)),
-                                  (max(ox, mx), max(oy, my)),
-                                  (0, 255, 255), 1)
+                if s["drag_origin"]:
+                    ox, oy = s["drag_origin"]
+                    mx, my = s["mouse"]
+                    cv2.rectangle(
+                        canvas,
+                        (min(ox, mx), min(oy, my)),
+                        (max(ox, mx), max(oy, my)),
+                        (0, 255, 255),
+                        1,
+                    )
                 status = (
                     f"ROI  Digit {s['digit_idx'] + 1}/{self.num_digits} - "
                     "drag to draw box | Enter=confirm | q=quit"
                 )
 
             else:  # segment phase
-                seg_name = self.SEGMENT_ORDER[s['segment_idx']]
+                seg_name = self.SEGMENT_ORDER[s["segment_idx"]]
                 hi_color = SEG_COLORS[seg_name]
-                d_idx = s['digit_idx']
-                def_segs = s['default_segs']
+                d_idx = s["digit_idx"]
+                def_segs = s["default_segs"]
 
                 # Faint outlines for all other segments of this digit
                 if def_segs and d_idx < len(def_segs):
                     for sn in self.SEGMENT_ORDER:
                         if sn == seg_name:
                             continue
-                        pts = (s['all_segs'][d_idx].get(sn)
-                               if d_idx < len(s['all_segs']) else None)
+                        pts = (
+                            s["all_segs"][d_idx].get(sn)
+                            if d_idx < len(s["all_segs"])
+                            else None
+                        )
                         src = pts or def_segs[d_idx].get(sn, [])
                         if len(src) >= 3:
-                            poly = np.array([to_disp(x, y) for x, y in src], dtype=np.int32)
+                            poly = np.array(
+                                [to_disp(x, y) for x, y in src], dtype=np.int32
+                            )
                             cv2.polylines(canvas, [poly], True, (60, 60, 60), 1)
 
                 # Confirmed preceding segments for this digit (their actual colors)
-                if d_idx < len(s['all_segs']):
-                    for prev_idx in range(s['segment_idx']):
+                if d_idx < len(s["all_segs"]):
+                    for prev_idx in range(s["segment_idx"]):
                         pn = self.SEGMENT_ORDER[prev_idx]
-                        pts = s['all_segs'][d_idx].get(pn, [])
+                        pts = s["all_segs"][d_idx].get(pn, [])
                         if len(pts) >= 3:
-                            poly = np.array([to_disp(x, y) for x, y in pts], dtype=np.int32)
+                            poly = np.array(
+                                [to_disp(x, y) for x, y in pts], dtype=np.int32
+                            )
                             cv2.polylines(canvas, [poly], True, SEG_COLORS[pn], 1)
 
                 # Active segment being placed
-                cur = s['cur_pts']
+                cur = s["cur_pts"]
                 if len(cur) >= 2:
                     poly = np.array([to_disp(x, y) for x, y in cur], dtype=np.int32)
                     cv2.polylines(canvas, [poly], len(cur) >= 3, hi_color, 2)
@@ -1119,11 +1180,14 @@ class HardnessTester(Tool):
                     cv2.circle(canvas, to_disp(px, py), 5, hi_color, -1)
                 if cur:
                     lx, ly = to_disp(*cur[-1])
-                    mx, my = s['mouse']
+                    mx, my = s["mouse"]
                     cv2.line(canvas, (lx, ly), (mx, min(my, disp_h - 1)), hi_color, 1)
 
-                n_def = (len(def_segs[d_idx][seg_name])
-                         if def_segs and d_idx < len(def_segs) else '?')
+                n_def = (
+                    len(def_segs[d_idx][seg_name])
+                    if def_segs and d_idx < len(def_segs)
+                    else "?"
+                )
                 status = (
                     f"SEG  Digit {d_idx + 1}/{self.num_digits}  '{seg_name}'  "
                     f"{len(cur)}/{n_def} pts - "
@@ -1131,9 +1195,19 @@ class HardnessTester(Tool):
                 )
 
             # Status bar
-            cv2.rectangle(canvas, (0, disp_h), (disp_w, disp_h + STATUS_H), (20, 20, 20), -1)
-            cv2.putText(canvas, status, (6, disp_h + 28),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1, cv2.LINE_AA)
+            cv2.rectangle(
+                canvas, (0, disp_h), (disp_w, disp_h + STATUS_H), (20, 20, 20), -1
+            )
+            cv2.putText(
+                canvas,
+                status,
+                (6, disp_h + 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (220, 220, 220),
+                1,
+                cv2.LINE_AA,
+            )
             return canvas
 
         # --- 7. Event loop --------------------------------------------------
@@ -1142,75 +1216,79 @@ class HardnessTester(Tool):
         cv2.resizeWindow(WIN, disp_w, disp_h + STATUS_H)
         cv2.setMouseCallback(WIN, on_mouse)
 
-        while not s['done'] and not s['cancelled']:
+        while not s["done"] and not s["cancelled"]:
             cv2.imshow(WIN, render())
             key = cv2.waitKey(20) & 0xFF
 
-            if key == ord('q') or key == 27:  # q or Esc
-                s['cancelled'] = True
+            if key == ord("q") or key == 27:  # q or Esc
+                s["cancelled"] = True
                 break
 
             # ROI phase keys
-            if s['phase'] == 'roi':
+            if s["phase"] == "roi":
                 if key in (13, 10):  # Enter
-                    if s['pending_roi']:
-                        s['rois'].append(s['pending_roi'])
-                        s['pending_roi'] = None
-                        s['digit_idx'] += 1
-                        if s['digit_idx'] >= self.num_digits:
-                            self.set_digit_rois(s['rois'])
-                            s['default_segs'] = self._build_default_segment_points(s['rois'])
-                            s['all_segs'] = [{} for _ in range(self.num_digits)]
-                            s['phase'] = 'segment'
-                            s['digit_idx'] = 0
-                            s['segment_idx'] = 0
-                            s['cur_pts'] = list(s['default_segs'][0][self.SEGMENT_ORDER[0]])
+                    if s["pending_roi"]:
+                        s["rois"].append(s["pending_roi"])
+                        s["pending_roi"] = None
+                        s["digit_idx"] += 1
+                        if s["digit_idx"] >= self.num_digits:
+                            self.set_digit_rois(s["rois"])
+                            s["default_segs"] = self._build_default_segment_points(
+                                s["rois"]
+                            )
+                            s["all_segs"] = [{} for _ in range(self.num_digits)]
+                            s["phase"] = "segment"
+                            s["digit_idx"] = 0
+                            s["segment_idx"] = 0
+                            s["cur_pts"] = list(
+                                s["default_segs"][0][self.SEGMENT_ORDER[0]]
+                            )
 
             # Segment phase keys
-            elif s['phase'] == 'segment':
-                seg_name = self.SEGMENT_ORDER[s['segment_idx']]
-                d_idx = s['digit_idx']
+            elif s["phase"] == "segment":
+                seg_name = self.SEGMENT_ORDER[s["segment_idx"]]
+                d_idx = s["digit_idx"]
 
-                if key == ord('d'):
-                    s['cur_pts'] = list(s['default_segs'][d_idx][seg_name])
+                if key == ord("d"):
+                    s["cur_pts"] = list(s["default_segs"][d_idx][seg_name])
 
-                elif key == ord('c'):
-                    s['cur_pts'] = []
+                elif key == ord("c"):
+                    s["cur_pts"] = []
 
                 elif key in (8, 127):  # Backspace / Delete
-                    if s['cur_pts']:
-                        s['cur_pts'].pop()
+                    if s["cur_pts"]:
+                        s["cur_pts"].pop()
 
                 elif key in (13, 10):  # Enter
-                    if s['cur_pts']:
-                        s['all_segs'][d_idx][seg_name] = list(s['cur_pts'])
-                        s['segment_idx'] += 1
-                        if s['segment_idx'] >= len(self.SEGMENT_ORDER):
-                            s['segment_idx'] = 0
-                            s['digit_idx'] += 1
-                            if s['digit_idx'] >= self.num_digits:
-                                s['done'] = True
+                    if s["cur_pts"]:
+                        s["all_segs"][d_idx][seg_name] = list(s["cur_pts"])
+                        s["segment_idx"] += 1
+                        if s["segment_idx"] >= len(self.SEGMENT_ORDER):
+                            s["segment_idx"] = 0
+                            s["digit_idx"] += 1
+                            if s["digit_idx"] >= self.num_digits:
+                                s["done"] = True
                                 break
-                        next_seg = self.SEGMENT_ORDER[s['segment_idx']]
-                        s['cur_pts'] = list(s['default_segs'][s['digit_idx']][next_seg])
+                        next_seg = self.SEGMENT_ORDER[s["segment_idx"]]
+                        s["cur_pts"] = list(s["default_segs"][s["digit_idx"]][next_seg])
 
         cv2.destroyWindow(WIN)
 
-        if s['cancelled'] or not s['done']:
+        if s["cancelled"] or not s["done"]:
             print("Calibration cancelled.")
             return False
 
-        self.segment_points = s['all_segs']
+        self.segment_points = s["all_segs"]
 
         if save_calibration:
             calibration_dir = os.path.dirname(calibration_path)
             if calibration_dir:
                 os.makedirs(calibration_dir, exist_ok=True)
-            with open(calibration_path, 'w', encoding='utf-8') as f:
+            with open(calibration_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        'digit_rois': s['rois'],
-                        'segment_points': self.segment_points,
+                        "digit_rois": s["rois"],
+                        "segment_points": self.segment_points,
                     },
                     f,
                     indent=2,
@@ -1222,14 +1300,14 @@ class HardnessTester(Tool):
         print(f"Calibration test read: {result}")
 
         return True
-    
+
     def load_calibration(self, filepath: str | None = None):
         """
         Load calibration from file.
-        
+
         Args:
             filepath: Path to calibration JSON file (defaults to self.calibration_path)
-            
+
         Returns:
             True if loaded successfully
         """
@@ -1239,11 +1317,12 @@ class HardnessTester(Tool):
             return False
         try:
             import json
-            with open(filepath, 'r', encoding='utf-8') as f:
+
+            with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                self.digit_rois = [tuple(roi) for roi in data['digit_rois']]
+                self.digit_rois = [tuple(roi) for roi in data["digit_rois"]]
                 loaded_segment_points = []
-                for digit_segments in data['segment_points']:
+                for digit_segments in data["segment_points"]:
                     normalized = {}
                     for segment_name in self.SEGMENT_ORDER:
                         points = digit_segments.get(segment_name, [])
@@ -1255,7 +1334,7 @@ class HardnessTester(Tool):
         except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
             print(f"WARNING: Failed to load calibration: {e}")
             return False
-    
+
     def __del__(self):
         """Clean up camera resources."""
         if self.cap is not None:
@@ -1263,7 +1342,6 @@ class HardnessTester(Tool):
                 self.cap.release()
             except (RuntimeError, AttributeError):
                 pass
-        
 
 
 _CLI_DEFAULT_CALIBRATION = os.path.abspath(
@@ -1281,7 +1359,10 @@ def main():
     Test the segment-based LCD reader.
     """
     import argparse
-    parser = argparse.ArgumentParser(description="Segment-based LCD reader for hardness tester")
+
+    parser = argparse.ArgumentParser(
+        description="Segment-based LCD reader for hardness tester"
+    )
     parser.add_argument(
         "--image",
         type=str,
@@ -1341,11 +1422,11 @@ def main():
         help="Run an opening pass before closing to scrub isolated noise blobs",
     )
     args = parser.parse_args()
-    
+
     print("\n" + "=" * 80)
     print("SEGMENT-BASED LCD READER TEST")
     print("=" * 80)
-    
+
     # Initialize reader (camera is optional in image mode)
     print("\nInitializing LCD reader...")
     reader = HardnessTester(
@@ -1359,12 +1440,12 @@ def main():
         morph_iterations=args.morph_iterations,
         morph_open=args.morph_open,
     )
-    
+
     # Try to load existing calibration
     if os.path.exists(args.calibration):
         print("\nLoading existing calibration...")
         reader.load_calibration(args.calibration)
-    
+
     if args.image:
         print(f"\nLoading image from CLI: {args.image}")
         frame = cv2.imread(args.image)
@@ -1373,7 +1454,7 @@ def main():
             return
     else:
         print("\nCapturing image from camera...")
-        frame = reader.capture_image(save=True, output_path='lcd_test_capture.jpg')
+        frame = reader.capture_image(save=True, output_path="lcd_test_capture.jpg")
         if frame is None:
             print("Failed to capture image")
             return
@@ -1391,12 +1472,14 @@ def main():
 
     # Read display
     print("\nReading LCD display...")
-    result = reader.read_display(frame=frame, debug=args.debug, debug_prefix=args.debug_prefix)
+    result = reader.read_display(
+        frame=frame, debug=args.debug, debug_prefix=args.debug_prefix
+    )
 
     print("\n" + "=" * 80)
     print(f"RESULT: {result}")
     print("=" * 80)
-    
+
     print("\n" + "=" * 80)
     print("Test complete")
     print("=" * 80)
@@ -1405,7 +1488,7 @@ def main():
 def test_with_image(image_path, calibration_file=_CLI_DEFAULT_CALIBRATION):
     """
     Simple test function to read LCD from a single image.
-    
+
     Args:
         image_path: Path to LCD image
         calibration_file: Path to calibration file (optional)
@@ -1418,13 +1501,13 @@ def test_with_image(image_path, calibration_file=_CLI_DEFAULT_CALIBRATION):
 
     if os.path.exists(calibration_file):
         reader.load_calibration(calibration_file)
-    
+
     # Read image
     frame = cv2.imread(image_path)
     if frame is None:
         print(f"Failed to load image: {image_path}")
         return None
-    
+
     # Read display
     result = reader.read_display(frame=frame, debug=True, debug_prefix="test")
     print(f"\nResult: {result}")

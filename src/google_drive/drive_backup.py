@@ -74,9 +74,7 @@ class JobDriveBackup:
             )
 
         drive = self._auth.get_drive_service()
-        artifacts = build_artifacts(
-            file_path, files_root=self._cfg.get_job_files_dir()
-        )
+        artifacts = build_artifacts(file_path, files_root=self._cfg.get_job_files_dir())
 
         with tempfile.TemporaryDirectory() as tmp:
             staging = Path(tmp)
@@ -88,9 +86,7 @@ class JobDriveBackup:
 
         self._last_upload = datetime.now(timezone.utc)
         self._last_error = None
-        log.info(
-            "[JobDriveBackup] Uploaded job folder %s to Drive", artifacts.stem
-        )
+        log.info("[JobDriveBackup] Uploaded job folder %s to Drive", artifacts.stem)
 
     def _find_or_create_folder(self, drive, name: str, parent_id: str) -> str:
         safe_name = _escape_drive_query_literal(name)
@@ -119,9 +115,7 @@ class JobDriveBackup:
     def _upload_tree(self, drive, local_dir: Path, parent_id: str) -> None:
         for entry in sorted(local_dir.iterdir(), key=lambda p: p.name):
             if entry.is_dir():
-                folder_id = self._find_or_create_folder(
-                    drive, entry.name, parent_id
-                )
+                folder_id = self._find_or_create_folder(drive, entry.name, parent_id)
                 self._upload_tree(drive, entry, folder_id)
             else:
                 mime, _ = mimetypes.guess_type(entry.name)

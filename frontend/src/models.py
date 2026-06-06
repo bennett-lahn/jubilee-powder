@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 # Enums
 # =============================================================================
 
+
 class MachineState(str, Enum):
     """String enum representing the five possible hardware states.
 
@@ -24,10 +25,10 @@ class MachineState(str, Enum):
     enum.
     """
 
-    IDLE         = "idle"
-    HOMING       = "homing"       # connection / homing in progress
-    RUNNING      = "running"      # job executing
-    ERROR        = "error"
+    IDLE = "idle"
+    HOMING = "homing"  # connection / homing in progress
+    RUNNING = "running"  # job executing
+    ERROR = "error"
     DISCONNECTED = "disconnected"
 
 
@@ -35,27 +36,30 @@ class MachineState(str, Enum):
 # Hardware configuration
 # =============================================================================
 
+
 class HardwareConfig(BaseModel):
     """Sent from the Settings screen when the user clicks Connect.
 
     Omitted or null fields are filled from system_config.json on the server.
     """
-    num_dispensers:        int | None = Field(default=None, ge=0)
+
+    num_dispensers: int | None = Field(default=None, ge=0)
     pistons_per_dispenser: int | None = Field(default=None, ge=0)
-    machine_address:       str | None = None
-    scale_port:            str | None = None
+    machine_address: str | None = None
+    scale_port: str | None = None
 
 
 class DispenserStatus(BaseModel):
     """Per-dispenser status reported in telemetry frames and REST responses."""
 
-    index:             int
+    index: int
     pistons_remaining: int
 
 
 # =============================================================================
 # Job-progress state  (shared between server endpoints and hardware managers)
 # =============================================================================
+
 
 class JobProgress:
     """Mutable in-memory job state shared between server endpoints and the hardware manager.
@@ -77,16 +81,16 @@ class JobProgress:
     """
 
     def __init__(self) -> None:
-        self.running:      bool          = False
-        self.job_type:     str | None = None
-        self.completed:    int           = 0
-        self.total:        int           = 0
+        self.running: bool = False
+        self.job_type: str | None = None
+        self.completed: int = 0
+        self.total: int = 0
         self.current_item: str | None = None
-        self.error:        str | None = None
-        self.started_at:   str | None = None   # ISO-8601 UTC string
-        self.items:        list          = []      # ordered list of item dicts from the job request
-        self.jam_detected: bool          = False
-        self.jam_well_id:  str | None = None
+        self.error: str | None = None
+        self.started_at: str | None = None  # ISO-8601 UTC string
+        self.items: list = []  # ordered list of item dicts from the job request
+        self.jam_detected: bool = False
+        self.jam_well_id: str | None = None
 
     @staticmethod
     def item_id(item: dict) -> str:
@@ -158,16 +162,25 @@ class JobProgress:
     def set_jam(self, well_id: str) -> None:
         """Mark a powder jam as active for the given well."""
         self.jam_detected = True
-        self.jam_well_id  = well_id
+        self.jam_well_id = well_id
 
     def clear_jam(self) -> None:
         """Clear an active jam so the UI dialog is dismissed."""
         self.jam_detected = False
-        self.jam_well_id  = None
+        self.jam_well_id = None
 
     def reset(self) -> None:
         """Reset all fields to their initial defaults."""
-        self.__init__()
+        self.running = False
+        self.job_type = None
+        self.completed = 0
+        self.total = 0
+        self.current_item = None
+        self.error = None
+        self.started_at = None
+        self.items = []
+        self.jam_detected = False
+        self.jam_well_id = None
 
     def to_dict(self) -> dict:
         """Serialise all fields to a JSON-compatible dict for WebSocket telemetry.
@@ -176,14 +189,14 @@ class JobProgress:
             dict: All progress fields suitable for inclusion in a telemetry frame.
         """
         return {
-            "running":      self.running,
-            "job_type":     self.job_type,
-            "completed":    self.completed,
-            "total":        self.total,
+            "running": self.running,
+            "job_type": self.job_type,
+            "completed": self.completed,
+            "total": self.total,
             "current_item": self.current_item,
-            "error":        self.error,
-            "started_at":   self.started_at,
-            "items":        self.items,
+            "error": self.error,
+            "started_at": self.started_at,
+            "items": self.items,
             "jam_detected": self.jam_detected,
-            "jam_well_id":  self.jam_well_id,
+            "jam_well_id": self.jam_well_id,
         }

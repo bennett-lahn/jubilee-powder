@@ -190,15 +190,19 @@ def _hardness_csv_row(sample: dict, pass_mode: str) -> dict[str, Any]:
     }
 
 
-def _add_dispensing_csv(artifacts: JobArtifacts, stem: str, meta: dict, payload: dict) -> None:
+def _add_dispensing_csv(
+    artifacts: JobArtifacts, stem: str, meta: dict, payload: dict
+) -> None:
     rows = []
     for mold in payload["state"]["molds"]:
-        rows.append({
-            "well": mold["well_id"],
-            "target": mold["target_weight"],
-            "actual": mold.get("actual_weight"),
-            "status": mold["status"],
-        })
+        rows.append(
+            {
+                "well": mold["well_id"],
+                "target": mold["target_weight"],
+                "actual": mold.get("actual_weight"),
+                "status": mold["status"],
+            }
+        )
     csv_text = format_csv(meta, rows, _DISPENSING_CSV_COLUMNS)
     artifacts.files.append(
         LocalFile(relative_path=f"{stem}/results.csv", content=csv_text)
@@ -283,6 +287,8 @@ def stage_artifacts(artifacts: JobArtifacts, staging_root: Path) -> Path:
         elif entry.content is not None:
             dest.write_text(entry.content, encoding="utf-8")
         else:
-            raise ValueError(f"LocalFile has no content or source: {entry.relative_path}")
+            raise ValueError(
+                f"LocalFile has no content or source: {entry.relative_path}"
+            )
 
     return job_dir

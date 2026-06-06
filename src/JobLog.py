@@ -158,20 +158,22 @@ class JobLog:
             override=status,
         )
 
-        self._records[key] = self._ensure_pass_status_fields({
-            "tray_index": tray_index,
-            "sample_index": sample_index,
-            "mode": mode,
-            "result": None,
-            "result_shore_a": result_shore_a,
-            "result_shore_d": result_shore_d,
-            "status_shore_a": status_shore_a,
-            "status_shore_d": status_shore_d,
-            "image_path_shore_a": image_path_shore_a,
-            "image_path_shore_d": image_path_shore_d,
-            "sample_error": sample_error,
-            "status": resolved_status,
-        })
+        self._records[key] = self._ensure_pass_status_fields(
+            {
+                "tray_index": tray_index,
+                "sample_index": sample_index,
+                "mode": mode,
+                "result": None,
+                "result_shore_a": result_shore_a,
+                "result_shore_d": result_shore_d,
+                "status_shore_a": status_shore_a,
+                "status_shore_d": status_shore_d,
+                "image_path_shore_a": image_path_shore_a,
+                "image_path_shore_d": image_path_shore_d,
+                "sample_error": sample_error,
+                "status": resolved_status,
+            }
+        )
 
     def finalize(self, outcome: str) -> Path:
         """Write the completed log to disk and return the path."""
@@ -294,9 +296,7 @@ class JobLog:
             tray_index = int(item["tray_index"])
             sample_index = JobLog._item_sample_index(item)
             key = self._sample_record_key(tray_index, sample_index)
-            samples.append(
-                self._records.get(key, self._default_sample_record(item))
-            )
+            samples.append(self._records.get(key, self._default_sample_record(item)))
         return {"samples": samples}
 
     def _sample_record_key(self, tray_index: int, sample_index: int) -> str:
@@ -304,9 +304,7 @@ class JobLog:
 
     def _completed_sample_count(self) -> int:
         state = self._build_state()
-        return sum(
-            1 for s in state.get("samples", []) if s.get("status") == "complete"
-        )
+        return sum(1 for s in state.get("samples", []) if s.get("status") == "complete")
 
     def _write(self) -> Path:
         job_id = self._id
@@ -316,7 +314,8 @@ class JobLog:
             self._completed_sample_count()
             if self._job_type == "hardness"
             else sum(
-                1 for m in self._build_state().get("molds", [])
+                1
+                for m in self._build_state().get("molds", [])
                 if m.get("status") == "complete"
             )
         )

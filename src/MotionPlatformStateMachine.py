@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple, TYPE_CHECKING
+from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from jubilee_api_config.constants import FeedRate
 else:
     # At runtime, import in __init__ where needed
-    FeedRate = 'FeedRate'
+    FeedRate = "FeedRate"
 
 
 class PositionType(Enum):
@@ -61,11 +61,10 @@ class ZHeightPolicy:
         return None
 
 
-
 @dataclass(frozen=True)
 class MachineCoordinates:
     """Physical X, Y, Z, V coordinates for a position."""
-    
+
     x: float | str | None = None
     y: float | str | None = None
     z: float | str | None = None  # Can be "USE_Z_HEIGHT_POLICY" or numeric
@@ -94,7 +93,7 @@ class PositionDescriptor:
     engagement_actions: frozenset[str] = field(default_factory=frozenset)
     resource_id: str | None = None
     description: str = ""
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -118,7 +117,7 @@ class ToolStatus:
     tool_id: str
     engaged: bool = False
     ready_position_id: str | None = None
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,17 +128,21 @@ class MotionContext:
     z_height_id: str | None = None
     active_tool_id: str | None = None
     payload_state: str | None = None
-    tool_states: Dict[str, ToolStatus] = field(default_factory=dict)
+    tool_states: dict[str, ToolStatus] = field(default_factory=dict)
     pending_move: "MoveRequest" | None = None
     engaged_ready_position_id: str | None = None
     engaged_tool_id: str | None = None
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
     # Platform state tracking
     deck: Deck | None = None
     scale: Scale | None = None  # Reference to scale object
-    current_well: object | None = None  # Mold object representing the mold being carried
+    current_well: object | None = (
+        None  # Mold object representing the mold being carried
+    )
     mold_on_scale: bool = False  # Whether the current mold is on the scale
-    piston_dispensers: List[object] = field(default_factory=list)  # List of PistonDispenser objects
+    piston_dispensers: list[object] = field(
+        default_factory=list
+    )  # List of PistonDispenser objects
 
 
 @dataclass
@@ -148,7 +151,7 @@ class MoveRequest:
 
     target_position_id: str
     action: str | None = None
-    metadata: Dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -169,11 +172,12 @@ class _ResolvedPositionResult:
 
 class PositionRegistry:
     """Utility container for known platform positions."""
+
     def __init__(self, positions: Iterable[PositionDescriptor]) -> None:
-        self._positions: Dict[str, PositionDescriptor] = {}
-        self._actions: Dict[str, ActionDescriptor] = {}
-        self._z_heights: Dict[str, object] = {}
-        self._coordinate_tolerance: Dict[str, float] = {}
+        self._positions: dict[str, PositionDescriptor] = {}
+        self._actions: dict[str, ActionDescriptor] = {}
+        self._z_heights: dict[str, object] = {}
+        self._coordinate_tolerance: dict[str, float] = {}
         self._supported_tool_ids: frozenset[str] = frozenset()
 
         for position in positions:
@@ -194,7 +198,7 @@ class PositionRegistry:
         motion = load_motion_platform_config(payload)
 
         positions: list[PositionDescriptor] = []
-        type_to_ids: Dict[str, set[str]] = {}
+        type_to_ids: dict[str, set[str]] = {}
 
         for raw in motion.positions:
             try:
@@ -321,7 +325,9 @@ class PositionRegistry:
     def has(self, identifier: str) -> bool:
         return identifier in self._positions
 
-    def find_first_of_type(self, position_type: PositionType) -> PositionDescriptor | None:
+    def find_first_of_type(
+        self, position_type: PositionType
+    ) -> PositionDescriptor | None:
         for descriptor in self._positions.values():
             if descriptor.type == position_type:
                 return descriptor
@@ -334,15 +340,15 @@ class PositionRegistry:
             raise KeyError(f"Unknown action identifier '{identifier}'") from exc
 
     @property
-    def actions(self) -> Dict[str, ActionDescriptor]:
+    def actions(self) -> dict[str, ActionDescriptor]:
         return dict(self._actions)
 
     @property
-    def z_heights(self) -> Dict[str, object]:
+    def z_heights(self) -> dict[str, object]:
         return dict(self._z_heights)
-    
+
     @property
-    def coordinate_tolerance(self) -> Dict[str, float]:
+    def coordinate_tolerance(self) -> dict[str, float]:
         return dict(self._coordinate_tolerance)
 
     @property
@@ -367,15 +373,17 @@ class PositionRegistry:
         if not position.coordinates:
             # No coordinates defined for this position, skip validation
             return None
-        
+
         coords = position.coordinates
         tolerance = self._coordinate_tolerance
 
-        def check_coord(axis: str, expected: float | str | None, actual: float) -> str | None:
+        def check_coord(
+            axis: str, expected: float | str | None, actual: float
+        ) -> str | None:
             """Check if a single coordinate is within tolerance."""
             if expected is None:
                 return None
-            
+
             # Handle placeholder strings
             if isinstance(expected, str):
                 if expected.startswith("PLACEHOLDER"):
@@ -390,14 +398,16 @@ class PositionRegistry:
                     z_config = self._z_heights[current_z_height_id]
                     if isinstance(z_config, dict):
                         z_expected = z_config.get("z_coordinate")
-                        if z_expected is not None and isinstance(z_expected, (int, float)):
+                        if z_expected is not None and isinstance(
+                            z_expected, (int, float)
+                        ):
                             if abs(actual - z_expected) > tolerance[axis]:
                                 return (
                                     f"{axis.upper()} coordinate mismatch: expected {z_expected}, got {actual} "
                                     f"(tolerance: ±{tolerance[axis]})"
                                 )
                     return None
-            
+
             # Numeric comparison
             if isinstance(expected, (int, float)):
                 if abs(actual - expected) > tolerance[axis]:
@@ -405,9 +415,9 @@ class PositionRegistry:
                         f"{axis.upper()} coordinate mismatch: expected {expected}, got {actual} "
                         f"(tolerance: ±{tolerance[axis]})"
                     )
-            
+
             return None
-        
+
         # Check each axis
         for axis, expected, actual in [
             ("x", coords.x, machine_x),
@@ -418,7 +428,7 @@ class PositionRegistry:
             error = check_coord(axis, expected, actual)
             if error:
                 return f"Position '{position_id}' validation failed: {error}"
-        
+
         return None
 
 
@@ -442,22 +452,33 @@ class MotionPlatformStateMachine(StateMachine):
     disengage_tool = tool_engaged.to(idle)
     abort_motion = moving.to(idle)
 
-    def __init__(self, registry: PositionRegistry, machine: Machine, *, context: MotionContext | None = None, scale: Scale | None = None, feedrate: 'FeedRate' = None) -> None:
+    def __init__(
+        self,
+        registry: PositionRegistry,
+        machine: Machine,
+        *,
+        context: MotionContext | None = None,
+        scale: Scale | None = None,
+        feedrate: "FeedRate" = None,
+    ) -> None:
         # Import MovementExecutor locally to avoid circular import
         from src.MovementExecutor import MovementExecutor
 
         if feedrate is None:
             from src.ConfigLoader import config as _cfg
+
             feedrate = _cfg.get_default_feedrate()
-        
+
         self._registry = registry
         self._actions = registry.actions
-        
+
         if context is None:
             initial_descriptor = registry.find_first_of_type(PositionType.GLOBAL_READY)
             if not initial_descriptor:
                 raise ValueError("Configuration must define a GLOBAL_READY position.")
-            context = MotionContext(position_id=initial_descriptor.identifier, scale=scale)
+            context = MotionContext(
+                position_id=initial_descriptor.identifier, scale=scale
+            )
         else:
             # Ensure the provided context references a known position.
             self._registry.get(context.position_id)
@@ -474,6 +495,7 @@ class MotionPlatformStateMachine(StateMachine):
         if axis is not None:
             return axis
         from src.ConfigLoader import config as _cfg
+
         return _cfg.system.manipulator.tamper_axis
 
     @classmethod
@@ -484,10 +506,12 @@ class MotionPlatformStateMachine(StateMachine):
         *,
         context_overrides: Mapping[str, object] | None = None,
         scale: Scale | None = None,
-        feedrate: 'FeedRate' = None,
+        feedrate: "FeedRate" = None,
         system_config_path: str | Path | None = None,
     ) -> "MotionPlatformStateMachine":
-        registry = PositionRegistry.from_config_file(path, system_config_path=system_config_path)
+        registry = PositionRegistry.from_config_file(
+            path, system_config_path=system_config_path
+        )
         initial_descriptor = registry.find_first_of_type(PositionType.GLOBAL_READY)
         if not initial_descriptor:
             raise ValueError("Configuration must include a GLOBAL_READY position.")
@@ -502,7 +526,7 @@ class MotionPlatformStateMachine(StateMachine):
             engaged_ready_position_id=None,
             engaged_tool_id=None,
             metadata={},
-            scale=scale
+            scale=scale,
         )
 
         if context_overrides:
@@ -514,22 +538,24 @@ class MotionPlatformStateMachine(StateMachine):
     # ---------------------------------------------------------------------
     # Platform State Initialization
     # ---------------------------------------------------------------------
-    
-    def initialize_deck(self, deck_name: str = "weight_well_deck", config_path: str | None = None):
+
+    def initialize_deck(
+        self, deck_name: str = "weight_well_deck", config_path: str | None = None
+    ):
         """
         Initialize the deck with weight wells in each slot.
-        
+
         Args:
             deck_name: Name of the deck configuration
             config_path: Path to the deck configuration files
         """
         from src.trickler_labware import Mold
         from science_jubilee.labware.Labware import Labware
-        
+
         try:
             # Load the deck configuration
             self.context.deck = Deck(deck_name, path=config_path)
-            
+
             # Load mold labware into each slot (18 slots total: 0-17)
             for i in range(18):
                 try:
@@ -539,7 +565,7 @@ class MotionPlatformStateMachine(StateMachine):
                     labware.add_slot(i)
                     offset = self.context.deck.slots[str(i)].offset
                     labware.offset = offset
-                    
+
                     # Register labware with the slot
                     self.context.deck.slots[str(i)].has_labware = True
                     self.context.deck.slots[str(i)].labware = labware
@@ -548,24 +574,24 @@ class MotionPlatformStateMachine(StateMachine):
                             "mold_labware.json dimensions must include zDimension"
                         )
                     self.context.deck.safe_z = labware.dimensions["zDimension"]
-                    
+
                     for well_name in labware.wells.keys():
                         # Skip empty mold slot names
                         if not well_name or not isinstance(well_name, str):
                             continue
-                        
+
                         # Extract numerical ID from mold slot name (e.g., "A0" -> "0", "A17" -> "17")
                         # The external API uses numerical IDs (0, 1, 2...) for all mold references.
                         # Internally, labware uses A0, A1, A2... format per labware library requirements.
-                        if well_name.startswith('A'):
+                        if well_name.startswith("A"):
                             numerical_id = well_name[1:]  # Strip the 'A' prefix
                         else:
                             numerical_id = well_name
-                            
+
                         # Create state machine position name from numerical ID
                         # External API uses numerical IDs like "0", "1", "2", ... "17"
                         ready_pos = f"mold_ready_{numerical_id}"
-                        
+
                         # Create a Mold with minimal required Well fields (coordinates not used)
                         # Note: Actual coordinates come from motion_platform_positions.json
                         mold = Mold(
@@ -583,39 +609,42 @@ class MotionPlatformStateMachine(StateMachine):
                             current_weight=0.0,
                             target_weight=0.0,
                             max_weight=None,
-                            ready_pos=ready_pos  # State machine position name
+                            ready_pos=ready_pos,  # State machine position name
                         )
-                        
+
                         # Replace the regular well with our Mold
                         # Keep the labware well name format (A0-A17) for internal consistency
                         labware.wells[well_name] = mold
                 except Exception as e:
                     print(f"Error loading labware for slot {i}: {e}")
                     import traceback
+
                     traceback.print_exc()
                     raise
-                
+
         except Exception as e:
             print(f"Error initializing deck: {e}")
             import traceback
+
             traceback.print_exc()
             self.context.deck = None
-    
-    def initialize_dispensers(self, num_piston_dispensers: int = 0, num_pistons_per_dispenser: int = 0):
+
+    def initialize_dispensers(
+        self, num_piston_dispensers: int = 0, num_pistons_per_dispenser: int = 0
+    ):
         """
         Initialize piston dispensers.
-        
+
         Args:
             num_piston_dispensers: Number of piston dispensers
             num_pistons_per_dispenser: Number of pistons in each dispenser
         """
-        
+
         self.context.piston_dispensers = [
-            PistonDispenser(i, num_pistons_per_dispenser) 
+            PistonDispenser(i, num_pistons_per_dispenser)
             for i in range(num_piston_dispensers)
         ]
 
-    
     def set_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
         """
         Set the piston count for a specific dispenser.
@@ -639,36 +668,37 @@ class MotionPlatformStateMachine(StateMachine):
     def get_mold_from_deck(self, well_id: str) -> object | None:
         """
         Get a mold object from the deck by mold slot ID.
-        
+
         Args:
             well_id: Mold slot identifier (numerical string "0" through "17")
-            
+
         Returns:
             Mold object if found, None otherwise
         """
         if not self.context.deck:
             return None
-        
+
         # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
         try:
             slot_index = int(well_id)
         except (ValueError, TypeError):
             return None
-        
+
         # Validate slot index is within range (0-17 for 18 slots)
         if slot_index < 0 or slot_index > 17:
             return None
-        
+
         if str(slot_index) in self.context.deck.slots:
             slot = self.context.deck.slots[str(slot_index)]
-            if slot.has_labware and hasattr(slot.labware, 'wells'):
+            if slot.has_labware and hasattr(slot.labware, "wells"):
                 # Convert numerical ID to labware well name format (e.g., "0" -> "A0")
                 # Labware internally uses A0, A1, A2... format per library requirements
                 labware_well_name = f"A{well_id}"
-                
+
                 # Get the well matching the labware well name
                 if labware_well_name in slot.labware.wells:
                     from src.trickler_labware import Mold
+
                     well = slot.labware.wells[labware_well_name]
                     if isinstance(well, Mold):
                         return well
@@ -693,59 +723,45 @@ class MotionPlatformStateMachine(StateMachine):
     # These methods combine validation (state machine) and execution (executor).
     # This is the interface that Manipulator and other classes should use.
     # =====================================================================
-    
+
     def validated_pick_mold(
-        self,
-        well_id: str,
-        manipulator_config: Dict[str, object]
+        self, well_id: str, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
         """
         Validate and execute picking up a mold from a mold slot.
-        
+
         Args:
             well_id: Mold slot identifier (numerical string "0" through "17")
             manipulator_config: Configuration dict for the manipulator
         """
         from src.trickler_labware import Mold
-        
+
         # Domain-specific validation
         if self.context.current_well is not None:
             return MoveValidationResult(
-                valid=False,
-                reason="Manipulator already carrying a mold"
+                valid=False, reason="Manipulator already carrying a mold"
             )
-        
+
         if self.context.deck is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Deck not configured"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Deck not configured")
+
         well = self.get_mold_from_deck(well_id)
         if well is None:
             return MoveValidationResult(
-                valid=False,
-                reason=f"Mold slot {well_id} not found"
+                valid=False, reason=f"Mold slot {well_id} not found"
             )
-        
+
         if not isinstance(well, Mold):
-            return MoveValidationResult(
-                valid=False,
-                reason="Invalid mold object"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Invalid mold object")
+
         if not well.valid:
-            return MoveValidationResult(
-                valid=False,
-                reason="Mold is not valid"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Mold is not valid")
+
         if well.has_top_piston:
             return MoveValidationResult(
-                valid=False,
-                reason="Cannot pick up mold that already has a top piston"
+                valid=False, reason="Cannot pick up mold that already has a top piston"
             )
-        
+
         # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
         pos_result = self._resolve_ready_position_coords(ready_position_id)
@@ -759,13 +775,13 @@ class MotionPlatformStateMachine(StateMachine):
             execution_func=self._executor.execute_pick_mold,
             well_id=well_id,
             deck=self.context.deck,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
-        
+
         # Update state machine state if successful
         if result.valid:
             self.context.current_well = well
@@ -774,34 +790,26 @@ class MotionPlatformStateMachine(StateMachine):
                 self.context.payload_state = "mold_without_top_piston"
             else:
                 self.context.payload_state = "mold_with_top_piston"
-        
+
         return result
-    
+
     def validated_place_mold(
-        self,
-        well_id: str,
-        manipulator_config: Dict[str, object] | None = None
+        self, well_id: str, manipulator_config: dict[str, object] | None = None
     ) -> MoveValidationResult:
         """
         Validate and execute placing a mold in a mold slot.
-        
+
         Args:
             well_id: Well identifier (numerical string "0" through "17")
             manipulator_config: Configuration dict for the manipulator
         """
         # Domain-specific validation
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
+
         if self.context.deck is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Deck not configured"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Deck not configured")
+
         # Get ready position coordinates for this mold slot
         ready_position_id = f"mold_ready_{well_id}"
         pos_result = self._resolve_ready_position_coords(ready_position_id)
@@ -818,49 +826,38 @@ class MotionPlatformStateMachine(StateMachine):
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
-        
+
         # Update state machine state if successful
         if result.valid:
             self.context.current_well = None
             self.context.mold_on_scale = False
             self.context.payload_state = "empty"
-        
+
         return result
-    
+
     def validated_place_mold_on_scale(
-        self,
-        manipulator_config: Dict[str, object]
+        self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
         """Validate and execute placing mold on scale."""
         # Domain-specific validation
         if self.context.scale is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Scale not configured"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Scale not configured")
+
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
+
         mold = self.context.current_well
-        
+
         if mold.has_top_piston:
             return MoveValidationResult(
-                valid=False,
-                reason="Cannot place mold with piston on scale"
+                valid=False, reason="Cannot place mold with piston on scale"
             )
-        
+
         if self.context.mold_on_scale:
-            return MoveValidationResult(
-                valid=False,
-                reason="Mold is already on scale"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Mold is already on scale")
+
         # Get ready position coordinates from scale_ready position
         pos_result = self._resolve_ready_position_coords("scale_ready")
         if pos_result.error:
@@ -871,19 +868,19 @@ class MotionPlatformStateMachine(StateMachine):
         result = self._validate_and_execute(
             action_id="place_mold_on_scale",
             execution_func=self._executor.execute_place_mold_on_scale,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
-        
+
         # Update state machine state if successful
         if result.valid:
             self.context.mold_on_scale = True
             # Update position to scale_active to reflect mold is now physically on the scale
             self.context.position_id = "scale_active"
-        
+
         # Typically, state changes happen during _validate_and_execute,
         # but this is the only action that can engage the tool
         engagement_result = self.request_tool_engagement()
@@ -892,31 +889,21 @@ class MotionPlatformStateMachine(StateMachine):
             return engagement_result
 
         return result
-    
+
     def validated_pick_mold_from_scale(
-        self,
-        manipulator_config: Dict[str, object]
+        self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
         """Validate and execute picking mold from scale."""
         # Domain-specific validation
         if self.context.scale is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Scale not configured"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Scale not configured")
+
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
+
         if not self.context.mold_on_scale:
-            return MoveValidationResult(
-                valid=False,
-                reason="Mold is not on scale"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Mold is not on scale")
+
         # Get ready position coordinates from scale_ready position
         pos_result = self._resolve_ready_position_coords("scale_ready")
         if pos_result.error:
@@ -927,11 +914,11 @@ class MotionPlatformStateMachine(StateMachine):
         result = self._validate_and_execute(
             action_id="pick_mold_from_scale",
             execution_func=self._executor.execute_pick_mold_from_scale,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
 
         # Typically, state changes happen during _validate_and_execute,
@@ -940,49 +927,41 @@ class MotionPlatformStateMachine(StateMachine):
         if not disengagement_result.valid:
             # Propagate engagement failure (movement already occurred)
             return disengagement_result
-        
+
         # Update state machine state if successful
         if result.valid:
             self.context.mold_on_scale = False
             # Update position back to scale_ready after picking mold from scale
             self.context.position_id = "scale_ready"
             # Placing mold on scale shouldn't change payload_state, so don't update
-        
+
         return result
-    
+
     def validated_place_top_piston(
-        self,
-        piston_dispenser,
-        manipulator_config: Dict[str, object]
+        self, piston_dispenser, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
         """Validate and execute placing top piston."""
         # Domain-specific validation
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
+
         mold = self.context.current_well
-        
+
         if mold.has_top_piston:
             return MoveValidationResult(
-                valid=False,
-                reason="Mold already has a top piston"
+                valid=False, reason="Mold already has a top piston"
             )
-        
+
         if piston_dispenser.num_pistons == 0:
             return MoveValidationResult(
-                valid=False,
-                reason="No pistons available in dispenser"
+                valid=False, reason="No pistons available in dispenser"
             )
-        
+
         if self.context.mold_on_scale:
             return MoveValidationResult(
-                valid=False,
-                reason="Cannot add top piston when mold is on scale"
+                valid=False, reason="Cannot add top piston when mold is on scale"
             )
-        
+
         # Get ready position coordinates for this dispenser
         dispenser_ready_id = f"dispenser_ready_{piston_dispenser.index}"
         pos_result = self._resolve_ready_position_coords(dispenser_ready_id)
@@ -995,93 +974,89 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="retrieve_piston",
             execution_func=self._executor.execute_place_top_piston,
             piston_dispenser=piston_dispenser,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
-        
+
         # Update state machine state if successful
         if result.valid:
             mold.has_top_piston = True
-        
+
         return result
-    
+
     def validated_tamp(
         self,
-        manipulator_config: Dict[str, object],
+        manipulator_config: dict[str, object],
         tamp_depth: float,
         tamp_speed: int,
     ) -> MoveValidationResult:
         """
         Validate and execute tamping action.
-        
+
         Tamping compresses powder in a mold held by the manipulator to reduce volume.
         This is typically done at the scale_ready position before inserting the top piston.
-        
+
         Parameter bounds are loaded from system_config.json and can be customized.
-        
+
         Args:
             manipulator_config: Configuration dict for the manipulator
             tamp_depth: Target depth for tamping movement in mm (from system_config.json)
             tamp_speed: Speed for tamping movement in mm/min (from system_config.json)
-            
+
         Returns:
             MoveValidationResult with outcome
         """
         from src.ConfigLoader import config
-        
+
         # Load tamping parameter bounds from configuration
         MIN_TAMP_DEPTH = config.get_tamp_depth_min()
         MAX_TAMP_DEPTH = config.get_tamp_depth_max()
         MIN_TAMP_SPEED = config.get_tamp_speed_min()
         MAX_TAMP_SPEED = config.get_tamp_speed_max()
-        
+
         # Validate tamping parameters
         if not (MIN_TAMP_DEPTH <= tamp_depth <= MAX_TAMP_DEPTH):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Tamp depth {tamp_depth}mm is out of bounds. Must be between {MIN_TAMP_DEPTH} and {MAX_TAMP_DEPTH} mm."
+                reason=f"Tamp depth {tamp_depth}mm is out of bounds. Must be between {MIN_TAMP_DEPTH} and {MAX_TAMP_DEPTH} mm.",
             )
-        
+
         if not (MIN_TAMP_SPEED <= tamp_speed <= MAX_TAMP_SPEED):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Tamp speed {tamp_speed}mm/min is out of bounds. Must be between {MIN_TAMP_SPEED} and {MAX_TAMP_SPEED} mm/min."
+                reason=f"Tamp speed {tamp_speed}mm/min is out of bounds. Must be between {MIN_TAMP_SPEED} and {MAX_TAMP_SPEED} mm/min.",
             )
-        
+
         # Domain-specific validation
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
+
         mold = self.context.current_well
         if mold.has_top_piston:
             return MoveValidationResult(
-                valid=False,
-                reason="Cannot tamp mold that has a top piston"
+                valid=False, reason="Cannot tamp mold that has a top piston"
             )
-        
+
         # Verify we're at scale_ready position (typical) or a mold_ready position
-        valid_positions = ['scale_ready'] + [f'mold_ready_{i}' for i in range(16)]
+        valid_positions = ["scale_ready"] + [f"mold_ready_{i}" for i in range(16)]
         if self.context.position_id not in valid_positions:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Tamping should be performed at scale_ready or mold_ready position. Current: {self.context.position_id}"
+                reason=f"Tamping should be performed at scale_ready or mold_ready position. Current: {self.context.position_id}",
             )
-        
+
         # Execute through generic validation framework
         return self._validate_and_execute(
             action_id="tamp_mold",
             execution_func=self._executor.execute_tamp,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             tamp_depth=tamp_depth,
-            tamp_speed=tamp_speed
+            tamp_speed=tamp_speed,
         )
-    
+
     # ---------------------------------------------------------------------
     # Generic Validation and Execution
     # ---------------------------------------------------------------------
@@ -1104,8 +1079,11 @@ class MotionPlatformStateMachine(StateMachine):
           - error set to a failed MoveValidationResult, or
           - coords set to (x, y, z, v) ready for use. V can be None when not required.
         """
+
         def _fail(reason: str) -> _ResolvedPositionResult:
-            return _ResolvedPositionResult(error=MoveValidationResult(valid=False, reason=reason))
+            return _ResolvedPositionResult(
+                error=MoveValidationResult(valid=False, reason=reason)
+            )
 
         if not self._registry.has(position_id):
             return _fail(f"Ready position '{position_id}' not defined in configuration")
@@ -1113,7 +1091,9 @@ class MotionPlatformStateMachine(StateMachine):
         pos = self._registry.get(position_id)
 
         if not pos.coordinates:
-            return _fail(f"Ready position '{position_id}' does not have coordinates defined")
+            return _fail(
+                f"Ready position '{position_id}' does not have coordinates defined"
+            )
 
         c = pos.coordinates
         required_axes = [("X", c.x), ("Y", c.y)]
@@ -1122,19 +1102,29 @@ class MotionPlatformStateMachine(StateMachine):
 
         for axis, value in required_axes:
             if value is None:
-                return _fail(f"Ready position '{position_id}' missing {axis} coordinate")
+                return _fail(
+                    f"Ready position '{position_id}' missing {axis} coordinate"
+                )
 
         # Resolve Z
         if c.z == "USE_Z_HEIGHT_POLICY":
             if not self.context.z_height_id:
-                return _fail("Z height policy required but z_height_id not set in context")
+                return _fail(
+                    "Z height policy required but z_height_id not set in context"
+                )
             z_heights = self._registry.z_heights
             if self.context.z_height_id not in z_heights:
-                return _fail(f"Z height '{self.context.z_height_id}' not found in configuration")
+                return _fail(
+                    f"Z height '{self.context.z_height_id}' not found in configuration"
+                )
             z_config = z_heights[self.context.z_height_id]
-            ready_z = z_config.get("z_coordinate") if isinstance(z_config, dict) else None
+            ready_z = (
+                z_config.get("z_coordinate") if isinstance(z_config, dict) else None
+            )
             if ready_z is None:
-                return _fail(f"Z coordinate not defined for z_height '{self.context.z_height_id}'")
+                return _fail(
+                    f"Z coordinate not defined for z_height '{self.context.z_height_id}'"
+                )
         elif c.z is not None:
             ready_z = c.z
         else:
@@ -1145,7 +1135,9 @@ class MotionPlatformStateMachine(StateMachine):
             resolved_y = float(c.y)
             resolved_z = float(ready_z)
         except (TypeError, ValueError) as exc:
-            return _fail(f"Position '{position_id}' has non-numeric XY/Z coordinates: {exc}")
+            return _fail(
+                f"Position '{position_id}' has non-numeric XY/Z coordinates: {exc}"
+            )
 
         return _ResolvedPositionResult(coords=(resolved_x, resolved_y, resolved_z, c.v))
 
@@ -1153,17 +1145,17 @@ class MotionPlatformStateMachine(StateMachine):
         self,
         target_position_id: str | None = None,
         action_id: str | None = None,
-        additional_requirements: Dict[str, object] | None = None,
+        additional_requirements: dict[str, object] | None = None,
         execution_func=None,
-        **execution_kwargs
+        **execution_kwargs,
     ) -> MoveValidationResult:
         """
         Generic validation and execution for movements and tool actions.
-        
+
         This method performs comprehensive validation for either:
         - Position movements (when target_position_id is provided)
         - Tool actions (when action_id is provided)
-        
+
         Validation steps for MOVEMENTS:
         1. Checks state machine is not already moving
         2. Validates position transition is allowed (current → target)
@@ -1171,7 +1163,7 @@ class MotionPlatformStateMachine(StateMachine):
         4. Validates z-height policy for target position
         5. Validates all requirements for target position
         6. If valid, executes the provided function and transitions position
-        
+
         Validation steps for ACTIONS:
         1. Checks state machine is not already moving
         2. Validates action exists in registry
@@ -1180,17 +1172,17 @@ class MotionPlatformStateMachine(StateMachine):
         5. Validates position scope (action allowed at current position)
         6. Validates action requirements and excludes
         7. If valid, executes the provided function (no position change)
-        
+
         Args:
             target_position_id: The target position identifier (for movements)
             action_id: The action identifier (for tool actions)
             additional_requirements: Extra requirements beyond position/action requirements
             execution_func: Function to execute if validation passes
             **execution_kwargs: Arguments to pass to execution function
-            
+
         Returns:
             MoveValidationResult with validation outcome
-            
+
         Raises:
             ValueError: If both or neither target_position_id and action_id are provided
         """
@@ -1200,52 +1192,56 @@ class MotionPlatformStateMachine(StateMachine):
                 "Must provide exactly one of 'target_position_id' (for movements) "
                 "or 'action_id' (for actions)"
             )
-        
+
         # Step 1: Check state machine state
         if self.current_state == self.moving:
             return MoveValidationResult(
                 valid=False,
-                reason="Already executing a move. Wait for current move to complete."
+                reason="Already executing a move. Wait for current move to complete.",
             )
-        
+
         # Step 1.5: Verify all axes are homed (exempt homing actions)
-        homing_actions = {'home_all', 'home_manipulator', 'home_trickler'}
+        homing_actions = {"home_all", "home_manipulator", "home_trickler"}
         if action_id not in homing_actions:
             axes_homed = self._executor.get_machine_axes_homed()
-            axis_names = ['X', 'Y', 'Z', 'U', 'V']
-            not_homed = [axis_names[i] for i in range(len(axes_homed)) if i < len(axis_names) and not axes_homed[i]]
+            axis_names = ["X", "Y", "Z", "U", "V"]
+            not_homed = [
+                axis_names[i]
+                for i in range(len(axes_homed))
+                if i < len(axis_names) and not axes_homed[i]
+            ]
             if not_homed:
                 return MoveValidationResult(
                     valid=False,
-                    reason=f"All axes must be homed before performing moves/actions. Unhomed axes: {', '.join(not_homed)}"
+                    reason=f"All axes must be homed before performing moves/actions. Unhomed axes: {', '.join(not_homed)}",
                 )
-        
+
         # Route to appropriate validation based on whether it's a movement or action
         if target_position_id is not None:
             return self._validate_and_execute_move(
                 target_position_id=target_position_id,
                 additional_requirements=additional_requirements,
                 execution_func=execution_func,
-                **execution_kwargs
+                **execution_kwargs,
             )
         else:  # action_id is provided
             return self._validate_and_execute_action(
                 action_id=action_id,
                 additional_requirements=additional_requirements,
                 execution_func=execution_func,
-                **execution_kwargs
+                **execution_kwargs,
             )
-    
+
     def _validate_and_execute_move(
         self,
         target_position_id: str,
-        additional_requirements: Dict[str, object] | None = None,
+        additional_requirements: dict[str, object] | None = None,
         execution_func=None,
-        **execution_kwargs
+        **execution_kwargs,
     ) -> MoveValidationResult:
         """
         Internal method to validate and execute position movements.
-        
+
         See _validate_and_execute() for full documentation.
         """
         # Step 2: Validate position transition
@@ -1253,18 +1249,17 @@ class MotionPlatformStateMachine(StateMachine):
             target_descriptor = self._registry.get(target_position_id)
         except KeyError:
             return MoveValidationResult(
-                valid=False,
-                reason=f"Unknown target position '{target_position_id}'."
+                valid=False, reason=f"Unknown target position '{target_position_id}'."
             )
-        
+
         try:
             current_descriptor = self._registry.get(self.context.position_id)
         except KeyError:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Current position '{self.context.position_id}' is not registered."
+                reason=f"Current position '{self.context.position_id}' is not registered.",
             )
-        
+
         # Check if transition is allowed
         if target_position_id not in current_descriptor.allowed_destinations:
             allowed = self._format_options(current_descriptor.allowed_destinations)
@@ -1273,9 +1268,9 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=(
                     f"Cannot move from '{self.context.position_id}' to "
                     f"'{target_position_id}'. Allowed destinations: {allowed}."
-                )
+                ),
             )
-        
+
         if self.context.position_id not in target_descriptor.allowed_origins:
             allowed_origins = self._format_options(target_descriptor.allowed_origins)
             return MoveValidationResult(
@@ -1283,25 +1278,27 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=(
                     f"'{target_position_id}' cannot accept moves from "
                     f"'{self.context.position_id}'. Allowed origins: {allowed_origins}."
-                )
+                ),
             )
-        
+
         # Step 3: Validate machine is at expected current position
         try:
             current_pos = self._executor.get_machine_position()
         except RuntimeError as exc:
             return MoveValidationResult(valid=False, reason=str(exc))
         machine_validation = self.validate_machine_state(
-            machine_x=float(current_pos.get('X', 0)),
-            machine_y=float(current_pos.get('Y', 0)),
-            machine_z=float(current_pos.get('Z', 0)),
-            machine_v=float(current_pos.get('V', 0))
+            machine_x=float(current_pos.get("X", 0)),
+            machine_y=float(current_pos.get("Y", 0)),
+            machine_z=float(current_pos.get("Z", 0)),
+            machine_v=float(current_pos.get("V", 0)),
         )
         if not machine_validation.valid:
             return machine_validation
-        
+
         # Step 4: Validate z-height policy
-        z_height_issue = target_descriptor.z_height_policy.validate(self.context.z_height_id)
+        z_height_issue = target_descriptor.z_height_policy.validate(
+            self.context.z_height_id
+        )
         if z_height_issue:
             return MoveValidationResult(valid=False, reason=z_height_issue)
 
@@ -1309,13 +1306,13 @@ class MotionPlatformStateMachine(StateMachine):
         requirement_issue = self._validate_requirements(target_descriptor.requirements)
         if requirement_issue:
             return MoveValidationResult(valid=False, reason=requirement_issue)
-        
+
         # Step 6: Validate additional requirements (if provided)
         if additional_requirements:
             requirement_issue = self._validate_requirements(additional_requirements)
             if requirement_issue:
                 return MoveValidationResult(valid=False, reason=requirement_issue)
-        
+
         # Step 7: Execute if validation passed
         if execution_func:
             try:
@@ -1323,75 +1320,72 @@ class MotionPlatformStateMachine(StateMachine):
                 request = MoveRequest(target_position_id=target_position_id)
                 self.context.pending_move = request
                 self.begin_motion()
-                
+
                 # Execute the movement
                 result = execution_func(**execution_kwargs)
-                
+
                 # Complete the move (updates position)
                 self.complete_move(tool_still_engaged=False)
-                
+
                 # Return result (True/False from executor becomes valid/invalid)
                 if result is False:
                     return MoveValidationResult(
-                        valid=False,
-                        reason="Execution returned False"
+                        valid=False, reason="Execution returned False"
                     )
-                
+
                 # Wait for all buffered moves to complete before returning
                 self._executor.wait_for_moves_to_finish()
-                
+
                 return MoveValidationResult(valid=True)
-                
+
             except Exception as e:
                 # Abort the move on exception
                 if self.current_state == self.moving:
                     self.abort_motion()
                 return MoveValidationResult(
-                    valid=False,
-                    reason=f"Execution failed: {str(e)}"
+                    valid=False, reason=f"Execution failed: {str(e)}"
                 )
-        
+
         # If no execution function, just return validation result
         return MoveValidationResult(valid=True)
-    
+
     def _validate_and_execute_action(
         self,
         action_id: str,
-        additional_requirements: Dict[str, object] | None = None,
+        additional_requirements: dict[str, object] | None = None,
         execution_func=None,
-        **execution_kwargs
+        **execution_kwargs,
     ) -> MoveValidationResult:
         """
         Internal method to validate and execute tool actions.
-        
+
         All actions must be defined in the registry (config JSON).
-        
+
         See _validate_and_execute_move() for full documentation.
         """
         # Step 2: Validate action exists
         descriptor = self._actions.get(action_id)
         if descriptor is None:
             return MoveValidationResult(
-                valid=False,
-                reason=f"Unknown action '{action_id}'."
+                valid=False, reason=f"Unknown action '{action_id}'."
             )
-        
+
         # Step 3: Validate tool engagement state
         if descriptor.requires_tool_engaged and self.current_state != self.tool_engaged:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Action '{action_id}' requires the tool to be engaged."
+                reason=f"Action '{action_id}' requires the tool to be engaged.",
             )
-        
+
         if descriptor.blocked_when_engaged and self.current_state == self.tool_engaged:
             return MoveValidationResult(
                 valid=False,
                 reason=(
                     f"Action '{action_id}' cannot be performed while tool is engaged. "
                     f"Tool must be disengaged first."
-                )
+                ),
             )
-        
+
         # Step 4: Validate required tool ID
         if descriptor.required_tool_id:
             if self.context.active_tool_id != descriptor.required_tool_id:
@@ -1400,7 +1394,7 @@ class MotionPlatformStateMachine(StateMachine):
                     reason=(
                         f"Action '{action_id}' requires tool '{descriptor.required_tool_id}'. "
                         f"Current tool: '{self.context.active_tool_id}'."
-                    )
+                    ),
                 )
 
         # Step 5: Validate position scope
@@ -1417,9 +1411,9 @@ class MotionPlatformStateMachine(StateMachine):
                     reason=(
                         f"Action '{action_id}' only permitted at: {allowed}. "
                         f"Current position: '{reference_position}'."
-                    )
+                    ),
                 )
-        
+
         # Step 6: Validate machine is at expected current position unless this is a homing action
         if not (action_id and action_id.startswith("home_")):
             try:
@@ -1427,99 +1421,90 @@ class MotionPlatformStateMachine(StateMachine):
             except RuntimeError as exc:
                 return MoveValidationResult(valid=False, reason=str(exc))
             machine_validation = self.validate_machine_state(
-                machine_x=float(current_pos.get('X', 0)),
-                machine_y=float(current_pos.get('Y', 0)),
-                machine_z=float(current_pos.get('Z', 0)),
-                machine_v=float(current_pos.get('V', 0))
+                machine_x=float(current_pos.get("X", 0)),
+                machine_y=float(current_pos.get("Y", 0)),
+                machine_z=float(current_pos.get("Z", 0)),
+                machine_v=float(current_pos.get("V", 0)),
             )
         else:
             machine_validation = MoveValidationResult(valid=True)
         if not machine_validation.valid:
             return machine_validation
-        
+
         # Step 7: Validate action requirements
         requirement_issue = self._validate_requirements(descriptor.requirements)
         if requirement_issue:
             return MoveValidationResult(valid=False, reason=requirement_issue)
-        
+
         # Step 8: Validate action excludes
         exclude_issue = self._validate_excludes(descriptor.excludes)
         if exclude_issue:
             return MoveValidationResult(valid=False, reason=exclude_issue)
-        
+
         # Step 9: Validate additional requirements (if provided)
         if additional_requirements:
             requirement_issue = self._validate_requirements(additional_requirements)
             if requirement_issue:
                 return MoveValidationResult(valid=False, reason=requirement_issue)
-        
+
         # Step 10: Execute if validation passed
         if execution_func:
             try:
                 # Actions don't change position, so no state transition needed
                 # Execute the action
                 result = execution_func(**execution_kwargs)
-                
+
                 # Return result
                 if result is False or result is None:
                     return MoveValidationResult(
-                        valid=False,
-                        reason="Execution returned False"
+                        valid=False, reason="Execution returned False"
                     )
-                
+
                 # Wait for all buffered moves to complete before returning
                 self._executor.wait_for_moves_to_finish()
-                
+
                 return MoveValidationResult(valid=True)
-                
+
             except Exception as e:
                 return MoveValidationResult(
-                    valid=False,
-                    reason=f"Execution failed: {str(e)}"
+                    valid=False, reason=f"Execution failed: {str(e)}"
                 )
         # If no execution function, just return validation result
         return MoveValidationResult(valid=True)
-    
+
     # ---------------------------------------------------------------------
     # Validated Methods for JubileeManager Operations
     # ---------------------------------------------------------------------
-    
-    def validated_move_to_mold_slot(
-        self,
-        well_id: str
-    ) -> MoveValidationResult:
+
+    def validated_move_to_mold_slot(self, well_id: str) -> MoveValidationResult:
         """
         Validate and execute movement to a specific mold slot.
-        
+
         Args:
             well_id: Mold slot identifier (numerical string "0" through "17")
-            
+
         Returns:
             MoveValidationResult with outcome
         """
         # Use state machine's deck
         deck = self.context.deck
         if deck is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Deck not configured"
-            )
-        
+            return MoveValidationResult(valid=False, reason="Deck not configured")
+
         # Get mold from state machine's deck
         well = self.get_mold_from_deck(well_id)
-        
+
         # Determine target position from mold's ready_pos if available, otherwise construct from mold slot ID
-        if well and hasattr(well, 'ready_pos') and well.ready_pos:
+        if well and hasattr(well, "ready_pos") and well.ready_pos:
             target_position = well.ready_pos
         else:
             # Fallback: construct from mold slot ID
             target_position = f"mold_ready_{well_id}"
-        
+
         # If position not in registry, return error
         if not self._registry.has(target_position):
             return MoveValidationResult(
-                valid=False,
-                reason="Could not find mold ready position"
+                valid=False, reason="Could not find mold ready position"
             )
 
         # Resolve base coordinates from the logical position definition.
@@ -1542,21 +1527,16 @@ class MotionPlatformStateMachine(StateMachine):
             z=ready_z,
             v=ready_v,
         )
-    
-    def validated_move_to_scale(
-        self
-    ) -> MoveValidationResult:
+
+    def validated_move_to_scale(self) -> MoveValidationResult:
         """
         Validate and execute movement to the scale.
-        
+
         Returns:
             MoveValidationResult with outcome
         """
         if self.context.scale is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Scale not configured"
-            )
+            return MoveValidationResult(valid=False, reason="Scale not configured")
 
         pos_result = self._resolve_ready_position_coords("scale_ready")
         if pos_result.error:
@@ -1576,7 +1556,7 @@ class MotionPlatformStateMachine(StateMachine):
             ready_z=ready_z,
             ready_v=ready_v,
         )
-    
+
     def validated_move_to_dispenser(self) -> MoveValidationResult:
         """
         Validate and execute movement to the next available dispenser ready position.
@@ -1590,13 +1570,11 @@ class MotionPlatformStateMachine(StateMachine):
         """
         # Find the first dispenser with pistons remaining
         piston_dispenser = next(
-            (d for d in self.context.piston_dispensers if d.num_pistons > 0),
-            None
+            (d for d in self.context.piston_dispensers if d.num_pistons > 0), None
         )
         if piston_dispenser is None:
             return MoveValidationResult(
-                valid=False,
-                reason="No pistons available in any dispenser"
+                valid=False, reason="No pistons available in any dispenser"
             )
 
         target_position = piston_dispenser.ready_pos
@@ -1604,7 +1582,7 @@ class MotionPlatformStateMachine(StateMachine):
         if not self._registry.has(target_position):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Dispenser ready position '{target_position}' not defined in configuration"
+                reason=f"Dispenser ready position '{target_position}' not defined in configuration",
             )
 
         pos_result = self._resolve_ready_position_coords(target_position)
@@ -1645,7 +1623,9 @@ class MotionPlatformStateMachine(StateMachine):
             )
 
         if tray_index_int < 0:
-            return MoveValidationResult(valid=False, reason="Tray index must be non-negative")
+            return MoveValidationResult(
+                valid=False, reason="Tray index must be non-negative"
+            )
 
         tray_ready = next(
             (
@@ -1662,7 +1642,9 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=f"Sample tray with tray_index={tray_index_int} is not configured",
             )
 
-        pos_result = self._resolve_ready_position_coords(tray_ready.identifier, require_v=False)
+        pos_result = self._resolve_ready_position_coords(
+            tray_ready.identifier, require_v=False
+        )
         if pos_result.error:
             return pos_result.error
         if pos_result.coords is None:
@@ -1701,7 +1683,9 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=f"Tray index '{tray_index}' must be a non-negative integer",
             )
         if tray_index_int < 0:
-            return MoveValidationResult(valid=False, reason="Tray index must be non-negative")
+            return MoveValidationResult(
+                valid=False, reason="Tray index must be non-negative"
+            )
 
         try:
             sample_index = int(str(sample_id))
@@ -1711,7 +1695,9 @@ class MotionPlatformStateMachine(StateMachine):
                 reason=f"Sample id '{sample_id}' must be a non-negative integer",
             )
         if sample_index < 0:
-            return MoveValidationResult(valid=False, reason="Sample id must be non-negative")
+            return MoveValidationResult(
+                valid=False, reason="Sample id must be non-negative"
+            )
 
         slot_id = f"sample_tray_{tray_index_int}_slot_{sample_index}"
         if not self._registry.has(slot_id):
@@ -1796,23 +1782,36 @@ class MotionPlatformStateMachine(StateMachine):
             press_angle = getattr(hardness_tester, "zero_press_angle", None)
             release_angle = getattr(hardness_tester, "zero_release_angle", None)
         else:
-            return None, None, None, f"Unknown button '{button}'; expected 'power' or 'zero'"
-
-        if not servo_id:
-            return None, None, None, (
-                f"No servo configured on {tester_mode} tester"
+            return (
+                None,
+                None,
+                None,
+                f"Unknown button '{button}'; expected 'power' or 'zero'",
             )
 
+        if not servo_id:
+            return None, None, None, (f"No servo configured on {tester_mode} tester")
+
         if press_angle is None or release_angle is None:
-            return None, None, None, (
-                f"Servo angles for '{button}' button are not configured on {tester_mode} tester"
+            return (
+                None,
+                None,
+                None,
+                (
+                    f"Servo angles for '{button}' button are not configured on {tester_mode} tester"
+                ),
             )
 
         for label, angle in (("press", press_angle), ("release", release_angle)):
             if not (0 <= int(angle) <= 180):
-                return None, None, None, (
-                    f"Servo {label}_angle {angle} is out of range [0, 180] "
-                    f"for '{button}' button on {tester_mode} tester"
+                return (
+                    None,
+                    None,
+                    None,
+                    (
+                        f"Servo {label}_angle {angle} is out of range [0, 180] "
+                        f"for '{button}' button on {tester_mode} tester"
+                    ),
                 )
 
         s = str(servo_id).strip()
@@ -1823,7 +1822,9 @@ class MotionPlatformStateMachine(StateMachine):
 
         return channel, int(press_angle), int(release_angle), None
 
-    def validated_hardness_turn_on(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_turn_on(
+        self, mode: str | None = None, hardness_tester=None
+    ) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-on button actuation.
 
@@ -1831,7 +1832,9 @@ class MotionPlatformStateMachine(StateMachine):
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
         """
-        channel, press, release, err = self._extract_servo_angles(hardness_tester, "power")
+        channel, press, release, err = self._extract_servo_angles(
+            hardness_tester, "power"
+        )
         if err:
             return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
@@ -1843,7 +1846,9 @@ class MotionPlatformStateMachine(StateMachine):
             release_angle=release,
         )
 
-    def validated_hardness_turn_off(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_turn_off(
+        self, mode: str | None = None, hardness_tester=None
+    ) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-off button actuation.
 
@@ -1851,7 +1856,9 @@ class MotionPlatformStateMachine(StateMachine):
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
         """
-        channel, press, release, err = self._extract_servo_angles(hardness_tester, "power")
+        channel, press, release, err = self._extract_servo_angles(
+            hardness_tester, "power"
+        )
         if err:
             return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
@@ -1863,7 +1870,9 @@ class MotionPlatformStateMachine(StateMachine):
             release_angle=release,
         )
 
-    def validated_hardness_zero(self, mode: str | None = None, hardness_tester=None) -> MoveValidationResult:
+    def validated_hardness_zero(
+        self, mode: str | None = None, hardness_tester=None
+    ) -> MoveValidationResult:
         """
         Validate and execute hardness tester zero button actuation.
 
@@ -1871,7 +1880,9 @@ class MotionPlatformStateMachine(StateMachine):
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
         """
-        channel, press, release, err = self._extract_servo_angles(hardness_tester, "zero")
+        channel, press, release, err = self._extract_servo_angles(
+            hardness_tester, "zero"
+        )
         if err:
             return MoveValidationResult(valid=False, reason=err)
         return self._validate_and_execute(
@@ -1883,16 +1894,13 @@ class MotionPlatformStateMachine(StateMachine):
             release_angle=release,
         )
 
-    def validated_fill_powder(
-        self,
-        target_weight: float
-    ) -> MoveValidationResult:
+    def validated_fill_powder(self, target_weight: float) -> MoveValidationResult:
         """
         Validate and execute filling mold with powder.
-        
+
         Args:
             target_weight: Target weight to fill
-            
+
         Returns:
             MoveValidationResult with outcome
         """
@@ -1900,20 +1908,19 @@ class MotionPlatformStateMachine(StateMachine):
         if self.context.position_id != "scale_active":
             return MoveValidationResult(
                 valid=False,
-                reason=f"Must be at scale_active position to fill powder. Current: {self.context.position_id}"
+                reason=f"Must be at scale_active position to fill powder. Current: {self.context.position_id}",
             )
-        
+
         if not self.context.mold_on_scale:
             return MoveValidationResult(
-                valid=False,
-                reason="Mold must be on scale before filling with powder"
+                valid=False, reason="Mold must be on scale before filling with powder"
             )
 
         # Execute through generic validation framework
         return self._validate_and_execute(
             action_id="fill_mold",
             execution_func=self._executor.execute_fill_powder,
-            target_weight=target_weight
+            target_weight=target_weight,
         )
 
     def validated_open_powder_dispenser_cover(self) -> MoveValidationResult:
@@ -1928,7 +1935,7 @@ class MotionPlatformStateMachine(StateMachine):
         """
         return self._validate_and_execute(
             action_id="open_powder_dispenser_cover",
-            execution_func=self._executor.execute_open_powder_dispenser_cover
+            execution_func=self._executor.execute_open_powder_dispenser_cover,
         )
 
     def validated_close_powder_dispenser_cover(self) -> MoveValidationResult:
@@ -1943,12 +1950,10 @@ class MotionPlatformStateMachine(StateMachine):
         """
         return self._validate_and_execute(
             action_id="close_powder_dispenser_cover",
-            execution_func=self._executor.execute_close_powder_dispenser_cover
+            execution_func=self._executor.execute_close_powder_dispenser_cover,
         )
 
-    def validated_move_to_global_ready(
-        self
-    ) -> MoveValidationResult:
+    def validated_move_to_global_ready(self) -> MoveValidationResult:
         """
         Validate and execute movement to the global ready position.
 
@@ -1957,8 +1962,7 @@ class MotionPlatformStateMachine(StateMachine):
         global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
         if global_ready_pos is None:
             return MoveValidationResult(
-                valid=False,
-                reason="global_ready position not defined in configuration"
+                valid=False, reason="global_ready position not defined in configuration"
             )
 
         pos_result = self._resolve_ready_position_coords(global_ready_pos.identifier)
@@ -1980,21 +1984,20 @@ class MotionPlatformStateMachine(StateMachine):
             ready_v=ready_v,
         )
 
-
     def validated_home_tamper(
         self,
         tamper_axis: str | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute tamper homing (uses home_manipulator action).
-        
+
         Can be performed while holding a mold without a top piston. The homing process
         uses the mold itself as a reference:
         - Start position: v=2 (tamper inserted into mold)
         - End position: v=-7 (tamper touching bottom of mold)
-        
+
         This establishes accurate positioning by using the mold bottom as a reference point.
-        
+
         Args:
             tamper_axis: Axis letter for tamper; defaults to ``manipulator.tamper_axis`` in system config.
 
@@ -2007,46 +2010,46 @@ class MotionPlatformStateMachine(StateMachine):
             tamper_axis=self._axis_or_config(tamper_axis),
         )
 
-    def validated_home_all(
-        self
-    ) -> MoveValidationResult:
+    def validated_home_all(self) -> MoveValidationResult:
         """
         Validate and execute homing for all axes (X, Y, Z, U).
-        
+
         This action can be conducted from any position, but requires:
         - No tool picked up (active_tool_id should not be "manipulator")
         - No mold (payload_state should be "empty")
-        
+
         Returns machine to global_ready position after homing.
-        
+
         Returns:
             MoveValidationResult with outcome
         """
         result = self._validate_and_execute(
             action_id="home_all",
             execution_func=self._executor.execute_home_all,
-            registry=self._registry
+            registry=self._registry,
         )
-        
+
         # If successful, update context to reflect position change to global_ready
         if result.valid:
-            global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
+            global_ready_pos = self._registry.find_first_of_type(
+                PositionType.GLOBAL_READY
+            )
             if global_ready_pos:
                 self.context.position_id = global_ready_pos.identifier
                 # Set z_height to mold_transfer_safe (default after homing)
                 self.context.z_height_id = "mold_transfer_safe"
 
         return result
-    
+
     def validated_home_manipulator(
         self,
         manipulator_axis: str | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute homing for the manipulator axis (V).
-        
+
         Requires no mold picked up (payload_state should be "empty").
-        
+
         Args:
             manipulator_axis: Axis letter for manipulator; defaults to ``manipulator.tamper_axis`` in system config.
 
@@ -2058,32 +2061,26 @@ class MotionPlatformStateMachine(StateMachine):
             execution_func=self._executor.execute_home_manipulator,
             manipulator_axis=self._axis_or_config(manipulator_axis),
         )
-    
-    def validated_home_trickler(
-        self,
-        trickler_axis: str = 'W'
-    ) -> MoveValidationResult:
+
+    def validated_home_trickler(self, trickler_axis: str = "W") -> MoveValidationResult:
         """
         Validate and execute homing for the trickler axis (W).
-        
+
         Can be homed at any time with no requirements.
-        
+
         Args:
             trickler_axis: Axis letter for trickler (default 'W')
-            
+
         Returns:
             MoveValidationResult with outcome
         """
         return self._validate_and_execute(
             action_id="home_trickler",
             execution_func=self._executor.execute_home_trickler,
-            trickler_axis=trickler_axis
+            trickler_axis=trickler_axis,
         )
-    
-    def validated_pickup_tool(
-        self,
-        tool
-    ) -> MoveValidationResult:
+
+    def validated_pickup_tool(self, tool) -> MoveValidationResult:
         """
         Validate and execute picking up a tool.
 
@@ -2098,17 +2095,17 @@ class MotionPlatformStateMachine(StateMachine):
         Note: The machine's pickup_tool() method is decorated with @requires_safe_z,
         which automatically raises the bed height to deck.safe_z + 20 if it is not
         already at that height.
-        
+
         Args:
             tool: The Tool object to pick up
-            
+
         Returns:
             MoveValidationResult with outcome
         """
-        if not hasattr(tool, 'name') or not tool.name:
+        if not hasattr(tool, "name") or not tool.name:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Tool must expose a non-empty name. Attempted to pick up: {type(tool).__name__}"
+                reason=f"Tool must expose a non-empty name. Attempted to pick up: {type(tool).__name__}",
             )
 
         tool_id = str(tool.name)
@@ -2116,7 +2113,7 @@ class MotionPlatformStateMachine(StateMachine):
         if tool_id not in supported_tool_ids:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Unsupported tool '{tool_id}'. Supported tools: {self._format_options(supported_tool_ids)}"
+                reason=f"Unsupported tool '{tool_id}'. Supported tools: {self._format_options(supported_tool_ids)}",
             )
 
         # Pickup is only valid from global_ready (enforced by the action's
@@ -2144,24 +2141,24 @@ class MotionPlatformStateMachine(StateMachine):
             global_ready_z=gr_z,
             global_ready_v=gr_v,
         )
-        
+
         # If successful, update context to reflect tool pickup and position change
         if result.valid:
             # Update active tool
             self.context.active_tool_id = tool_id
             self.register_tool(ToolStatus(tool_id=tool_id))
             # Update position to global_ready
-            global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
+            global_ready_pos = self._registry.find_first_of_type(
+                PositionType.GLOBAL_READY
+            )
             if global_ready_pos:
                 self.context.position_id = global_ready_pos.identifier
                 # Set z_height to mold_transfer_safe
                 self.context.z_height_id = "mold_transfer_safe"
 
         return result
-    
-    def validated_park_tool(
-        self
-    ) -> MoveValidationResult:
+
+    def validated_park_tool(self) -> MoveValidationResult:
         """
         Validate and execute parking the current tool.
 
@@ -2171,7 +2168,7 @@ class MotionPlatformStateMachine(StateMachine):
         Note: The machine's park_tool() method is decorated with @requires_safe_z,
         which automatically raises the bed height to deck.safe_z + 20 if it is not
         already at that height.
-        
+
         Returns:
             MoveValidationResult with outcome
         """
@@ -2196,7 +2193,7 @@ class MotionPlatformStateMachine(StateMachine):
             global_ready_z=gr_z,
             global_ready_v=gr_v,
         )
-        
+
         # If successful, update context to reflect tool parking
         if result.valid:
             # Clear active tool
@@ -2206,10 +2203,9 @@ class MotionPlatformStateMachine(StateMachine):
             self.context.z_height_id = "mold_transfer_safe"
 
         return result
-    
+
     def validated_retrieve_piston(
-        self,
-        manipulator_config: Dict[str, object]
+        self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
         """
         Validate and execute retrieving a piston from the current dispenser position.
@@ -2237,48 +2233,42 @@ class MotionPlatformStateMachine(StateMachine):
         if not pos_id.startswith(prefix):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Must be at a dispenser_ready position to retrieve a piston. Current: {pos_id}"
+                reason=f"Must be at a dispenser_ready position to retrieve a piston. Current: {pos_id}",
             )
         try:
-            dispenser_index = int(pos_id[len(prefix):])
+            dispenser_index = int(pos_id[len(prefix) :])
         except ValueError:
             return MoveValidationResult(
                 valid=False,
-                reason=f"Cannot determine dispenser index from position '{pos_id}'"
+                reason=f"Cannot determine dispenser index from position '{pos_id}'",
             )
 
         dispensers = self.context.piston_dispensers
         if dispenser_index < 0 or dispenser_index >= len(dispensers):
             return MoveValidationResult(
                 valid=False,
-                reason=f"Dispenser index {dispenser_index} derived from position '{pos_id}' is out of range"
+                reason=f"Dispenser index {dispenser_index} derived from position '{pos_id}' is out of range",
             )
         piston_dispenser = dispensers[dispenser_index]
 
         if self.context.current_well is None:
-            return MoveValidationResult(
-                valid=False,
-                reason="Not carrying a mold"
-            )
+            return MoveValidationResult(valid=False, reason="Not carrying a mold")
 
         mold = self.context.current_well
 
         if mold.has_top_piston:
             return MoveValidationResult(
-                valid=False,
-                reason="Mold already has a top piston"
+                valid=False, reason="Mold already has a top piston"
             )
 
         if piston_dispenser.num_pistons == 0:
             return MoveValidationResult(
-                valid=False,
-                reason="No pistons available in dispenser"
+                valid=False, reason="No pistons available in dispenser"
             )
 
         if self.context.mold_on_scale:
             return MoveValidationResult(
-                valid=False,
-                reason="Cannot add top piston when mold is on scale"
+                valid=False, reason="Cannot add top piston when mold is on scale"
             )
 
         # Resolve the dispenser ready position coordinates
@@ -2293,11 +2283,11 @@ class MotionPlatformStateMachine(StateMachine):
             action_id="retrieve_piston",
             execution_func=self._executor.execute_place_top_piston,
             piston_dispenser=piston_dispenser,
-            tamper_axis=manipulator_config['tamper_axis'],
+            tamper_axis=manipulator_config["tamper_axis"],
             ready_x=ready_x,
             ready_y=ready_y,
             ready_z=ready_z,
-            ready_v=ready_v
+            ready_v=ready_v,
         )
 
         if result.valid:
@@ -2335,7 +2325,9 @@ class MotionPlatformStateMachine(StateMachine):
         """Validate whether an auxiliary action is permitted."""
         descriptor = self._actions.get(action_id)
         if descriptor is None:
-            return MoveValidationResult(valid=False, reason=f"Unknown action '{action_id}'.")
+            return MoveValidationResult(
+                valid=False, reason=f"Unknown action '{action_id}'."
+            )
 
         # Check if action requires tool engagement (e.g., fill_mold)
         if descriptor.requires_tool_engaged and self.current_state != self.tool_engaged:
@@ -2425,7 +2417,10 @@ class MotionPlatformStateMachine(StateMachine):
                     reason="Cannot leave the ready point while the tool is engaged.",
                 )
         else:
-            if request.target_position_id not in current_descriptor.allowed_destinations:
+            if (
+                request.target_position_id
+                not in current_descriptor.allowed_destinations
+            ):
                 allowed = self._format_options(current_descriptor.allowed_destinations)
                 return MoveValidationResult(
                     valid=False,
@@ -2436,7 +2431,9 @@ class MotionPlatformStateMachine(StateMachine):
                 )
 
             if self.context.position_id not in target_descriptor.allowed_origins:
-                allowed_origins = self._format_options(target_descriptor.allowed_origins)
+                allowed_origins = self._format_options(
+                    target_descriptor.allowed_origins
+                )
                 return MoveValidationResult(
                     valid=False,
                     reason=(
@@ -2446,7 +2443,9 @@ class MotionPlatformStateMachine(StateMachine):
                 )
 
         if self.current_state != self.tool_engaged:
-            z_height_issue = target_descriptor.z_height_policy.validate(self.context.z_height_id)
+            z_height_issue = target_descriptor.z_height_policy.validate(
+                self.context.z_height_id
+            )
             if z_height_issue:
                 return MoveValidationResult(valid=False, reason=z_height_issue)
 
@@ -2467,7 +2466,9 @@ class MotionPlatformStateMachine(StateMachine):
         if not self.context.pending_move:
             raise RuntimeError("Cannot complete move when no pending move is recorded.")
 
-        target_position = self._registry.get(self.context.pending_move.target_position_id)
+        target_position = self._registry.get(
+            self.context.pending_move.target_position_id
+        )
         self.context.position_id = target_position.identifier
 
         if tool_still_engaged:
@@ -2511,7 +2512,9 @@ class MotionPlatformStateMachine(StateMachine):
     def request_tool_disengagement(self) -> MoveValidationResult:
         """Attempt to disengage the tool and return to idle."""
         if self.current_state != self.tool_engaged:
-            return MoveValidationResult(valid=False, reason="No tool is currently engaged.")
+            return MoveValidationResult(
+                valid=False, reason="No tool is currently engaged."
+            )
 
         if not self.context.engaged_ready_position_id:
             return MoveValidationResult(
@@ -2564,16 +2567,16 @@ class MotionPlatformStateMachine(StateMachine):
     ) -> MoveValidationResult:
         """
         Validate that the machine's physical coordinates match the FSM's expected position.
-        
+
         This is a safety check to ensure the machine is actually where the FSM thinks it is.
         Should be called before attempting moves or actions.
-        
+
         Args:
             machine_x: Current X coordinate from machine
             machine_y: Current Y coordinate from machine
             machine_z: Current Z coordinate from machine
             machine_v: Current V (manipulator) coordinate from machine
-            
+
         Returns:
             MoveValidationResult indicating if machine state matches expected position
         """
@@ -2585,7 +2588,7 @@ class MotionPlatformStateMachine(StateMachine):
             machine_v=machine_v,
             current_z_height_id=self.context.z_height_id,
         )
-        
+
         if error:
             return MoveValidationResult(
                 valid=False,
@@ -2594,7 +2597,7 @@ class MotionPlatformStateMachine(StateMachine):
                     f"Machine may not be at expected position '{self.context.position_id}'."
                 ),
             )
-        
+
         return MoveValidationResult(valid=True)
 
     # ---------------------------------------------------------------------

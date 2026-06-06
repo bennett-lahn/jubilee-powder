@@ -122,6 +122,9 @@ def supported_tool_ids_from_system_config() -> frozenset[str]:
             name = tool.get("name")
             if isinstance(name, str):
                 tool_ids.add(name)
-    for tester in (cfg.system.hardness_testers.shore_a, cfg.system.hardness_testers.shore_d):
+    for tester in (
+        cfg.system.hardness_testers.shore_a,
+        cfg.system.hardness_testers.shore_d,
+    ):
         tool_ids.add(tester.tool.name)
     return frozenset(tool_ids)

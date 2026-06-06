@@ -3,9 +3,10 @@ class PistonDispenser:
     PistonDispenser is a class representing the piston dispensers on the side of the Jubilee.
     It is used to keep track of the number of pistons in each dispenser.
     """
-    index : int      # index of the dispenser on the side of the Jubilee
-    num_pistons: int # number of pistons in the dispenser
-    ready_pos: str   # State machine position name (e.g., "dispenser_ready_0")
+
+    index: int  # index of the dispenser on the side of the Jubilee
+    num_pistons: int  # number of pistons in the dispenser
+    ready_pos: str  # State machine position name (e.g., "dispenser_ready_0")
 
     def __init__(self, index, num_pistons):
         self.index = index

@@ -41,9 +41,9 @@ from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
 
 def _sample_display_id(sample: dict) -> str:
     """Build a stable sample identifier for UI progress tracking."""
-    t_idx = sample.get('tray_index', 'UnknownTray')
-    s_id = sample.get('sample_index', 'UnknownID')
-    
+    t_idx = sample.get("tray_index", "UnknownTray")
+    s_id = sample.get("sample_index", "UnknownID")
+
     return f"{t_idx}:{s_id}"
 
 
@@ -149,8 +149,12 @@ def _apply_hardness_progress_update(
         "result_shore_d": measured_result if pass_mode == "shore_d" else None,
         "status_shore_a": pass_status if pass_mode == "shore_a" else None,
         "status_shore_d": pass_status if pass_mode == "shore_d" else None,
-        "image_path_shore_a": image_url if pass_mode == "shore_a" else item.get("image_path_shore_a"),
-        "image_path_shore_d": image_url if pass_mode == "shore_d" else item.get("image_path_shore_d"),
+        "image_path_shore_a": image_url
+        if pass_mode == "shore_a"
+        else item.get("image_path_shore_a"),
+        "image_path_shore_d": image_url
+        if pass_mode == "shore_d"
+        else item.get("image_path_shore_d"),
     }
     progress.mark_item_complete(index, **updates)
 
@@ -158,6 +162,7 @@ def _apply_hardness_progress_update(
 # =============================================================================
 # MockHardwareManager
 # =============================================================================
+
 
 class MockHardwareManager:
     """Simulated hardware manager for UI development without physical hardware.
@@ -169,10 +174,10 @@ class MockHardwareManager:
     """
 
     def __init__(self) -> None:
-        self.state:   MachineState  = MachineState.DISCONNECTED
+        self.state: MachineState = MachineState.DISCONNECTED
         self._config: HardwareConfig | None = None
         self._dispensers: list[DispenserStatus] = []
-        self._t0:         float = time.monotonic()
+        self._t0: float = time.monotonic()
         self._scale_base: float = 50.0
 
     # ── Properties ────────────────────────────────────────────────────────────
@@ -204,7 +209,7 @@ class MockHardwareManager:
             for i in range(config.num_dispensers)
         ]
         self.state = MachineState.HOMING
-        await asyncio.sleep(2.0)          # simulate homing sequence
+        await asyncio.sleep(2.0)  # simulate homing sequence
         self.state = MachineState.IDLE
 
     async def disconnect(self) -> None:
@@ -222,7 +227,7 @@ class MockHardwareManager:
             float: Simulated weight in grams (sine drift + Gaussian noise),
             always >= 0.
         """
-        t     = time.monotonic() - self._t0
+        t = time.monotonic() - self._t0
         drift = math.sin(t * 0.15) * 1.8
         noise = random.gauss(0.0, 0.04)
         return round(max(0.0, self._scale_base + drift + noise), 3)
@@ -365,6 +370,7 @@ class MockHardwareManager:
 # HardwareManager
 # =============================================================================
 
+
 class HardwareManager:
     """Production wrapper around ``JubileeManager`` for real hardware.
 
@@ -375,9 +381,9 @@ class HardwareManager:
     """
 
     def __init__(self) -> None:
-        self.state:    MachineState   = MachineState.DISCONNECTED
-        self._config:  HardwareConfig | None = None
-        self._manager                 = None   # JubileeManager instance
+        self.state: MachineState = MachineState.DISCONNECTED
+        self._config: HardwareConfig | None = None
+        self._manager = None  # JubileeManager instance
 
     # ── Properties ────────────────────────────────────────────────────────────
 
@@ -403,9 +409,10 @@ class HardwareManager:
                             DISCONNECTED → HOMING → ERROR (failure)
         """
         self._config = config
-        self.state   = MachineState.HOMING
+        self.state = MachineState.HOMING
         try:
-            from src.JubileeManager import JubileeManager as _JM   # lazy import
+            from src.JubileeManager import JubileeManager as _JM  # lazy import
+
             self._manager = _JM(
                 num_piston_dispensers=config.num_dispensers,
                 num_pistons_per_dispenser=config.pistons_per_dispenser,
@@ -416,16 +423,19 @@ class HardwareManager:
                 scale_port=config.scale_port,
             )
             if not success:
-                detail = getattr(self._manager, "last_error", None) or "Unknown connection error"
+                detail = (
+                    getattr(self._manager, "last_error", None)
+                    or "Unknown connection error"
+                )
                 raise RuntimeError(f"Connection failed: {detail}")
-            # disconnect() may have been called while blocked in the background thread.  
+            # disconnect() may have been called while blocked in the background thread.
             # If so, _manager was cleared and state was set to DISCONNECTED; honour that instead.
             if self._manager is None:
                 return
             self.state = MachineState.IDLE
         except Exception:
             traceback.print_exc()
-            self.state    = MachineState.ERROR
+            self.state = MachineState.ERROR
             self._manager = None
             raise
 
@@ -527,8 +537,10 @@ class HardwareManager:
                 # Register a jam callback so the dispensing loop can signal
                 # the UI by writing into progress without blocking the caller.
                 well_id = well["well_id"]
+
                 def _on_jam(wid=well_id):
                     progress.set_jam(wid)
+
                 self._manager.set_jam_callback(_on_jam)
 
                 success = await asyncio.to_thread(
@@ -541,13 +553,17 @@ class HardwareManager:
                 self._manager.set_jam_callback(None)
 
                 if not success:
-                    detail = getattr(self._manager, "last_error", None) or "Unknown error"
+                    detail = (
+                        getattr(self._manager, "last_error", None) or "Unknown error"
+                    )
                     raise RuntimeError(
                         f"Dispense failed for well {well['well_id']!r}: {detail}"
                     )
                 progress.mark_item_complete(
                     i,
-                    actual_weight=_safe_float(getattr(self._manager, "last_dispense_weight", None)),
+                    actual_weight=_safe_float(
+                        getattr(self._manager, "last_dispense_weight", None)
+                    ),
                 )
         finally:
             if self._manager is not None:
@@ -589,9 +605,7 @@ class HardwareManager:
                     image_save_path = None
                     image_url = None
                     if job_log is not None:
-                        img_filename = (
-                            f"{sample['tray_index']}_{sample['sample_index']}_{pass_mode}.jpg"
-                        )
+                        img_filename = f"{sample['tray_index']}_{sample['sample_index']}_{pass_mode}.jpg"
                         image_save_path = job_log.image_dir / img_filename
                         image_url = (
                             f"/api/files/images/{job_log._id:04d}/{img_filename}"
@@ -606,7 +620,10 @@ class HardwareManager:
                         image_save_path,
                     )
                     if not success:
-                        detail = getattr(self._manager, "last_error", None) or "Unknown error"
+                        detail = (
+                            getattr(self._manager, "last_error", None)
+                            or "Unknown error"
+                        )
                         raise RuntimeError(
                             "Hardness test failed for "
                             f"tray {sample['tray_index']} sample {sample['sample_index']!r}: {detail}"
@@ -617,7 +634,10 @@ class HardwareManager:
                     )
                     sample_error = getattr(self._manager, "last_hardness_error", None)
                     if measured_result is None:
-                        sample_error = sample_error or "OCR did not return a numeric hardness value."
+                        sample_error = (
+                            sample_error
+                            or "OCR did not return a numeric hardness value."
+                        )
 
                     # Only record the image URL if the file was actually saved.
                     confirmed_image_url = None
@@ -648,8 +668,8 @@ class HardwareManager:
         here so the job finally-block cannot silently reset it back to IDLE.
         """
         if self._manager is not None:
-            await asyncio.to_thread(self._manager.abort)   # Bypass state machine
-        self.state = MachineState.ERROR                    # Prevents job finally-block reset
+            await asyncio.to_thread(self._manager.abort)  # Bypass state machine
+        self.state = MachineState.ERROR  # Prevents job finally-block reset
 
     def clear_jam(self) -> None:
         """Unblock the dispensing loop after the operator clears a powder jam.

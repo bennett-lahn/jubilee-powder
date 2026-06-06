@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
@@ -161,7 +161,9 @@ class ConfigLoader:
         self._initialized = True
 
     @classmethod
-    def from_file(cls, config_path: Path, project_root: Path | None = None) -> "ConfigLoader":
+    def from_file(
+        cls, config_path: Path, project_root: Path | None = None
+    ) -> "ConfigLoader":
         """Load config from an arbitrary path (for tests). Does not use the singleton."""
         loader = object.__new__(cls)
         loader._initialized = False
@@ -267,7 +269,7 @@ class ConfigLoader:
     def get_tamp_speed_max(self) -> int:
         return self._system.manipulator.tamp_speed_max
 
-    def get_tamp_defaults(self) -> Tuple[float, int]:
+    def get_tamp_defaults(self) -> tuple[float, int]:
         m = self._system.manipulator
         return m.tamp_depth_default, m.tamp_speed_default
 

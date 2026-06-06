@@ -12,11 +12,17 @@ Job export also requires completed job logs to include ``metadata.job_type``,
 ``metadata.id``, and the appropriate ``state.molds`` or ``state.samples`` section.
 """
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.google_drive.drive_backup import JobDriveBackup
+
 __all__ = ["JobDriveBackup"]
 
 
 def __getattr__(name: str):
     if name == "JobDriveBackup":
         from src.google_drive.drive_backup import JobDriveBackup
+
         return JobDriveBackup
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
