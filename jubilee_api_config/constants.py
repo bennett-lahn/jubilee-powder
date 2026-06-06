@@ -13,3 +13,11 @@ class FeedRate(Enum):
     FAST = 5000
     MEDIUM = 2800
     SLOW = 700
+
+
+# Hardness sample tray layout (matches frontend/src/constants/hardnessTray.js
+# and motion platform position metadata).
+HARDNESS_ROWS = 5
+HARDNESS_COLS = 7
+HARDNESS_TRAY_COUNT = 2
+HARDNESS_TRAY_CAPACITY = HARDNESS_ROWS * HARDNESS_COLS

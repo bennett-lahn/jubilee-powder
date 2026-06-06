@@ -8,7 +8,7 @@
     },
     "server": {
         "cors_origins": ["http://localhost:5173"],
-        "mock_hardware": true
+        "mock_hardware": false
     },
     "machine": {
         "duet_ip": "192.168.1.2",

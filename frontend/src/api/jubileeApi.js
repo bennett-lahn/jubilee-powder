@@ -20,8 +20,15 @@ async function request(path, options = {}) {
     let detail = `${res.status} ${res.statusText}`
     try {
       const body = await res.json()
-      if (body?.detail) detail = body.detail
-    } catch { /* ignore parse errors */ }
+      console.error('[API] Non-2xx response', res.status, path, body)
+      if (body?.detail) {
+        detail = Array.isArray(body.detail)
+          ? body.detail.map((e) => e.msg ?? JSON.stringify(e)).join('; ')
+          : String(body.detail)
+      }
+    } catch (parseErr) {
+      console.error('[API] Could not parse error body:', parseErr)
+    }
     throw new Error(detail)
   }
 

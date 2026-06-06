@@ -37,7 +37,7 @@ import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 # Allow imports from the project root (src.JobLog etc.) when the server is
 # launched from either the frontend/ directory or the project root.
@@ -60,8 +60,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from models import DispenserStatus, HardwareConfig, JobProgress, MachineState
+from models import HardwareConfig, JobProgress, MachineState
 from hardware_manager import HardwareManager, MockHardwareManager
+from jubilee_api_config.constants import (
+    HARDNESS_COLS,
+    HARDNESS_ROWS,
+    HARDNESS_TRAY_CAPACITY,
+    HARDNESS_TRAY_COUNT,
+)
 
 # ---------------------------------------------------------------------------
 # Optional Google Drive job log backup
@@ -88,6 +94,7 @@ def _load_drive_backup() -> tuple["JobDriveBackup" | None, str | None]:
         if not config.get_google_drive_enabled():
             return None, None
         from src.google_drive.drive_backup import JobDriveBackup
+
         return JobDriveBackup(), None
     except Exception as exc:
         msg = str(exc)
@@ -129,25 +136,28 @@ def _mock_hardware_enabled() -> bool:
 # =============================================================================
 # Pydantic models — endpoint-specific requests
 # =============================================================================
+    
 
 class UpdateDispenserRequest(BaseModel):
     num_pistons: int = Field(ge=0)
 
 
 class PowderWell(BaseModel):
-    well_id:       str   = Field(min_length=1)
-    target_weight: float = Field(gt=0.0, le=5_000.0, description="Target weight in grams")
+    well_id: str = Field(min_length=1)
+    target_weight: float = Field(
+        gt=0.0, le=5_000.0, description="Target weight in grams"
+    )
 
 
 class HardnessSample(BaseModel):
-    tray_index:   int = Field(ge=0, le=1)
-    sample_index: int = Field(ge=0)
-    mode:         Literal["shore_a", "shore_a_d", "shore_d"]
+    tray_index: int = Field(ge=0, le=HARDNESS_TRAY_COUNT - 1)
+    sample_index: int = Field(ge=0, le=HARDNESS_TRAY_CAPACITY - 1)
+    mode: Literal["shore_a", "shore_a_d", "shore_d"]
 
 
 class StartPowderJobRequest(BaseModel):
     job_type: Literal["dispensing"] = "dispensing"
-    wells:    list[PowderWell] = Field(
+    wells: list[PowderWell] = Field(
         min_length=1,
         max_length=24,
         description="At most 24 wells per job (fixed API limit).",
@@ -156,16 +166,19 @@ class StartPowderJobRequest(BaseModel):
 
 class StartHardnessJobRequest(BaseModel):
     job_type: Literal["hardness"] = "hardness"
-    samples:  list[HardnessSample] = Field(
+    samples: list[HardnessSample] = Field(
         min_length=1,
-        max_length=24,
-        description="At most 24 samples per job (fixed API limit).",
+        max_length=HARDNESS_TRAY_CAPACITY * HARDNESS_TRAY_COUNT,
+        description=(
+            f"At most {HARDNESS_TRAY_CAPACITY * HARDNESS_TRAY_COUNT} samples per job "
+            f"({HARDNESS_TRAY_COUNT} trays × {HARDNESS_TRAY_CAPACITY} slots)."
+        ),
     )
 
 
 # Discriminated union: FastAPI picks the correct model from the job_type field.
 JobRequest = Annotated[
-    Union[StartPowderJobRequest, StartHardnessJobRequest],
+    StartPowderJobRequest | StartHardnessJobRequest,
     Body(discriminator="job_type"),
 ]
 
@@ -173,6 +186,7 @@ JobRequest = Annotated[
 # =============================================================================
 # WebSocket connection manager
 # =============================================================================
+
 
 class ConnectionManager:
     """Tracks every live browser WebSocket client.
@@ -234,13 +248,14 @@ class ConnectionManager:
 hw: MockHardwareManager | HardwareManager = (
     MockHardwareManager() if _mock_hardware_enabled() else HardwareManager()
 )
-ws_mgr   = ConnectionManager()
+ws_mgr = ConnectionManager()
 progress = JobProgress()
 
 
 # =============================================================================
 # Background telemetry loop  (4 Hz)
 # =============================================================================
+
 
 async def telemetry_loop() -> None:
     """Broadcast a unified telemetry frame to every connected browser at 4 Hz.
@@ -252,21 +267,24 @@ async def telemetry_loop() -> None:
     while True:
         if ws_mgr.client_count > 0:
             weight = (await hw.get_weight_unstable()) if hw.connected else None
-            await ws_mgr.broadcast({
-                "weight":      weight,
-                "state":       hw.state.value,
-                "connected":   hw.connected,
-                "jubilee_ip":  hw.jubilee_ip,
-                "job":         progress.to_dict(),
-                "dispensers":  [d.model_dump() for d in hw.get_dispensers()],
-                "clients":     ws_mgr.client_count,
-            })
-        await asyncio.sleep(0.25)   # 4 Hz
+            await ws_mgr.broadcast(
+                {
+                    "weight": weight,
+                    "state": hw.state.value,
+                    "connected": hw.connected,
+                    "jubilee_ip": hw.jubilee_ip,
+                    "job": progress.to_dict(),
+                    "dispensers": [d.model_dump() for d in hw.get_dispensers()],
+                    "clients": ws_mgr.client_count,
+                }
+            )
+        await asyncio.sleep(0.25)  # 4 Hz
 
 
 # =============================================================================
 # App + lifespan
 # =============================================================================
+
 
 async def drive_upload_retry_loop(backup: "JobDriveBackup") -> None:
     """Periodically retry failed job log uploads until they succeed."""
@@ -308,6 +326,7 @@ app.add_middleware(
 # REST — hardware lifecycle
 # =============================================================================
 
+
 @app.get("/api/config")
 async def get_machine_config():
     """Return machine settings from system_config.json for UI hydration."""
@@ -317,9 +336,9 @@ async def get_machine_config():
         "num_dispensers": config.get_num_dispensers(),
         "pistons_per_dispenser": config.get_pistons_per_dispenser(),
         "hardness_tray": {
-            "rows": 5,
-            "cols": 7,
-            "tray_count": 2,
+            "rows": HARDNESS_ROWS,
+            "cols": HARDNESS_COLS,
+            "tray_count": HARDNESS_TRAY_COUNT,
         },
         "google_drive_enabled": config.get_google_drive_enabled(),
         "mock_hardware": _mock_hardware_enabled(),
@@ -335,12 +354,12 @@ async def get_status():
         dispenser statuses, and active WebSocket client count.
     """
     return {
-        "connected":   hw.connected,
-        "state":       hw.state.value,
-        "jubilee_ip":  hw.jubilee_ip,
-        "job":         progress.to_dict(),
-        "dispensers":  [d.model_dump() for d in hw.get_dispensers()],
-        "clients":     ws_mgr.client_count,
+        "connected": hw.connected,
+        "state": hw.state.value,
+        "jubilee_ip": hw.jubilee_ip,
+        "job": progress.to_dict(),
+        "dispensers": [d.model_dump() for d in hw.get_dispensers()],
+        "clients": ws_mgr.client_count,
     }
 
 
@@ -366,7 +385,10 @@ async def hardware_connect(config: HardwareConfig):
         raise HTTPException(status_code=400, detail="Connection already in progress.")
     merged = _merge_hardware_config(config)
     asyncio.create_task(_run_connect(merged))
-    return {"accepted": True, "message": "Connection initiated — monitor WebSocket state."}
+    return {
+        "accepted": True,
+        "message": "Connection initiated — monitor WebSocket state.",
+    }
 
 
 @app.post("/api/hardware/disconnect", status_code=200)
@@ -377,7 +399,7 @@ async def hardware_disconnect():
     sessions). After this returns, the WebSocket broadcasts ``state=disconnected``.
     """
     if progress.running:
-        progress.running = False   # signal job loop to exit cleanly
+        progress.running = False  # signal job loop to exit cleanly
     await hw.disconnect()
     return {"disconnected": True}
 
@@ -385,6 +407,7 @@ async def hardware_disconnect():
 # =============================================================================
 # REST — jobs
 # =============================================================================
+
 
 @app.post("/api/job/start", status_code=202)
 async def start_job(body: JobRequest):
@@ -439,6 +462,7 @@ async def start_job(body: JobRequest):
 
     else:  # hardness
         items = [s.model_dump() for s in body.samples]
+        print(f"[JobStart] hardness job: {len(items)} samples: {items}")
         progress.start_job("hardness", items, now)
         asyncio.create_task(_run_hardness(items))
         return {"accepted": True, "job_type": "hardness", "total": len(items)}
@@ -562,16 +586,20 @@ def _build_progress_log() -> dict:
         items_with_status.append({**item, "status": status})
 
     date_str = progress.started_at[:10] if progress.started_at else None
+    progress_completed, progress_total = progress._compute_pass_progress()
 
     return {
-        "job_type":   progress.job_type,
+        "job_type": progress.job_type,
         "started_at": progress.started_at,
-        "date":       date_str,
-        "status":     "running" if progress.running else "complete",
-        "completed":  progress.completed,
-        "total":      progress.total,
-        "error":      progress.error,
-        "items":      items_with_status,
+        "date": date_str,
+        "status": "running" if progress.running else "complete",
+        "completed": progress.completed,
+        "total": progress.total,
+        "progress_completed": progress_completed,
+        "progress_total": progress_total,
+        "progress_pct": progress._compute_progress_pct(),
+        "error": progress.error,
+        "items": items_with_status,
     }
 
 
@@ -603,7 +631,7 @@ def _normalize_file_log(raw: dict) -> dict:
     Returns:
         dict: Normalised job log dict compatible with the frontend store.
     """
-    meta  = raw.get("metadata", {})
+    meta = raw.get("metadata", {})
     state = raw.get("state", {})
 
     job_type = meta.get("job_type", "")
@@ -616,20 +644,21 @@ def _normalize_file_log(raw: dict) -> dict:
         error = meta.get("error")
 
     return {
-        "job_type":   job_type,
+        "job_type": job_type,
         "started_at": None,
-        "date":       meta.get("date"),
-        "status":     meta.get("outcome", "unknown"),
-        "completed":  completed,
-        "total":      len(items),
-        "error":      error,
-        "items":      items,
+        "date": meta.get("date"),
+        "status": meta.get("outcome", "unknown"),
+        "completed": completed,
+        "total": len(items),
+        "error": error,
+        "items": items,
     }
 
 
 # =============================================================================
 # REST — dispensers
 # =============================================================================
+
 
 @app.get("/api/dispensers")
 async def get_dispensers():
@@ -667,6 +696,7 @@ async def update_dispenser(index: int, body: UpdateDispenserRequest):
 # REST — job log files
 # =============================================================================
 
+
 @app.get("/api/files")
 async def list_job_files():
     """Return metadata for all job log JSON files in the files directory.
@@ -681,13 +711,17 @@ async def list_job_files():
     entries = []
     for f in sorted(_files_dir().glob("*.json"), reverse=True):
         stat = f.stat()
-        entries.append({
-            "name":     f.name,
-            "path":     f.name,
-            "size":     stat.st_size,
-            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-            "type":     "file",
-        })
+        entries.append(
+            {
+                "name": f.name,
+                "path": f.name,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(
+                    stat.st_mtime, tz=timezone.utc
+                ).isoformat(),
+                "type": "file",
+            }
+        )
     return entries
 
 
@@ -720,6 +754,7 @@ async def get_job_file(filename: str):
 # REST — Google Drive job log backup
 # =============================================================================
 
+
 @app.get("/api/drive/status")
 async def get_drive_status():
     """Return Google Drive backup status for the Settings UI.
@@ -730,24 +765,25 @@ async def get_drive_status():
     """
     if _drive_backup is None:
         return {
-            "enabled":            _drive_init_error is not None,
-            "folder_configured":  False,
-            "last_upload":        None,
-            "last_error":         _drive_init_error,
-            "pending_uploads":    len(_pending_uploads),
+            "enabled": _drive_init_error is not None,
+            "folder_configured": False,
+            "last_upload": None,
+            "last_error": _drive_init_error,
+            "pending_uploads": len(_pending_uploads),
         }
     return {
-        "enabled":            True,
-        "folder_configured":  _drive_backup.folder_configured,
-        "last_upload":        _drive_backup.last_upload,
-        "last_error":         _drive_backup.last_error,
-        "pending_uploads":    len(_pending_uploads),
+        "enabled": True,
+        "folder_configured": _drive_backup.folder_configured,
+        "last_upload": _drive_backup.last_upload,
+        "last_error": _drive_backup.last_error,
+        "pending_uploads": len(_pending_uploads),
     }
 
 
 # =============================================================================
 # Background task helpers
 # =============================================================================
+
 
 def _make_job_log(job_type: str, items: list[dict]):
     """Instantiate a ``JobLog`` for the current job.
@@ -764,6 +800,7 @@ def _make_job_log(job_type: str, items: list[dict]):
     """
     try:
         from src.JobLog import JobLog
+
         manager_ref = getattr(hw, "_manager", None)
         return JobLog(job_type=job_type, items=items, manager=manager_ref)
     except Exception as exc:
@@ -864,6 +901,7 @@ async def _run_hardness(items: list[dict]) -> None:
         progress.error = str(exc)
         hw.state = MachineState.ERROR
         outcome = "aborted"
+        print(f"[HardnessJob] Exception: {exc!r}")
     finally:
         progress.running = False
         if job_log is not None:
@@ -877,6 +915,7 @@ async def _run_hardness(items: list[dict]) -> None:
 # =============================================================================
 # WebSocket endpoint
 # =============================================================================
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
@@ -892,7 +931,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws_mgr.connect(ws)
     try:
         while True:
-            await ws.receive_text()   # discard client-sent messages
+            await ws.receive_text()  # discard client-sent messages
     except WebSocketDisconnect:
         ws_mgr.disconnect(ws)
 
@@ -919,6 +958,7 @@ app.mount(
 _DIST_DIR = Path(__file__).parent / "dist"
 
 if _DIST_DIR.exists():
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str) -> FileResponse:
         candidate = _DIST_DIR / full_path

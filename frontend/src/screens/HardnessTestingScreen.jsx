@@ -57,8 +57,10 @@ export default function HardnessTestingScreen() {
         mode:         samples[id].mode,
       }
     })
+    console.log('[HardnessTesting] Submitting', items.length, 'items:', JSON.stringify(items))
     setStatusText('Submitting test…')
     const { ok, error } = await submitJob('hardness', items)
+    if (!ok) console.error('[HardnessTesting] submitJob failed, error:', error)
     setStatusText(ok ? `Test started: ${items.length} samples.` : `Error: ${error}`)
   }
 

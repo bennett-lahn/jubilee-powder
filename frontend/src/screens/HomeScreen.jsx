@@ -243,11 +243,13 @@ export default function HomeScreen() {
   const displayJob = hasJobData ? job : jobLog
   const completed  = displayJob?.completed ?? 0
   const total      = displayJob?.total     ?? 0
-  const pct        = total > 0 ? (completed / total) * 100 : 0
+  const progressCompleted = displayJob?.progress_completed ?? completed
+  const progressTotal     = displayJob?.progress_total     ?? total
+  const pct        = displayJob?.progress_pct ?? (progressTotal > 0 ? (progressCompleted / progressTotal) * 100 : 0)
 
   const arcColor = isRunning
     ? '#fcd34d'   // amber-300
-    : total > 0 && completed === total
+    : progressTotal > 0 && progressCompleted === progressTotal
       ? '#16a34a' // green-600
       : '#334155' // slate-700
 
@@ -308,8 +310,8 @@ export default function HomeScreen() {
           {/* Compact arc — fills the panel width */}
           <ArcProgress
             value={pct}
-            completed={completed}
-            total={total}
+            completed={progressCompleted}
+            total={progressTotal}
             elapsed={isRunning ? formatElapsed(elapsedSec) : '--:--'}
             label={jobTypeLabel}
             color={arcColor}
@@ -394,9 +396,9 @@ export default function HomeScreen() {
       {/* ── Status line ──────────────────────────────────────────────────── */}
       <p className="text-center text-sm text-slate-400 shrink-0 pb-1">
         {actionStatus || (isRunning
-          ? `${jobTypeLabel} job running - ${completed} of ${total} ${itemNamePlural} complete.`
-          : total > 0
-            ? `Last job: ${completed} / ${total} ${itemNamePlural} complete.`
+          ? `${jobTypeLabel} job running - ${progressCompleted} of ${progressTotal} ${itemNamePlural} complete.`
+          : progressTotal > 0
+            ? `Last job: ${progressCompleted} / ${progressTotal} ${itemNamePlural} complete.`
             : ''
         )}
       </p>

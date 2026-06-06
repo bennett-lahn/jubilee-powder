@@ -44,8 +44,8 @@ export default function BottomBar() {
         <>
           <span className="text-slate-800">|</span>
           <ProgressBar
-            value={job.total > 0 ? (job.completed / job.total) * 100 : 0}
-            label={`${job.job_type ? job.job_type.charAt(0).toUpperCase() + job.job_type.slice(1) : 'Job'} — ${job.completed} / ${job.total}`}
+            value={job.progress_pct ?? (job.total > 0 ? (job.completed / job.total) * 100 : 0)}
+            label={`${job.job_type ? job.job_type.charAt(0).toUpperCase() + job.job_type.slice(1) : 'Job'} — ${job.progress_completed ?? job.completed} / ${job.progress_total ?? job.total}`}
             className="flex-1 min-w-0"
           />
         </>

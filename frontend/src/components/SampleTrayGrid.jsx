@@ -32,14 +32,25 @@ function formatHardnessValue(value) {
   return Number.isFinite(value) ? value.toFixed(1) : '—'
 }
 
-/** Display string for hardness result cells (per-pass fields). */
-function hardnessDisplayText(mode, resultShoreA, resultShoreD) {
+/** Per-pass hardness values; A and D render on separate lines for shore_a_d. */
+function HardnessResultLines({ mode, resultShoreA, resultShoreD }) {
+  const lineClass = 'text-[9px] font-semibold whitespace-nowrap leading-none'
+
   if (mode === 'shore_a_d') {
-    return `A ${formatHardnessValue(resultShoreA)} / D ${formatHardnessValue(resultShoreD)}`
+    return (
+      <>
+        <span className={lineClass}>A {formatHardnessValue(resultShoreA)}</span>
+        <span className={lineClass}>D {formatHardnessValue(resultShoreD)}</span>
+      </>
+    )
   }
-  if (mode === 'shore_a') return formatHardnessValue(resultShoreA)
-  if (mode === 'shore_d') return formatHardnessValue(resultShoreD)
-  return '—'
+  if (mode === 'shore_a') {
+    return <span className={lineClass}>{formatHardnessValue(resultShoreA)}</span>
+  }
+  if (mode === 'shore_d') {
+    return <span className={lineClass}>{formatHardnessValue(resultShoreD)}</span>
+  }
+  return <span className={lineClass}>—</span>
 }
 
 export function sampleKeyForTray(trayIndex, sampleId) {
@@ -134,11 +145,10 @@ function SampleCell({ id, sample, onClick, onSampleClick, variant }) {
 
     let innerContent = null
     if (status === 'complete' || status === 'incomplete') {
-      const hardnessText = hardnessDisplayText(mode, resultShoreA, resultShoreD)
       innerContent = (
-        <div className="flex flex-col items-center justify-center leading-none select-none text-white">
-          <span className="text-[10px] font-semibold text-center px-1">{hardnessText}</span>
-          <span className="text-[10px] uppercase tracking-wide opacity-80">
+        <div className="flex flex-col items-center justify-center leading-none select-none text-white gap-0.5">
+          <HardnessResultLines mode={mode} resultShoreA={resultShoreA} resultShoreD={resultShoreD} />
+          <span className="text-[9px] uppercase tracking-wide opacity-70">
             {status === 'incomplete' ? 'PARTIAL' : (shoreLabel || 'OK')}
           </span>
         </div>
@@ -147,19 +157,16 @@ function SampleCell({ id, sample, onClick, onSampleClick, variant }) {
       innerContent = (
         <div className="flex flex-col items-center justify-center leading-none select-none text-white">
           <span className="text-[11px] font-semibold">N/A</span>
-          <span className="text-[10px] uppercase tracking-wide opacity-80">
+          <span className="text-[9px] uppercase tracking-wide opacity-70">
             {shoreLabel || 'ERR'}
           </span>
         </div>
       )
     } else if (status === 'active') {
-      const hint = mode === 'shore_a_d'
-        ? hardnessDisplayText(mode, resultShoreA, resultShoreD)
-        : '···'
       innerContent = (
-        <span className="text-[10px] font-semibold leading-none select-none text-white px-0.5 text-center">
-          {hint}
-        </span>
+        <div className="flex flex-col items-center justify-center leading-none select-none text-white">
+          <HardnessResultLines mode={mode} resultShoreA={resultShoreA} resultShoreD={resultShoreD} />
+        </div>
       )
     }
 

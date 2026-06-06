@@ -182,17 +182,50 @@ class JobProgress:
         self.jam_detected = False
         self.jam_well_id = None
 
+    def _compute_pass_progress(self) -> tuple[int, int]:
+        """Return completed and total measurement passes for progress display.
+
+        For ``shore_a_d`` samples, each pass (Shore A and Shore D) counts
+        separately.  For all other job types, this equals ``(completed, total)``.
+        """
+        if self.job_type != "hardness" or not self.items:
+            return self.completed, self.total
+        total_passes = 0
+        completed_passes = 0
+        for item in self.items:
+            mode = item.get("mode", "")
+            if mode == "shore_a_d":
+                total_passes += 2
+                if item.get("status_shore_a") == "complete":
+                    completed_passes += 1
+                if item.get("status_shore_d") == "complete":
+                    completed_passes += 1
+            elif mode in ("shore_a", "shore_d"):
+                total_passes += 1
+                if item.get("status") == "complete":
+                    completed_passes += 1
+        return completed_passes, total_passes
+
+    def _compute_progress_pct(self) -> float:
+        """Compute fill percentage based on completed measurement passes."""
+        completed_passes, total_passes = self._compute_pass_progress()
+        return (completed_passes / total_passes * 100) if total_passes > 0 else 0.0
+
     def to_dict(self) -> dict:
         """Serialise all fields to a JSON-compatible dict for WebSocket telemetry.
 
         Returns:
             dict: All progress fields suitable for inclusion in a telemetry frame.
         """
+        progress_completed, progress_total = self._compute_pass_progress()
         return {
             "running": self.running,
             "job_type": self.job_type,
             "completed": self.completed,
             "total": self.total,
+            "progress_completed": progress_completed,
+            "progress_total": progress_total,
+            "progress_pct": self._compute_progress_pct(),
             "current_item": self.current_item,
             "error": self.error,
             "started_at": self.started_at,
