@@ -448,7 +448,7 @@
       "description": "Ready position for mold slot 8.",
       "coordinates": {
         "x": 235.0,
-        "y": 39.0,
+        "y": 38.0,
         "z": "USE_Z_HEIGHT_POLICY",
         "v": 30.0
       },
