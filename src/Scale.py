@@ -203,15 +203,6 @@ class Scale:
         self._last_weight_time: float | None = None
         self._last_weight_message: str | None = None
 
-        # SIR streaming state.  When _streaming is True the serial read path
-        # is owned exclusively by _stream_thread; all other read paths must
-        # use the cached value.  _stream_lock protects the shared
-        # cache fields _last_weight_message / _last_weight_time against
-        # concurrent reads from the dispensing loop and the telemetry task.
-        self._streaming: bool = False
-        self._stream_thread: threading.Thread | None = None
-        self._stream_lock: threading.Lock = threading.Lock()
-
     def connect(self):
         """
         Establish a serial connection to the scale.
@@ -364,12 +355,12 @@ class Scale:
             ScaleException: If error persists after all retries
         """
         # Error configuration: (wait_time_seconds, max_retries)
-        # E02: wait 2 secs, resend, wait 8 secs, resend, then throw (2 retries with different wait times)
-        # E03/E11: wait 3 secs, resend, retry up to 3 times, then throw
+        # E02: wait 10 secs, resend, wait 10 secs, resend, then throw (2 retries with different wait times)
+        # E03/E11: wait 5 secs, resend, retry up to 3 times, then throw
         error_config = {
-            ScaleError.E02: [(2, 1), (8, 1)],  # List of (wait_time, retries) pairs
+            ScaleError.E02: [(10, 1), (10, 1)],  # List of (wait_time, retries) pairs
             ScaleError.E03: [(3, 3)],  # Single wait time, 3 retries
-            ScaleError.E11: [(3, 3)],  # Same as E03
+            ScaleError.E11: [(5, 3)],  # Same as E03
         }
 
         if error not in error_config:
@@ -578,10 +569,6 @@ class Scale:
         Acquire exclusive access to the scale, execute the command, update
         the weight cache when appropriate, and release access.
 
-        While SIR streaming is active, only Cancel (C) may be sent to the
-        scale. Any other command in streaming mode is undefined behavior
-        and raises ScaleException.
-
         Args:
             cmd: Command string to send
             expect_data: If True, expects a data response after ACK
@@ -592,12 +579,6 @@ class Scale:
         Raises:
             ScaleException: If command fails after retries or ACK timeout
         """
-        if self._streaming and cmd != "C":
-            raise ScaleException(
-                f"Cannot send command '{cmd}' while SIR streaming is active. "
-                "Call stop_streaming() before issuing scale commands."
-            )
-
         self._acquire_busy()
         try:
             result = self._execute_command(cmd, expect_data)
@@ -925,140 +906,6 @@ class Scale:
         cmd = f"PT:{value:.3f}{unit}"
         return self._send_command(cmd)
 
-    # --- SIR streaming ---
-
-    def start_streaming(self) -> None:
-        """Start continuous weight streaming (SIR command).
-
-        Uses ``_send_command`` to handle the busy lock, input buffer flush,
-        write, first-line read, EC error detection/retry, and cache update.
-        The first weight line returned primes both the standard cache and the
-        ``_stream_lock``-protected cache before the reader thread is started.
-
-        Raises:
-            ScaleException: If the scale responds with an EC error code,
-                returns unexpected content, or times out.
-        """
-        if self._streaming:
-            return  # already streaming
-
-        first_response = self._send_command("SIR", expect_data=True)
-
-        if not self._is_weight_message(first_response):
-            raise ScaleException(
-                f"SIR command: unexpected first response: '{first_response}'"
-            )
-
-        # Prime the stream cache before the reader thread starts.
-        self._store_weight_message(first_response, stream_locked=True)
-
-        self._streaming = True
-
-        self._stream_thread = threading.Thread(
-            target=self._streaming_reader,
-            daemon=True,
-            name="scale-sir-reader",
-        )
-        self._stream_thread.start()
-
-    def stop_streaming(self) -> None:
-        """Stop the SIR stream by sending the Cancel command.
-
-        Sets ``_streaming = False`` so the reader thread exits its loop after
-        its current ``readline()`` returns, then calls the existing ``cancel()``
-        method (which uses ``_send_command('C')``) to tell the scale to stop
-        emitting lines, and finally joins the reader thread.
-        """
-        if not self._streaming:
-            return
-
-        self._streaming = False
-        self.cancel()  # _send_command('C') — acquires lock, writes, releases
-
-        if self._stream_thread is not None:
-            self._stream_thread.join(timeout=2.0)
-            self._stream_thread = None
-
-    def _streaming_reader(self) -> None:
-        """Background daemon that reads SIR weight lines and updates the cache.
-
-        Runs until ``_streaming`` is cleared by ``stop_streaming()``.
-        Only ``ST,`` and ``US,`` lines update the cache; ``EC,`` lines are
-        logged but do not crash the thread.  All other content is ignored.
-
-        While ``_streaming`` is True, this thread has exclusive ownership of
-        the serial read path. Other methods must not read from serial during
-        this time and should consume cached values instead.
-        """
-        while self._streaming:
-            try:
-                line = self.serial.readline()
-                if not line:
-                    continue
-                decoded = self._decode_serial_line(line)
-                if self._is_weight_message(decoded):
-                    self._store_weight_message(decoded, stream_locked=True)
-                elif decoded.startswith("EC,"):
-                    print(f"[Scale] SIR stream error: {decoded}")
-            except Exception:
-                pass  # serial timeout or decode error during shutdown
-
-    def get_stream_weight(self) -> float:
-        """Return the most recent weight value from the active SIR stream.
-
-        Reads from the shared cache rather than the serial port, so it is
-        safe to call from any thread while streaming is active.
-
-        Raises:
-            ScaleException: If not streaming, no data has arrived yet, or
-                the cached reading is older than 2 seconds.
-        """
-        with self._stream_lock:
-            msg = self._last_weight_message
-            ts = self._last_weight_time
-
-        if not self._streaming or msg is None:
-            raise ScaleException("get_stream_weight: not streaming or no data yet")
-        if ts is not None and time.time() - ts > 2.0:
-            raise ScaleException("get_stream_weight: stream data is stale (>2 s)")
-        return self._parse_weight(msg, expect_stable=False)
-
-    def get_stream_weight_with_timestamp(self) -> tuple[float, float]:
-        """
-        Return the latest stream weight and its timestamp.
-        """
-        with self._stream_lock:
-            msg = self._last_weight_message
-            ts = self._last_weight_time
-
-        if not self._streaming or msg is None or ts is None:
-            raise ScaleException(
-                "get_stream_weight_with_timestamp: not streaming or no data yet"
-            )
-        if time.time() - ts > 2.0:
-            raise ScaleException(
-                "get_stream_weight_with_timestamp: stream data is stale (>2 s)"
-            )
-        return self._parse_weight(msg, expect_stable=False), ts
-
-    def wait_for_next_stream_weight(
-        self,
-        last_timestamp: float | None,
-        timeout_s: float = 2.5,
-        poll_interval_s: float = 0.01,
-    ) -> tuple[float, float]:
-        """Block until a newer stream sample than ``last_timestamp`` exists."""
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            weight, ts = self.get_stream_weight_with_timestamp()
-            if last_timestamp is None or ts > last_timestamp:
-                return weight, ts
-            time.sleep(poll_interval_s)
-
-        raise ScaleException(
-            "wait_for_next_stream_weight: timed out waiting for a fresh stream sample"
-        )
-
     # --- Standard weight commands ---
 
     def get_weight(self, stable: bool = True) -> float:
@@ -1096,18 +943,7 @@ class Scale:
         get_weight(stable=False) would do, and the result becomes the new cached
         weight.
 
-        SIR streaming shortcut: when SIR streaming is active the serial read
-        path is owned by the background reader thread.  This method returns
-        the latest cached stream value immediately without  acquiring the
-        busy lock, preventing a deadlock between the telemetry task and the
-        reader thread.
         """
-        if self._streaming:
-            with self._stream_lock:
-                msg = self._last_weight_message
-            if msg is not None:
-                return self._parse_weight(msg, expect_stable=False)
-
         blocked = self._acquire_busy_for_telemetry()
         try:
             if blocked and self._last_weight_time is not None:
@@ -1139,20 +975,19 @@ class Scale:
         Matches the headers accepted by ``_parse_weight`` when
         ``expect_stable=False``; does not validate length, sign, or unit.
         """
-        return len(message) >= 3 and message[2] == "," and message[0:2] in ("ST", "US")
+        # Guard against malformed payloads such as "ST,T00000  g".
+        if len(message) < 13:
+            return False
+        if message[0:2] not in ("ST", "US") or message[2] != ",":
+            return False
+        if message[3] not in ("+", "-"):
+            return False
+        return True
 
-    def _store_weight_message(
-        self, message: str, *, stream_locked: bool = False
-    ) -> None:
+    def _store_weight_message(self, message: str) -> None:
         """Cache the latest raw weight response string and timestamp."""
-        now = time.time()
-        if stream_locked:
-            with self._stream_lock:
-                self._last_weight_message = message
-                self._last_weight_time = now
-        else:
-            self._last_weight_message = message
-            self._last_weight_time = now
+        self._last_weight_message = message
+        self._last_weight_time = time.time()
 
     def _parse_weight(self, data: str, expect_stable: bool = True) -> float:
         """

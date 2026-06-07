@@ -266,7 +266,7 @@ async def telemetry_loop() -> None:
     """
     while True:
         if ws_mgr.client_count > 0:
-            weight = (await hw.get_weight_unstable()) if hw.connected else None
+            weight = (await hw.get_weight_telemetry()) if hw.connected else None
             await ws_mgr.broadcast(
                 {
                     "weight": weight,
@@ -880,6 +880,10 @@ async def _run_dispensing(items: list[dict]) -> None:
                 _maybe_upload_to_drive(log_path)
             except Exception as exc:
                 print(f"[JobLog] Failed to write log: {exc}")
+        try:
+            hw.reset_mold_job_metadata()
+        except Exception as exc:
+            print(f"[JobCleanup] Failed to reset mold metadata: {exc}")
 
 
 async def _run_hardness(items: list[dict]) -> None:

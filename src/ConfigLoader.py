@@ -64,6 +64,8 @@ class TricklerConfig(BaseModel):
     yield_ema_alpha: float
     jam_yield_threshold: float
     jam_iter_threshold: int
+    jam_auto_recovery_vibration_amplitude: float
+    jam_auto_recovery_wait_seconds: float
     max_step_size_mm: float
     min_step_size_mm: float
     warmup_steps: int
@@ -305,6 +307,12 @@ class ConfigLoader:
 
     def get_trickler_jam_iter_threshold(self) -> int:
         return self._system.trickler.jam_iter_threshold
+
+    def get_trickler_jam_auto_recovery_vibration_amplitude(self) -> float:
+        return self._system.trickler.jam_auto_recovery_vibration_amplitude
+
+    def get_trickler_jam_auto_recovery_wait_seconds(self) -> float:
+        return self._system.trickler.jam_auto_recovery_wait_seconds
 
     def get_trickler_max_step_size_mm(self) -> float:
         return self._system.trickler.max_step_size_mm

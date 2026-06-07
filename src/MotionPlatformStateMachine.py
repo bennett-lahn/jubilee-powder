@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import Iterable, Mapping, Sequence
 
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
@@ -15,13 +15,6 @@ from src.motion_config import (
     load_motion_platform_config,
     supported_tool_ids_from_system_config,
 )
-
-# Import FeedRate for type checking only (avoiding circular import)
-if TYPE_CHECKING:
-    from jubilee_api_config.constants import FeedRate
-else:
-    # At runtime, import in __init__ where needed
-    FeedRate = "FeedRate"
 
 
 class PositionType(Enum):
@@ -459,15 +452,9 @@ class MotionPlatformStateMachine(StateMachine):
         *,
         context: MotionContext | None = None,
         scale: Scale | None = None,
-        feedrate: "FeedRate" = None,
     ) -> None:
         # Import MovementExecutor locally to avoid circular import
         from src.MovementExecutor import MovementExecutor
-
-        if feedrate is None:
-            from src.ConfigLoader import config as _cfg
-
-            feedrate = _cfg.get_default_feedrate()
 
         self._registry = registry
         self._actions = registry.actions
@@ -487,7 +474,7 @@ class MotionPlatformStateMachine(StateMachine):
                 context.scale = scale
 
         self.context = context
-        self._executor = MovementExecutor(machine, scale=scale, feedrate=feedrate)
+        self._executor = MovementExecutor(machine, scale=scale)
         super().__init__()
 
     @staticmethod
@@ -506,7 +493,6 @@ class MotionPlatformStateMachine(StateMachine):
         *,
         context_overrides: Mapping[str, object] | None = None,
         scale: Scale | None = None,
-        feedrate: "FeedRate" = None,
         system_config_path: str | Path | None = None,
     ) -> "MotionPlatformStateMachine":
         registry = PositionRegistry.from_config_file(
@@ -533,7 +519,7 @@ class MotionPlatformStateMachine(StateMachine):
             context_kwargs.update(context_overrides)
 
         context = MotionContext(**context_kwargs)
-        return cls(registry, machine, context=context, scale=scale, feedrate=feedrate)
+        return cls(registry, machine, context=context, scale=scale)
 
     # ---------------------------------------------------------------------
     # Platform State Initialization
@@ -703,6 +689,31 @@ class MotionPlatformStateMachine(StateMachine):
                     if isinstance(well, Mold):
                         return well
         return None
+
+    def reset_mold_metadata(self) -> None:
+        """Reset transient mold state captured during a dispensing job.
+
+        Clears mold-level metadata so a new job starts from a clean baseline.
+        """
+        from src.trickler_labware import Mold
+
+        deck = self.context.deck
+        if deck is None:
+            return
+
+        for slot in deck.slots.values():
+            if not getattr(slot, "has_labware", False):
+                continue
+            labware = getattr(slot, "labware", None)
+            wells = getattr(labware, "wells", None)
+            if not isinstance(wells, dict):
+                continue
+            for well in wells.values():
+                if isinstance(well, Mold):
+                    self._reset_mold_runtime_metadata(well)
+
+        if isinstance(self.context.current_well, Mold):
+            self._reset_mold_runtime_metadata(self.context.current_well)
 
     # ---------------------------------------------------------------------
     # Machine Access

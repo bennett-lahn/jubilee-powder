@@ -11,8 +11,10 @@ import { DISPENSING_LAYOUT } from '../constants/dispensingBed'
 import { Button, Card, TextInput, Dialog } from '../components/ui'
 
 function isValidWeight(v) {
-  const n = parseFloat(v)
-  return !isNaN(n) && n > 0
+  const raw = String(v ?? '').trim()
+  if (raw === '') return false
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0
 }
 
 export default function PowderDispensingScreen() {
@@ -34,7 +36,10 @@ export default function PowderDispensingScreen() {
     [wells],
   )
   const eligibleIds = useMemo(
-    () => Object.entries(wells).filter(([, w]) => (w.targetWeight ?? 0) > 0).map(([id]) => id),
+    () =>
+      Object.entries(wells)
+        .filter(([, w]) => w.selected && (w.targetWeight ?? 0) > 0)
+        .map(([id]) => id),
     [wells],
   )
   const selectedCount   = selectedIds.length
@@ -55,10 +60,17 @@ export default function PowderDispensingScreen() {
   }
 
   function applyWeight() {
-    const w = parseFloat(weightInput)
+    const w = Number(String(weightInput ?? '').trim())
+    if (!Number.isFinite(w) || w < 0) return
     setDispensingWeightForSelected(w)
     setWeightOpen(false)
-    setStatusText(`Target weight set to ${w} g for ${selectedCount} wells.`)
+    if (w === 0) {
+      setStatusText(
+        `Cleared target weight for ${selectedCount} selected ${selectedCount === 1 ? 'well' : 'wells'}.`,
+      )
+      return
+    }
+    setStatusText(`Target weight set to ${w} g for ${selectedCount} selected ${selectedCount === 1 ? 'well' : 'wells'}.`)
   }
 
   // --- Job ---
@@ -155,6 +167,8 @@ export default function PowderDispensingScreen() {
           label="Target Weight"
           unit="g"
           type="number"
+          min="0"
+          step="0.001"
           placeholder="e.g. 50.0"
           value={weightInput}
           onChange={(v) => setWeightInput(v)}

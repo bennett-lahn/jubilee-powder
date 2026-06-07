@@ -46,8 +46,11 @@ from src.PistonDispenser import PistonDispenser
 from src.Manipulator import Manipulator, ToolStateError
 from src.HardnessTester import HardnessTester
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
-from jubilee_api_config.constants import FeedRate
 from src.ConfigLoader import config
+
+
+class ScaleResidualObjectError(RuntimeError):
+    """Raised when scale weight does not return to baseline after mold pickup."""
 
 
 class JubileeManager:
@@ -91,7 +94,6 @@ class JubileeManager:
         self,
         num_piston_dispensers: int = 0,
         num_pistons_per_dispenser: int = 0,
-        feedrate: FeedRate = FeedRate.MEDIUM,
     ) -> None:
         """
         Initialize the JubileeManager.
@@ -104,23 +106,20 @@ class JubileeManager:
                 Each dispenser can hold multiple pistons. Default is 0.
             num_pistons_per_dispenser: Initial number of pistons in each dispenser.
                 Used to track available pistons. Default is 0.
-            feedrate: Default movement speed for operations. Options are SLOW, MEDIUM,
-                or FAST from the FeedRate enum. Default is MEDIUM.
 
         Example:
             ```python
-            # Create manager with 2 dispensers, 10 pistons each, medium speed
+            # Create manager with 2 dispensers, 10 pistons each
             manager = JubileeManager(
                 num_piston_dispensers=2,
-                num_pistons_per_dispenser=10,
-                feedrate=FeedRate.MEDIUM
+                num_pistons_per_dispenser=10
             )
             ```
 
         Note:
             - No hardware connection is established during initialization
             - Dispenser counts can be zero if pistons are not needed
-            - Feedrate affects all subsequent movements after connection
+            - Movement speed comes from machine.default_feedrate in system_config.json
         """
         self.scale: Scale | None = None
         self.manipulator: Manipulator | None = None
@@ -130,7 +129,6 @@ class JubileeManager:
         self.connected: bool = False
         self._num_piston_dispensers: int = num_piston_dispensers
         self._num_pistons_per_dispenser: int = num_pistons_per_dispenser
-        self._feedrate: FeedRate = feedrate
         self.active_job_log: "JobLog" | None = None
         self.last_dispense_weight: float | None = None
         self.last_hardness_result: float | None = None
@@ -242,10 +240,11 @@ class JubileeManager:
         return False
 
     def set_jam_callback(self, callback: Callable | None) -> None:
-        """Register a callback invoked when a powder jam is detected.
+        """Register a callback invoked when a powder jam requires operator clearance.
 
         The callback is called from the dispensing thread immediately before
-        it blocks.  It should be lightweight (e.g. set a flag in JobProgress).
+        it blocks.  It is not invoked for the first auto-recovered jam in each
+        fill iteration.  It should be lightweight (e.g. set a flag in JobProgress).
         """
         self._on_jam_callback = callback
         if self.state_machine and self.state_machine._executor:
@@ -366,7 +365,6 @@ class JubileeManager:
                 config_path,
                 real_machine,
                 scale=self.scale,
-                feedrate=config.get_default_feedrate(),
             )
 
             # Initialize deck and dispensers in state machine
@@ -549,6 +547,43 @@ class JubileeManager:
         if self.scale and self.scale.is_connected:
             return self.scale.get_weight(stable=False)
         return None
+
+    def _record_scale_baseline_weight(self) -> float:
+        """
+        Capture a stable baseline reading before placing a mold on the scale.
+
+        Returns:
+            Stable baseline weight in grams.
+        """
+        baseline_weight = self.get_weight_stable()
+        if baseline_weight is None:
+            raise RuntimeError("Scale did not return a stable baseline weight")
+        print(f"[Safety] Baseline scale weight before mold placement: {baseline_weight:.4f}g")
+        return baseline_weight
+
+    def _validate_scale_clear_after_pickup(self, baseline_weight: float) -> None:
+        """
+        Ensure scale returns to baseline after mold pickup.
+
+        Raises:
+            ScaleResidualObjectError: If residual weight exceeds configured tolerance.
+        """
+        if self.scale is None or not self.scale.is_connected:
+            raise RuntimeError("Scale is not connected or provided.")
+
+        current_weight = self.get_weight_stable()
+        if current_weight is None:
+            raise RuntimeError("Scale did not return a stable post-pickup weight")
+
+        residual_weight = -current_weight - baseline_weight
+        tolerance = config.get_weight_tolerance()
+        if abs(residual_weight) > tolerance:
+            raise ScaleResidualObjectError(
+                "Scale residual safety check failed after mold pickup. "
+                f"Expected {baseline_weight:.4f}g (+/-{tolerance:.4f}g), "
+                f"measured {current_weight:.4f}g (residual {residual_weight:+.4f}g). "
+                "Possible object left on scale."
+            )
 
     def _hardness_tester_for_tool_id(
         self, tool_id: str | None
@@ -755,9 +790,12 @@ class JubileeManager:
             self.manipulator.pick_mold(well_id)
             self.move_to_global_ready()
             self.move_to_scale()
+            self.scale.tare() # Tare scale to baseline weight is always exactly the weight of the mold.
             self.manipulator.place_mold_on_scale()
+            baseline_weight = self._record_scale_baseline_weight()
             self.fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
+            self._validate_scale_clear_after_pickup(baseline_weight)
             tamp_depth, tamp_speed = config.get_tamp_defaults()
             tamp_depth = min(float(tamp_depth), config.get_tamp_depth_max())
             self.manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)
@@ -772,6 +810,8 @@ class JubileeManager:
             if self.active_job_log is not None:
                 self.active_job_log.update_well(well_id)
             return True
+        except ScaleResidualObjectError:
+            raise
         except Exception as e:
             self.last_error = str(e)
             print(f"Error filling mold: {e}")
@@ -1069,6 +1109,12 @@ class JubileeManager:
         if not self.state_machine:
             return False
         return self.state_machine.set_dispenser_pistons(index, num_pistons)
+
+    def reset_job_mold_metadata(self) -> None:
+        """Clear transient mold metadata after a dispensing job completes."""
+        if self.state_machine is None:
+            return
+        self.state_machine.reset_mold_metadata()
 
     def abort(self) -> None:
         """

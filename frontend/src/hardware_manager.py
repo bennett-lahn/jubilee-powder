@@ -232,6 +232,10 @@ class MockHardwareManager:
         noise = random.gauss(0.0, 0.04)
         return round(max(0.0, self._scale_base + drift + noise), 3)
 
+    async def get_weight_telemetry(self) -> float:
+        """Return weight for telemetry frames."""
+        return await self.get_weight_unstable()
+
     async def get_weight_stable(self) -> float:
         """Return a simulated stable scale reading with minimal noise.
 
@@ -361,6 +365,10 @@ class MockHardwareManager:
         """Simulate an emergency stop. Transitions state to ERROR immediately."""
         self.state = MachineState.ERROR
 
+    def reset_mold_job_metadata(self) -> None:
+        """No-op in mock mode; mold metadata only exists in real hardware manager."""
+        return
+
     def clear_jam(self) -> None:
         """No-op in mock: no real dispensing loop to unblock."""
         pass
@@ -457,6 +465,18 @@ class HardwareManager:
         """
         if self._manager and self._manager.connected:
             return await asyncio.to_thread(self._manager.get_weight_unstable)
+        return None
+
+    async def get_weight_telemetry(self) -> float | None:
+        """Read scale weight for telemetry frames.
+
+        Uses ``Scale.get_weight_for_telemetry()`` so telemetry yields to
+        higher-priority scale commands used during dispensing.
+        """
+        if self._manager and self._manager.connected:
+            scale = getattr(self._manager, "scale", None)
+            if scale is not None and scale.is_connected:
+                return await asyncio.to_thread(scale.get_weight_for_telemetry)
         return None
 
     async def get_weight_stable(self) -> float | None:
@@ -670,6 +690,11 @@ class HardwareManager:
         if self._manager is not None:
             await asyncio.to_thread(self._manager.abort)  # Bypass state machine
         self.state = MachineState.ERROR  # Prevents job finally-block reset
+
+    def reset_mold_job_metadata(self) -> None:
+        """Reset mold metadata tracked in the underlying state machine."""
+        if self._manager is not None:
+            self._manager.reset_job_mold_metadata()
 
     def clear_jam(self) -> None:
         """Unblock the dispensing loop after the operator clears a powder jam.
