@@ -1,14 +1,14 @@
 # Jubilee Powder Documentation
 
-Welcome to the Jubilee Powder documentation! This system provides automated powder dispensing and handling using the Jubilee Motion Platform for precision laboratory tasks.
+Welcome to Jubilee Powder documentation. This system provides automated powder dispensing and hardness testing workflows on the Jubilee Motion Platform for precision laboratory tasks.
 
 ## What is Jubilee Powder?
 
-Jubilee Powder is a Python-based system that enables programmatic control of the [Jubilee Motion Platform](https://github.com/machineagency/jubilee) for automated powder dispensing operations. It provides high-level abstractions for complex operations like precision powder dispensing, weighing, and material handling.
+Jubilee Powder is a Python-based system that enables programmatic control of the [Jubilee Motion Platform](https://github.com/machineagency/jubilee) for automated powder dispensing and hardness testing operations. It provides high-level APIs, a browser UI, and validated motion workflows for safe lab operation.
 
 ## Quick Navigation
 
-### For Users
+### For Operators
 
 If you're looking to **use** the Jubilee system for your laboratory work:
 
@@ -16,7 +16,7 @@ If you're looking to **use** the Jubilee system for your laboratory work:
 - **Safety and best practices:** [Best Practices](concepts/best-practices.md)
 - **Learn concepts:** [Architecture Overview](concepts/architecture.md)
 - **Follow recipes:** [How-To Guides](how-to/run-new-data.md)
-- **Use the GUI:** [GUI User Guide](how-to/using-gui.md)
+- **Use the Automation UI:** [Automation UI Guide](how-to/using-gui.md)
 - **Use the Web UI:** [Web Interface Guide](how-to/web-ui.md)
 - **Read LCD displays:** [LCD Display Reading Guide](how-to/reading-lcd-displays.md)
 
@@ -26,15 +26,15 @@ If you're looking to **extend** or **modify** the system:
 
 - **Core API:** [JubileeManager Reference](api/jubilee-manager.md)
 - **State Machine:** [MotionPlatformStateMachine Reference](api/motion-platform.md)
-- **GUI Framework:** [JubileeViewModel Reference](api/gui/jubilee-view-model.md)
+- **Frontend Store:** [Jubilee Store Reference](api/gui/jubilee-view-model.md)
 - **LCD Reader:** [HardnessTester Reference](api/hardness-tester.md)
 - **All APIs:** [Complete API Reference](api/jubilee-manager.md)
 
 ## What's Important?
 
-### GUI Interface (Recommended for Most Users)
+### Automation UI (Recommended for Most Users)
 
-The [GUI Application](how-to/using-gui.md) provides a touchscreen-friendly interface:
+The [Automation UI](how-to/using-gui.md) provides a touchscreen-friendly browser interface:
 
 - Visual well selection and configuration
 - Real-time progress monitoring
@@ -55,16 +55,16 @@ The [`JubileeManager`](api/jubilee-manager.md) class is your main programming en
 
 **Use this for scripted automation and custom workflows.**
 
-### GUI Framework: JubileeViewModel
+### Frontend Store: Jubilee Store
 
-The [`JubileeViewModel`](api/gui/jubilee-view-model.md) coordinates GUI and hardware:
+The [`Jubilee Store`](api/gui/jubilee-view-model.md) coordinates browser state with the backend:
 
-- MVVM-inspired architecture
+- MVVM-inspired architecture using Zustand
 - Callback system for real-time updates
 - Job execution management
 - Thread-safe operations
 
-**Use this if customizing or extending the GUI.**
+**Use this if customizing or extending the web frontend.**
 
 ### Advanced Control: MotionPlatformStateMachine
 
@@ -146,23 +146,24 @@ else:
 
 ## Key Features
 
-- **Touchscreen GUI**: Modern interface for interactive powder dispensing
+- **Web Automation UI**: Modern interface for interactive powder dispensing and hardness testing
 - **Python API**: Full programmatic control for automation
 - **Hardware Integration**: Control Jubilee motion platform, scales, and dispensers
 - **LCD Display Reading**: Segment-based recognition for 7-segment displays
 - **Safety Validation**: All movements validated through state machine
 - **Flexible Configuration**: JSON-based configuration system
-- **MVVM Architecture**: Clean separation between GUI, coordination, and hardware
+- **MVVM Architecture**: Clean separation between React views, store, and backend model
 - **Type Safety**: Full type hints throughout the codebase
 
 ## System Architecture
 
 ```mermaid
 graph TD
-    A[GUI / User Scripts] --> B[JubileeViewModel]
+    A[Automation UI / User Scripts] --> B[Jubilee Store]
     A --> C[JubileeManager]
     A --> I[HardnessTester]
-    B --> C
+    B --> L[FastAPI Server]
+    L --> C
     C --> D[MotionPlatformStateMachine]
     D --> E[Jubilee Machine]
     D --> F[Scale]
@@ -170,15 +171,15 @@ graph TD
     C --> H[Manipulator]
     H --> D
     I --> J[Camera]
-    I --> K[LCD Display]
+    I --> K[Hardness Display]
 ```
 
 The system uses a layered architecture where:
 
-1. **GUI / User Scripts** interact with `JubileeViewModel`, `JubileeManager`, or `HardnessTester`
-2. **JubileeViewModel** coordinates GUI operations (optional layer for GUI)
+1. **Automation UI / User Scripts** interact with the store, API, and core managers
+2. **Jubilee Store + FastAPI** coordinate browser workflows and telemetry
 3. **JubileeManager** coordinates high-level powder dispensing operations
-4. **HardnessTester** reads LCD displays using segment detection
+4. **HardnessTester** reads segmented displays and controls tester interactions
 5. **MotionPlatformStateMachine** validates and executes movements
 6. **Hardware Components** (Jubilee, Scale, Dispensers, Camera) perform physical actions
 

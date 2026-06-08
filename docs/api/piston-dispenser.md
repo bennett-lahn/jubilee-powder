@@ -65,9 +65,9 @@ manager = JubileeManager(
 
 manager.connect()
 
-# Get piston from dispenser 0
-manager._move_to_dispenser(dispenser_index=0)
-manager.get_piston_from_dispenser(dispenser_index=0)
+# Move to next available dispenser and retrieve a piston
+manager.move_to_dispenser()
+manager.get_piston_from_dispenser()
 
 # Check remaining pistons
 for dispenser in manager.piston_dispensers:
@@ -134,7 +134,7 @@ Corresponding state machine position in `motion_platform_positions.json`:
       "coordinates": {"x": 200, "y": 50, "z": 100, "safe_z": 150},
       "description": "Ready position for piston dispenser 0",
       "requires_tool": "manipulator",
-      "allowed_payloads": ["mold"]
+      "allowed_payloads": ["mold_without_top_piston"]
     }
   }
 }
@@ -184,9 +184,9 @@ manager.connect()
 for dispenser in manager.piston_dispensers:
     print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
 
-# Get piston from specific dispenser
-manager._move_to_dispenser(dispenser_index=0)
-manager.get_piston_from_dispenser(dispenser_index=0)
+# Move to next available dispenser and retrieve a piston
+manager.move_to_dispenser()
+manager.get_piston_from_dispenser()
 
 # Check which dispenser has pistons
 for dispenser in manager.piston_dispensers:
@@ -204,8 +204,8 @@ def get_piston_from_any_dispenser(manager):
     """Get piston from first available dispenser."""
     for dispenser in manager.piston_dispensers:
         if dispenser.num_pistons > 0:
-            manager._move_to_dispenser(dispenser.index)
-            manager.get_piston_from_dispenser(dispenser.index)
+            manager.move_to_dispenser()
+            manager.get_piston_from_dispenser()
             return dispenser.index
     
     raise RuntimeError("No dispensers have pistons available")
@@ -222,7 +222,6 @@ from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 
 # Retrieve piston with validation
 result = state_machine.validated_retrieve_piston(
-    piston_dispenser=dispenser,
     manipulator_config=manipulator._get_config_dict()
 )
 
@@ -236,7 +235,7 @@ else:
 
 - Must be at dispenser ready position
 - Manipulator tool must be active
-- Payload must be `"mold"` (retrieving into a mold)
+- Payload must be `"mold_without_top_piston"` (retrieving into a mold)
 - Dispenser must have pistons available
 
 ## Error Handling
@@ -259,7 +258,6 @@ except RuntimeError as e:
 
 ```python
 result = state_machine.validated_retrieve_piston(
-    piston_dispenser=dispenser,
     manipulator_config=config
 )
 
@@ -360,8 +358,8 @@ def select_dispenser(manager):
 # Use the fullest dispenser
 dispenser = select_dispenser(manager)
 if dispenser.num_pistons > 0:
-    manager._move_to_dispenser(dispenser.index)
-    manager.get_piston_from_dispenser(dispenser.index)
+    manager.move_to_dispenser()
+    manager.get_piston_from_dispenser()
 ```
 
 ## Configuration Examples

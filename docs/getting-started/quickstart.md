@@ -65,10 +65,9 @@ print("Connected successfully!")
     - Connect to the scale
     - Initialize the state machine
     - Home all axes
-    - Pick up the manipulator tool
-    - Home the manipulator axis
+    - Leave tools parked until an operation requires one
 
-    **Your Jubilee will move if this command is run!**
+    **Your Jubilee will move if this command is run. Ensure the deck is clear before connecting.**
 
 ### Step 4: Perform Operations
 
@@ -148,7 +147,7 @@ When you run this script:
    - Connects to scale via USB serial
    - Loads configuration from JSON files
    - Homes all machine axes (X, Y, Z, U, V)
-   - Picks up the manipulator tool
+   - Loads tools and keeps them parked until requested by operations
 
 2. **Operation Phase**:
    - Moves to the specified mold location

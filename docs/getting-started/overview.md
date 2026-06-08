@@ -2,7 +2,7 @@
 
 ## What is Jubilee Powder?
 
-Jubilee Powder is a comprehensive software system for controlling the Jubilee Motion Platform to automate powder dispensing and shore hardness testing. It provides a Python API for coordinating operations involving multiple hardware components.
+Jubilee Powder is a comprehensive software system for controlling the Jubilee Motion Platform to automate powder dispensing and Shore hardness testing. It provides both a browser-based interface and a Python API for coordinating operations across multiple hardware components.
 
 ## Core Components
 
@@ -19,15 +19,15 @@ The system integrates several hardware components:
 
 The software is organized in layers from high-level to low-level:
 
-1. **GUI Application** (User Interface)
-   - Touchscreen-friendly interface
+1. **Automation UI** (User Interface)
+   - Browser-based interface for dispensing and hardness jobs
    - Visual mold selection and configuration
    - Real-time progress monitoring
    - Built-in safety checks
 
-2. **JubileeViewModel** (GUI Coordination)
-   - Coordinates GUI with hardware
-   - Manages job execution
+2. **Frontend Coordination Layer**
+   - Zustand-based `Jubilee Store` for browser state and actions
+   - FastAPI server for REST and WebSocket transport
 
 3. **JubileeManager** (Core API)
    - Highest-level programming API
@@ -68,8 +68,8 @@ The Jubilee uses a tool-changing system where:
 The system tracks what the manipulator is holding:
 
 - `empty`: No mold held
-- `mold`: Holding a mold
-- `mold_with_piston`: Holding a mold with top piston
+- `mold_without_top_piston`: Holding a mold without top piston
+- `mold_with_top_piston`: Holding a mold with top piston
 
 This enables safe movement validation based on current load.
 
@@ -97,22 +97,15 @@ This enables safe movement validation based on current load.
 
 ## Usage Options
 
-### GUI Interface
+### Automation UI
 
-For interactive machine operation with visual feedback:
-
-```bash
-python gui/jubilee_gui.py
-```
+For interactive machine operation with visual feedback, use the web interface documented in [Using the Automation UI](../how-to/using-gui.md).
 
 **Features:**
-- Visual mold selection
-- Real-time weight monitoring
-- Progress tracking
-- Hardware configuration
-- Safety checklist
-
-See [GUI User Guide](../how-to/using-gui.md) for details.
+- Visual mold and sample selection
+- Real-time weight and job monitoring
+- Hardware configuration and connection lifecycle
+- Safety checks and emergency controls
 
 ### Python API (Automation)
 
@@ -140,7 +133,8 @@ See [Quick Start Guide](quickstart.md) for details.
 
 ### Software Requirements
 
-- Python 3.8 or later
+- Python 3.12 or later
+- Node.js 20.19+ or 22.12+ (Vite 8 requirement; `deploy/install.sh` installs Node 22 LTS automatically)
 - Linux-based operating system (for hardware integration)
 - Dependencies listed in `requirements.txt`
 
@@ -173,6 +167,7 @@ pip install -r requirements.txt
 
 ## Next Steps
 
+- **To launch the web UI:** See [Building and Running](../how-to/running.md) for dev mode, production mode, and Raspberry Pi kiosk setup
 - **For GUI users:** Follow the [GUI User Guide](../how-to/using-gui.md)
 - **For programmers:** Follow the [Quick Start Guide](quickstart.md)
 - **Before your first run:** Read [Best Practices](../concepts/best-practices.md) for hardware safety rules

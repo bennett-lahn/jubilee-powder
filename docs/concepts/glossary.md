@@ -44,6 +44,13 @@ A container that holds and dispenses cylindrical pistons. Tracks the number of a
 - Dispenses from the top of the stack
 - Tracks available piston count
 
+### Trickler
+The powder filling mechanism used to add powder to a mold while it is on the scale.
+
+**Terminology policy**:
+- Use **fill** or **add powder** when referring to powder transfer into a mold
+- Reserve **dispense** for piston-dispenser operations
+
 ### Scale
 A precision balance for weighing objects. Connected via USB serial connection.
 
@@ -101,11 +108,15 @@ The state machine's internal representation of the current system state. Include
 ### Empty
 The manipulator is not holding any object. This is the default state after homing or after placing an object.
 
-### Mold
-The manipulator is holding a mold (well plate or container). The mold does not contain a piston.
+### Mold Without Top Piston
+The manipulator is holding a mold that does not contain a top piston.
 
-### Mold with Piston
-The manipulator is holding a mold that contains a piston. This affects weight and handling.
+**Canonical payload enum**: `mold_without_top_piston`
+
+### Mold With Top Piston
+The manipulator is holding a mold that contains a top piston.
+
+**Canonical payload enum**: `mold_with_top_piston`
 
 ## Tool Concepts
 
@@ -209,7 +220,15 @@ An exception raised when an operation is attempted with the wrong tool state (e.
 ### Movement Constraint
 A rule that limits when or how a movement can be performed. Examples:
 - "Must have manipulator tool picked up"
-- "Cannot move with mold_with_piston payload"
+- "Cannot move with mold_with_top_piston payload"
+
+## Naming Conventions and Legacy Aliases
+
+Use these terms consistently across documentation:
+
+- **Top piston** is canonical. Avoid legacy `cap` terminology.
+- **Mold** is canonical for payload/object terminology. Legacy `WeightWell` references should be treated as mold equivalents when encountered in older comments.
+- **Payload enums** should use `empty`, `mold_without_top_piston`, `mold_with_top_piston`.
 - "Must be at global_ready position first"
 
 ## LCD Display Reading Terms
@@ -239,8 +258,8 @@ A 7-bit tuple representing which segments are active in a digit. Example: `(1, 1
 ### Lookup Table
 A dictionary mapping segment patterns to digit strings. Used to recognize digits after segment detection.
 
-### LAB Color Space
-A color space used in image processing where the b-channel (blue-yellow axis) provides optimal contrast for LCD segments with greenish or gray backgrounds.
+### Grayscale Conversion
+The primary image preprocessing step used in the LCD reading pipeline. The BGR camera frame is converted to grayscale before CLAHE and thresholding are applied.
 
 ### CLAHE (Contrast Limited Adaptive Histogram Equalization)
 An image enhancement algorithm that improves local contrast by dividing the image into small tiles and applying histogram equalization to each.

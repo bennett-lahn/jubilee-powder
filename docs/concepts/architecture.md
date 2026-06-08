@@ -1,10 +1,10 @@
 # System Architecture
 
-This document explains the architecture of the Jubilee Powder system at a conceptual level.
+This document explains the architecture of Jubilee Powder at a conceptual level.
 
 ## Overview
 
-The Jubilee Powder system uses a layered architecture where each layer provides a different level of abstraction and control.
+Jubilee Powder uses a layered architecture where each layer provides a different level of abstraction and control.
 
 ## Architecture Diagram
 
@@ -171,7 +171,7 @@ The state machine tracks:
 
 - **Position**: Current named position (e.g., "global_ready", "scale_ready")
 - **Active Tool**: Which tool is currently picked up (or None)
-- **Payload**: What the manipulator is holding (empty, mold, mold_with_piston)
+- **Payload**: What the manipulator is holding (`empty`, `mold_without_top_piston`, `mold_with_top_piston`)
 
 **Validation Rules**:
 
@@ -302,55 +302,8 @@ sequenceDiagram
     Note over SM,S: Repeat until target reached
     
     JM->>M: pick_mold_from_scale()
-    JM->>SM: validated_move_to_dispenser(0)
-    JM->>SM: validated_retrieve_piston(0)
-    JM->>SM: validated_move_to_mold_slot("0")
-    JM->>M: place_mold("0")
-    
-    JM-->>U: True (success)
-```
-
-### Example: Direct Script Operation
-
-For comparison, a direct script operation (without GUI):
-
-```mermaid
-sequenceDiagram
-    participant U as User Script
-    participant JM as JubileeManager
-    participant SM as StateMachine
-    participant M as Manipulator
-    participant S as Scale
-    participant H as Hardware
-
-    U->>JM: dispense_to_well("0", 50.0)
-    JM->>SM: validated_move_to_mold_slot("0")
-    SM->>SM: Check current state
-    SM->>SM: Validate movement
-    SM->>H: Execute movement
-    H-->>SM: Movement complete
-    SM-->>JM: Success
-    
-    JM->>M: pick_mold("0")
-    M->>SM: Update payload state
-    M->>H: Execute gripper
-    
-    JM->>SM: validated_move_to_scale()
-    SM->>H: Execute movement
-    
-    JM->>M: place_mold_on_scale()
-    M->>H: Execute gripper
-    M->>SM: Update payload state
-    
-    JM->>SM: validated_fill_powder(50.0)
-    SM->>S: Read weight
-    SM->>H: Control trickler
-    SM->>S: Read weight
-    Note over SM,S: Repeat until target reached
-    
-    JM->>M: pick_mold_from_scale()
-    JM->>SM: validated_move_to_dispenser(0)
-    JM->>SM: validated_retrieve_piston(0)
+    JM->>SM: validated_move_to_dispenser()
+    JM->>SM: validated_retrieve_piston(...)
     JM->>SM: validated_move_to_mold_slot("0")
     JM->>M: place_mold("0")
     
@@ -403,84 +356,15 @@ Physical parameters are in configuration files, not code:
 - Version control for configurations
 - Validation of configuration data
 
-## Component Interactions
-
-### JubileeManager ↔ StateMachine
-
-- JubileeManager owns the StateMachine
-- All movements go through StateMachine validation
-- JubileeManager coordinates multi-step operations
-- StateMachine enforces single-step safety
-
-### Manipulator ↔ StateMachine
-
-- Manipulator updates payload state via StateMachine
-- State machine validates movements based on payload
-- Manipulator uses StateMachine for movements
-
-### Configuration ↔ All Components
-
-- All components read their configuration via ConfigLoader
-- Positions, speeds, and parameters come from JSON
-- Configuration is loaded once at startup
-
 ## Extending the System
 
-### Adding New Operations
+To add new operations, hardware, or positions, follow the same layered pattern:
 
-To add a new high-level operation:
+- New high-level operations belong in `JubileeManager`, implemented as calls to `validated_*` state machine methods.
+- New hardware components follow the existing `PistonDispenser` / `Scale` pattern: a class that encapsulates component state and uses the state machine for movements.
+- New named positions are added to `motion_platform_positions.json` with transitions, constraints, and tool requirements. See the [Configuration Guide](../how-to/configuration.md) for details.
 
-1. Add method to `JubileeManager`
-2. Break down into state machine operations
-3. Call `validated_*` methods on state machine
-4. Handle errors and return success/failure
-
-### Adding New Hardware
-
-To add a new hardware component:
-
-1. Create new component class (like `PistonDispenser`)
-2. Add component to state machine context
-3. Add validation logic if needed
-4. Add configuration entries
-5. Add convenience methods to JubileeManager
-
-### Adding New Positions
-
-To add a new named position:
-
-1. Add entry to `motion_platform_positions.json`
-2. Define allowed transitions
-3. Define constraints (tool required, payload restrictions)
-4. Add convenience method to JubileeManager if needed
-
-## Performance Considerations
-
-### Movement Optimization
-
-- State machine can batch movements when safe
-- Configuration sets appropriate feed rates
-- Direct paths when validated as safe
-
-### Error Handling
-
-- Validation happens before movement (fail fast)
-- Clear error messages reduce debugging time
-- State preserved on failure for recovery
-
-## Security Considerations
-
-### Access Control
-
-- State machine prevents bypass of validation
-- JubileeManager owns state machine exclusively
-- Configuration files control physical limits
-
-### Safety Zones
-
-- Configuration defines safe operating areas
-- State machine enforces these boundaries
-- Emergency stop accessible via hardware
+See [JubileeManager](../api/jubilee-manager.md) and [MotionPlatformStateMachine](../api/motion-platform.md) for implementation specifics.
 
 ## Next Steps
 

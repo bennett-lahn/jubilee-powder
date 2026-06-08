@@ -109,8 +109,8 @@ The state machine maintains:
 | State | Description |
 |-------|-------------|
 | `empty` | Manipulator holds nothing |
-| `mold` | Manipulator holds a mold without piston |
-| `mold_with_piston` | Manipulator holds a mold containing a piston |
+| `mold_without_top_piston` | Manipulator holds a mold without a top piston |
+| `mold_with_top_piston` | Manipulator holds a mold containing a top piston |
 
 ### Position Names
 
@@ -202,13 +202,8 @@ result = state_machine.validated_move_to_scale()
 # Move to mold slot
 result = state_machine.validated_move_to_mold_slot(well_id="0")
 
-# Move to dispenser
-from src.PistonDispenser import PistonDispenser
-
-dispenser = PistonDispenser(index=0, state_machine=state_machine)
-result = state_machine.validated_move_to_dispenser(
-    piston_dispenser=dispenser
-)
+# Move to the next dispenser that has pistons available
+result = state_machine.validated_move_to_dispenser()
 ```
 
 **Requirements vary by destination**:
@@ -224,7 +219,6 @@ result = state_machine.validated_fill_powder(target_weight=50.0)
 
 # Retrieve piston from dispenser
 result = state_machine.validated_retrieve_piston(
-    piston_dispenser=dispenser,
     manipulator_config=manipulator._get_config_dict()
 )
 ```
@@ -238,7 +232,6 @@ from pathlib import Path
 from science_jubilee.Machine import Machine
 from src.Scale import Scale
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
-from jubilee_api_config.constants import FeedRate
 
 # Connect to hardware
 machine = Machine(address="192.168.1.100")
@@ -252,8 +245,7 @@ config_path = Path("jubilee_api_config/motion_platform_positions.json")
 state_machine = MotionPlatformStateMachine.from_config_file(
     config_file=config_path,
     machine=machine,
-    scale=scale,
-    feedrate=FeedRate.MEDIUM
+    scale=scale
 )
 
 # Initialize components
@@ -274,7 +266,7 @@ In some cases, you may need to manually update the state:
 # Update multiple state fields
 state_machine.update_context(
     active_tool_id=0,
-    payload_state="mold"
+    payload_state="mold_without_top_piston"
 )
 
 # Update position
@@ -319,7 +311,7 @@ The state machine reads from `motion_platform_positions.json`:
       "coordinates": {"x": 100, "y": 100, "z": 50, "safe_z": 150},
       "description": "Position description",
       "requires_tool": "manipulator",
-      "allowed_payloads": ["empty", "mold"]
+      "allowed_payloads": ["empty", "mold_without_top_piston"]
     }
   },
   "transitions": {
@@ -346,7 +338,7 @@ def custom_operation(state_machine, well_id, target_weight):
         return False, f"Move to slot failed: {result.reason}"
     
     # Update payload (after picking mold)
-    state_machine.update_context(payload_state="mold")
+    state_machine.update_context(payload_state="mold_without_top_piston")
     
     # Move to scale
     result = state_machine.validated_move_to_scale()
@@ -411,7 +403,7 @@ if not result.valid:
 ## See Also
 
 - [JubileeManager](jubilee-manager.md) - High-level interface (recommended)
-- [MovementExecutor](../api/config-loader.md) - Low-level movement execution
+- [ConfigLoader](config-loader.md) - Configuration loading details
 - [Architecture Guide](../concepts/architecture.md) - System design overview
 - [Configuration Guide](../how-to/configuration.md) - Setting up positions and transitions
 

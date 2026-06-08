@@ -1,17 +1,14 @@
 # ConfigLoader API Reference
 
-The `ConfigLoader` module provides centralized access to system configuration from JSON files.
+`ConfigLoader` is the typed loader for `jubilee_api_config/system_config.json`.
 
-## Overview
+## Responsibilities
 
-ConfigLoader:
+- Load and validate config using Pydantic models.
+- Expose typed access via `config.system` and helper getters.
+- Fail fast with `ConfigError` on missing/invalid required fields.
 
-- Loads configuration from JSON files
-- Provides type-safe access to configuration values
-- Handles default values
-- Validates configuration data
-
-## Module Reference
+## Module docs
 
 ::: src.ConfigLoader
     options:
@@ -19,414 +16,48 @@ ConfigLoader:
       show_root_heading: true
       show_source: false
 
-## Usage Examples
-
-### Basic Configuration Access
+## Basic usage
 
 ```python
 from src.ConfigLoader import config
 
-# Get Duet IP address
-ip = config.get_duet_ip()
-print(f"Jubilee IP: {ip}")
-
-# Get scale port
-port = config.get_scale_port()
-print(f"Scale port: {port}")
-
-# Get system configuration
-sys_config = config.get_system_config()
-print(f"System config: {sys_config}")
+duet_ip = config.get_duet_ip()
+scale_port = config.get_scale_port()
+feedrate = config.get_default_feedrate()
+tamp_depth, tamp_speed = config.get_tamp_defaults()
 ```
 
-### Loading Custom Configurations
+or read typed models directly:
 
 ```python
+from src.ConfigLoader import config
+
+duet_ip = config.system.machine.duet_ip
+mock_hw = config.system.server.mock_hardware
+coarse_feedrate = config.system.trickler.coarse_feedrate
+```
+
+## Test-only loading
+
+Use `from_file()` for fixture/temp config:
+
+```python
+from pathlib import Path
 from src.ConfigLoader import ConfigLoader
 
-# Create loader for custom config file
-loader = ConfigLoader(config_file="custom_config.json")
-
-# Access configuration
-custom_data = loader.get_system_config()
-```
-
-## Configuration Files
-
-### system_config.json
-
-Main system configuration file:
-
-```json
-{
-  "system": {
-    "duet_ip": "192.168.1.100",
-    "scale_port": "/dev/ttyUSB0",
-    "scale_baud_rate": 9600,
-    "default_feedrate": "MEDIUM"
-  },
-  "manipulator": {
-    "tamper_axis": "V",
-    "tamp_depth_min": 0.0,
-    "tamp_depth_max": 9.0,
-    "tamp_speed_min": 500,
-    "tamp_speed_max": 5000
-  },
-  "tools": {
-    "manipulator": {
-      "index": 0,
-      "park_position": {"x": 0, "y": 0, "z": 100},
-      "v_axis_offset": 50.0,
-      "gripper_config": {
-        "open_position": 5.0,
-        "close_position": 0.0,
-        "grip_force": 10.0
-      }
-    }
-  },
-  "safety": {
-    "max_speed": 10000,
-    "acceleration": 500,
-    "work_envelope": {
-      "x_min": 0, "x_max": 300,
-      "y_min": 0, "y_max": 300,
-      "z_min": 0, "z_max": 300
-    }
-  }
-}
-```
-
-### motion_platform_positions.json
-
-State machine positions and transitions:
-
-```json
-{
-  "positions": {
-    "global_ready": {
-      "coordinates": {"x": 150, "y": 150, "z": 100, "safe_z": 150},
-      "description": "Safe global position",
-      "requires_tool": null,
-      "allowed_payloads": ["empty", "mold", "mold_with_piston"]
-    }
-  },
-  "transitions": {
-    "global_ready": {
-      "to": ["scale_ready", "mold_ready_0"]
-    }
-  }
-}
-```
-
-### mold_labware.json
-
-Deck layout and labware definitions:
-
-```json
-{
-  "deck": {
-    "name": "Main Deck",
-    "dimensions": {"width": 300, "height": 300},
-    "labware": {
-      "well_plate_1": {
-        "type": "well_plate",
-        "name": "24-Well Plate",
-        "rows": 4,
-        "columns": 6,
-        "origin": {"x": 50, "y": 50, "z": 10},
-        "wells": {
-          "0": {
-            "position": {"x": 50, "y": 50, "z": 10},
-            "ready_pos": "mold_ready_0",
-            "capacity_ml": 10.0
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-## Accessing Configuration Values
-
-### System Settings
-
-```python
-from src.ConfigLoader import config
-
-# Network settings
-duet_ip = config.get_duet_ip()
-duet_port = config.get_value("system.duet_port", default=80)
-
-# Scale settings
-scale_port = config.get_scale_port()
-scale_baud = config.get_value("system.scale_baud_rate", default=9600)
-
-# Feed rate
-feedrate = config.get_value("system.default_feedrate", default="MEDIUM")
-```
-
-### Tool Configuration
-
-```python
-# Get manipulator configuration
-manipulator_config = config.get_value("tools.manipulator")
-
-if manipulator_config:
-    index = manipulator_config["index"]
-    park_pos = manipulator_config["park_position"]
-    gripper = manipulator_config["gripper_config"]
-    
-    print(f"Manipulator index: {index}")
-    print(f"Park position: {park_pos}")
-    print(f"Gripper open: {gripper['open_position']}mm")
-```
-
-### Tamping Configuration
-
-```python
-from src.ConfigLoader import config
-
-# Get tamping parameter bounds
-tamp_depth_min = config.get_tamp_depth_min()  # Default: 10.0 mm
-tamp_depth_max = config.get_tamp_depth_max()  # Default: 60.0 mm
-tamp_speed_min = config.get_tamp_speed_min()  # Default: 500 mm/min
-tamp_speed_max = config.get_tamp_speed_max()  # Default: 5000 mm/min
-
-print(f"Tamp depth range: {tamp_depth_min}-{tamp_depth_max} mm")
-print(f"Tamp speed range: {tamp_speed_min}-{tamp_speed_max} mm/min")
-
-# These bounds are enforced by the state machine during tamping operations
-```
-
-Configuration in `system_config.json`:
-
-```json
-{
-  "manipulator": {
-    "tamper_axis": "V",
-    "tamp_depth_min": 0.0,
-    "tamp_depth_max": 9.0,
-    "tamp_speed_min": 500,
-    "tamp_speed_max": 5000
-  }
-}
-```
-
-### Safety Parameters
-
-```python
-# Get safety limits
-safety = config.get_value("safety")
-
-if safety:
-    max_speed = safety["max_speed"]
-    envelope = safety["work_envelope"]
-    
-    print(f"Max speed: {max_speed} mm/min")
-    print(f"Work envelope: X={envelope['x_min']}-{envelope['x_max']}mm")
-```
-
-### Nested Values
-
-```python
-# Access deeply nested values using dot notation
-gripper_open = config.get_value(
-    "tools.manipulator.gripper_config.open_position",
-    default=5.0
+loader = ConfigLoader.from_file(
+    Path("tmp/system_config.json"),
+    project_root=Path("."),
 )
-
-# Or access step by step
-tools = config.get_value("tools")
-manipulator = tools.get("manipulator", {})
-gripper_config = manipulator.get("gripper_config", {})
-gripper_open = gripper_config.get("open_position", 5.0)
 ```
 
-## Default Values
+## Required config rule
 
-### Providing Defaults
+- Keep machine behavior in JSON.
+- Do not use silent fallback defaults in production paths.
+- Add new required fields to the corresponding Pydantic model so validation catches issues at load time.
 
-Always provide sensible defaults. For critical values (mold positions, feedrate, other physical parameters), it is better to throw an error instead of proceeding with a potentially inaccurate default:
+## Related pages
 
-```python
-# GOOD - with default
-value = config.get_value("optional.setting", default=100)
-
-# RISKY - no default (might be None)
-value = config.get_value("optional.setting")
-if value is None:
-    value = 100
-```
-
-### Common Defaults
-
-```python
-# Network
-duet_ip = config.get_duet_ip() or "192.168.1.100"
-duet_port = config.get_value("system.duet_port", default=80)
-
-# Serial
-scale_port = config.get_scale_port() or "/dev/ttyUSB0"
-scale_baud = config.get_value("system.scale_baud_rate", default=9600)
-
-# Performance
-feedrate = config.get_value("system.default_feedrate", default="MEDIUM")
-max_speed = config.get_value("safety.max_speed", default=10000)
-```
-
-## Configuration Validation
-
-### Validating Required Fields
-
-```python
-def validate_system_config(config):
-    """Validate that required configuration fields exist."""
-    required_fields = [
-        "system.duet_ip",
-        "system.scale_port",
-        "tools.manipulator.index"
-    ]
-    
-    missing = []
-    for field in required_fields:
-        if config.get_value(field) is None:
-            missing.append(field)
-    
-    if missing:
-        raise ValueError(f"Missing required config fields: {missing}")
-    
-    print("Configuration validation passed")
-
-# Usage
-try:
-    validate_system_config(config)
-except ValueError as e:
-    print(f"Configuration error: {e}")
-```
-
-### Validating Value Ranges
-
-```python
-def validate_safety_limits(config):
-    """Validate safety parameters are within acceptable ranges."""
-    safety = config.get_value("safety", default={})
-    
-    max_speed = safety.get("max_speed", 10000)
-    if max_speed > 20000:
-        print(f"WARNING: max_speed ({max_speed}) exceeds recommended limit")
-    
-    envelope = safety.get("work_envelope", {})
-    for axis in ["x", "y", "z"]:
-        min_val = envelope.get(f"{axis}_min", 0)
-        max_val = envelope.get(f"{axis}_max", 300)
-        
-        if min_val >= max_val:
-            raise ValueError(f"Invalid work envelope: {axis}_min >= {axis}_max")
-    
-    print("Safety limits validation passed")
-```
-
-## Configuration Modification
-
-### Runtime Modification
-
-```python
-# Modify configuration at runtime (not persistent)
-config._config["system"]["duet_ip"] = "192.168.1.200"
-
-# Verify change
-new_ip = config.get_duet_ip()
-print(f"New IP: {new_ip}")
-```
-
-!!! warning "Not Persistent"
-    Runtime modifications are **not saved** to the configuration file. They only affect the current program execution.
-
-### Saving Configuration
-
-To make persistent changes, edit the JSON files directly:
-
-```python
-import json
-from pathlib import Path
-
-def update_duet_ip(new_ip):
-    """Update Duet IP in configuration file."""
-    config_file = Path("jubilee_api_config/system_config.json")
-    
-    # Read current config
-    with open(config_file, 'r') as f:
-        config_data = json.load(f)
-    
-    # Update value
-    config_data["system"]["duet_ip"] = new_ip
-    
-    # Write back
-    with open(config_file, 'w') as f:
-        json.dump(config_data, f, indent=2)
-    
-    print(f"Updated Duet IP to {new_ip}")
-
-# Usage
-update_duet_ip("192.168.1.200")
-```
-
-## Best Practices
-
-### Use Centralized Config
-
-```python
-# GOOD - use centralized config
-from src.ConfigLoader import config
-
-ip = config.get_duet_ip()
-
-# BAD - hardcoded values
-ip = "192.168.1.100"
-```
-
-### Validate on Startup
-
-```python
-def main():
-    # Validate configuration before using it
-    try:
-        validate_system_config(config)
-        validate_safety_limits(config)
-    except ValueError as e:
-        print(f"Configuration error: {e}")
-        return
-    
-    # Continue with validated configuration
-    # ...
-```
-
-### Document Configuration
-
-Keep documentation of configuration fields:
-
-```python
-"""
-Configuration Fields:
-
-system.duet_ip: str
-    IP address of Jubilee Duet controller
-    Default: "192.168.1.100"
-
-system.scale_port: str
-    Serial port for scale connection
-    Default: "/dev/ttyUSB0"
-    
-system.default_feedrate: str
-    Default movement speed (SLOW, MEDIUM, FAST)
-    Default: "MEDIUM"
-"""
-```
-
-## See Also
-
-- [Configuration Guide](../how-to/configuration.md) - Detailed configuration walkthrough
-- [JubileeManager](jubilee-manager.md) - Uses ConfigLoader for initialization
-- [System Architecture](../concepts/architecture.md) - Role of configuration in system
-
+- [Configuration Guide](../how-to/configuration.md)
+- [Position Config API](position-config.md)

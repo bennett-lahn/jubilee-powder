@@ -63,7 +63,7 @@ Check the saved image to ensure:
 
 ### Step 2: Run Calibration
 
-The calibration process will ask you to identify the boundaries of each digit:
+The calibration process opens an interactive GUI to map the digit and segment positions:
 
 ```python
 reader.calibrate(frame=frame, save_calibration=True)
@@ -71,36 +71,12 @@ reader.calibrate(frame=frame, save_calibration=True)
 
 The system will:
 1. Save debug images showing preprocessing steps
-2. Ask for pixel coordinates of each digit (x1, y1, x2, y2)
-3. Save calibration to `lcd_calibration.json`
-4. Test the calibration immediately
+2. Open an interactive GUI where you click and drag to draw a bounding box around each digit, then click to set the segment polygon vertices for each of the 7 segments per digit
+3. Save calibration to the configured `calibration_path` (default: `lcd_calibration.json`)
+4. Test the calibration immediately and print the result
 
 !!! tip
-    Open the debug image `calibration_step6_cleaned.png` in an image viewer to find the exact pixel coordinates of each digit.
-
-### Step 3: Note the Coordinates
-
-For each digit, you'll enter four values:
-- **x1**: Left edge of the digit (pixels from left)
-- **y1**: Top edge of the digit (pixels from top)
-- **x2**: Right edge of the digit
-- **y2**: Bottom edge of the digit
-
-Example calibration session:
-```
-Digit 0:
-  x1 (left): 50
-  y1 (top): 100
-  x2 (right): 90
-  y2 (bottom): 180
-
-Digit 1:
-  x1 (left): 100
-  y1 (top): 100
-  x2 (right): 140
-  y2 (bottom): 180
-...
-```
+    Open the debug image `calibration_step5_binary.png` in an image viewer before calibrating. In the binary image, active LCD segments appear as dark regions on a bright background, which helps you place segment polygons accurately.
 
 ## Production Usage
 
@@ -154,21 +130,6 @@ while True:
 
 ## Advanced Features
 
-### Locking Camera Settings
-
-Prevent auto-exposure from washing out LCD segments:
-
-```python
-reader = HardnessTester(
-    num_digits=4,
-    exposure_time=10000,  # microseconds (Picamera2 only)
-    gain=1.0              # Analog gain (Picamera2 only)
-)
-```
-
-!!! note
-    Camera locking works best with Picamera2 on Raspberry Pi. With cv2.VideoCapture, the system will attempt to set exposure but results vary by camera.
-
 ### Debug Mode
 
 Enable debug output to troubleshoot recognition issues:
@@ -179,15 +140,14 @@ result = reader.read_display(debug=True, debug_prefix="debug")
 
 This saves images at each preprocessing step:
 - `debug_step1_original.png` - Raw camera capture
-- `debug_step2_lab.png` - LAB color space
-- `debug_step3_b_channel.png` - Extracted b-channel
+- `debug_step2_gray.png` - Grayscale conversion
 - `debug_step4_clahe.png` - Enhanced contrast
 - `debug_step5_binary.png` - Binary threshold
 - `debug_step6_cleaned.png` - Final cleaned image
 
 ### Viewing Segment Patterns
 
-See which segments are detected for debugging:
+See which segments are detected for debugging. Both `analyze_segment` and `recognize_digit` take the full binary frame and a digit index - they no longer accept a cropped ROI:
 
 ```python
 result = reader.read_display(debug=True)
@@ -197,18 +157,12 @@ frame = reader.capture_image()
 binary = reader.preprocess_frame(frame)
 
 for i in range(reader.num_digits):
-    digit_roi = reader.extract_digit_roi(binary, i)
-    segments = (
-        reader.analyze_segment(digit_roi, 'top'),
-        reader.analyze_segment(digit_roi, 'top_left'),
-        reader.analyze_segment(digit_roi, 'top_right'),
-        reader.analyze_segment(digit_roi, 'middle'),
-        reader.analyze_segment(digit_roi, 'bottom_left'),
-        reader.analyze_segment(digit_roi, 'bottom_right'),
-        reader.analyze_segment(digit_roi, 'bottom'),
-    )
-    digit = reader.recognize_digit(digit_roi)
-    print(f"Digit {i}: {segments} → {digit}")
+    segments = {
+        name: reader.analyze_segment(binary, i, name)
+        for name in reader.SEGMENT_ORDER
+    }
+    digit = reader.recognize_digit(binary, i, debug=True)
+    print(f"Digit {i}: {segments} => {digit}")
 ```
 
 ### Adjusting Sensitivity
@@ -226,29 +180,6 @@ reader.segment_threshold = 0.3
 reader.segment_threshold = 0.7
 
 result = reader.read_display()
-```
-
-### Automatic ROI Detection
-
-Try automatic detection (may not work for all displays):
-
-```python
-reader = HardnessTester(num_digits=4)
-frame = reader.capture_image()
-binary = reader.preprocess_frame(frame)
-
-# Attempt auto-detection
-detected_rois = reader.auto_detect_digit_rois(binary)
-
-if detected_rois:
-    print(f"Detected {len(detected_rois)} digit ROIs:")
-    for i, roi in enumerate(detected_rois):
-        print(f"  Digit {i}: {roi}")
-    
-    reader.set_digit_rois(detected_rois)
-    result = reader.read_display()
-else:
-    print("Auto-detection failed - use manual calibration")
 ```
 
 ## Understanding How It Works
@@ -297,7 +228,7 @@ Pattern: `(1, 1, 0, 1, 0, 1, 1)` → Recognized as "5"
 
 ### Preprocessing Pipeline
 
-1. **LAB Color Space**: Converts BGR → LAB and extracts the b-channel, which provides best contrast for LCD segments
+1. **Grayscale**: Converts BGR to grayscale as the primary preprocessing path
 2. **CLAHE**: Adaptive histogram equalization enhances local contrast
 3. **Thresholding**: Otsu's method creates binary image
 4. **Morphological Cleaning**: Removes noise
@@ -325,28 +256,7 @@ Calibration might be slightly off for some digits:
 
 ### Reading changes with lighting
 
-Camera auto-exposure is adjusting:
-
-```python
-# Lock exposure (Raspberry Pi with Picamera2)
-reader = HardnessTester(
-    num_digits=4,
-    exposure_time=10000,
-    gain=1.0
-)
-```
-
-Or use consistent external lighting.
-
-### Auto-detection fails
-
-Manual calibration is more reliable:
-
-1. Capture test image
-2. Open in image viewer
-3. Note pixel coordinates
-4. Run `calibrate()` and enter coordinates
-5. Save calibration file
+Camera auto-exposure may be adjusting between captures. On Raspberry Pi with Picamera2, the camera settings are fixed after the first capture and the system waits for auto-exposure to settle before starting reads. On other platforms, use consistent external lighting to stabilize the scene.
 
 ### Unrecognized segment pattern
 
@@ -419,8 +329,7 @@ else:
 
 Different displays may need:
 - Adjusted segment threshold (0.3-0.7)
-- Custom segment ROI positions
-- Different camera settings
+- Re-calibration to map the new digit ROIs and segment polygons
 
 ### Monitor Accuracy
 
@@ -467,7 +376,7 @@ value = int(result) / 100  # 12.34
 ## Next Steps
 
 - Read [HardnessTester API Reference](../api/hardness-tester.md) for detailed documentation
-- Explore [Segment Layout Guide](../../SEGMENT_LAYOUT_GUIDE.md) for technical details
+- Explore the [HardnessTester API Reference](../api/hardness-tester.md) for technical implementation details
 - Review [Architecture](../concepts/architecture.md) to understand system integration
 
 ## Getting Help

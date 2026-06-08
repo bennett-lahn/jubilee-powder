@@ -1,52 +1,38 @@
-# Using the Jubilee Automation UI
+# Using the Jubilee Powder UI
 
-This guide walks through using the Jubilee Automation web interface for powder dispensing
+This guide walks through using the Jubilee Powder web interface for powder dispensing
 and hardness testing operations.
 
 ## Overview
 
-The Jubilee Automation UI is a browser-based interface that provides:
+The Jubilee Powder UI is a browser-based interface that provides:
 
 - Hardware configuration and connection management
 - Powder dispensing job setup and real-time monitoring
 - Hardness testing job setup and monitoring
 - Historical job log browsing
 
+## Choose Your Depth
+
+=== "Operator Workflow"
+
+    Follow this page top-to-bottom for setup, job execution, monitoring, and troubleshooting.
+
+=== "Developer Notes"
+
+    - Backend API contract: [Web Frontend Reference](../api/gui/jubilee-gui.md)
+    - Frontend state model: [Jubilee Store Reference](../api/gui/jubilee-view-model.md)
+    - System design context: [Architecture](../concepts/architecture.md)
+
 ## Starting the UI
 
-### Prerequisites
+Use [Building and Running the Web UI](running.md) for the exact startup commands.
 
-Install the backend dependencies and Node.js packages:
+Quick summary:
 
-```bash
-pip install fastapi uvicorn pydantic
-cd frontend && npm install
-```
-
-### Launch the Backend
-
-From the project root:
-
-```bash
-uvicorn frontend.server:app --host 0.0.0.0 --port 8000
-```
-
-### Launch the Frontend (Development)
-
-In a separate terminal:
-
-```bash
-cd frontend
-npm run dev
-```
-
-Open `http://localhost:5173` in a browser. In production the frontend is served as a
-static build from the same FastAPI process, so only the backend command is needed.
-
-### Mock vs Real Hardware
-
-For UI development without physical hardware, ensure `MOCK_HARDWARE = True` is set at
-the top of `frontend/server.py`. When deploying on the Jubilee, set it to `False`.
+- Dev mode: run backend (`uvicorn`) and frontend (`npm run dev`) in two terminals.
+- Production mode: run backend only; it serves the built frontend.
+- Mock hardware: set `server.mock_hardware: true` in `system_config.json`, or use `JUBILEE_MOCK_HARDWARE=1`.
 
 ---
 
@@ -214,7 +200,8 @@ Navigate to the **Home** screen during a job.
 Two stop options are available while a job is running:
 
 - **Cancel** — graceful stop. The machine finishes the current mold, stows the active
-  tool, and returns to `idle`. A confirmation dialog is shown before proceeding.
+  tool, and returns to `idle`. Cancellation is applied only after the current mold
+  or sample completes. A confirmation dialog is shown before proceeding.
 - **Abort** — emergency stop. Sends an M112 signal to the controller. The machine halts
   immediately and enters `error` state. Use only when necessary; the machine must be
   fully reconnected before starting a new job.

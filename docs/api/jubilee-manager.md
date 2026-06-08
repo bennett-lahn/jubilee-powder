@@ -26,7 +26,19 @@ All movements are validated through an internal `MotionPlatformStateMachine` whi
         - piston_dispensers
         - get_weight_stable
         - get_weight_unstable
+        - move_to_mold_slot
+        - move_to_scale
+        - move_to_dispenser
+        - fill_powder
+        - get_piston_from_dispenser
         - dispense_to_well
+        - test_sample
+        - hardness_turn_on
+        - hardness_turn_off
+        - hardness_zero
+        - move_to_global_ready
+        - set_dispenser_pistons
+        - abort
       show_root_heading: true
       show_source: false
 
@@ -88,6 +100,27 @@ for dispenser in manager.piston_dispensers:
     print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
 ```
 
+### Hardness Testing Workflow
+
+```python
+# After connecting with hardness testers configured in system_config.json...
+
+# Power on and zero the tester before testing samples
+manager.hardness_turn_on()   # actuate power button via servo
+manager.hardness_zero()      # actuate zero button via servo
+
+# Test a sample: tray_index identifies the tray, sample_id the position in it
+success = manager.test_sample(tray_index=0, sample_id="3")
+if success:
+    print(f"Hardness: {manager.last_hardness_result}")   # e.g. 42.5
+    print(f"Error:    {manager.last_hardness_error}")    # None if clean read
+
+# Power off when done
+manager.hardness_turn_off()
+```
+
+To target Shore-D instead of Shore-A, pass `mode="shore_d"` to any hardness method.
+
 ### Function Call Error Handling
 
 ```python
@@ -112,31 +145,32 @@ finally:
     manager.disconnect()
 ```
 
-## Internal Methods
+## Internal Validation and Execution Methods
 
-The following methods are primarily for internal use but are documented for developers:
+JubileeManager delegates movement validation and execution to the state machine.
+The symbols below document the current internal execution path:
 
-::: src.JubileeManager.JubileeManager._move_to_mold_slot
+::: src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_move_to_mold_slot
     options:
       show_root_heading: true
       show_source: false
 
-::: src.JubileeManager.JubileeManager._move_to_scale
+::: src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_move_to_scale
     options:
       show_root_heading: true
       show_source: false
 
-::: src.JubileeManager.JubileeManager._move_to_dispenser
+::: src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_move_to_dispenser
     options:
       show_root_heading: true
       show_source: false
 
-::: src.JubileeManager.JubileeManager._fill_powder
+::: src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_fill_powder
     options:
       show_root_heading: true
       show_source: false
 
-::: src.JubileeManager.JubileeManager.get_piston_from_dispenser
+::: src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_retrieve_piston
     options:
       show_root_heading: true
       show_source: false
@@ -174,8 +208,7 @@ The `connect()` method performs several initialization steps:
 3. Initializes the state machine with configuration
 4. Initializes the deck and dispensers
 5. Homes all axes (X, Y, Z, U)
-6. Picks up the manipulator tool
-7. Homes the manipulator axis (V)
+6. Leaves tools parked for on-demand pickup during operations
 
 This ensures the system is in a known, safe state before operations begin.
 

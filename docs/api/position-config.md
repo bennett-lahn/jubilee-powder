@@ -1,6 +1,8 @@
 # Position Configuration Reference
 
-`jubilee_api_config/motion_platform_positions.json` is the single file that defines every named location the Jubilee can move to, every action it can perform, and the safety constraints that govern both. The state machine loads this file once at connection time and enforces movement between these positions. This means no code changes are needed for routine calibration or layout adjustments, instead `motion_platform_positions.json` should be modified instead.
+`jubilee_api_config/motion_platform_positions.json` is the single file that defines every named location the Jubilee can move to, every action it can perform, and the safety constraints that govern both. The state machine loads this file once at connection time (validated by Pydantic models in `src/motion_config.py`) and enforces movement between these positions. Invalid or incomplete JSON fails at load with a clear error. Tool names are taken from `system_config.json` via `ConfigLoader`, not re-parsed from a second copy of that file.
+
+This means no code changes are needed for routine calibration or layout adjustments; edit `motion_platform_positions.json` instead.
 
 !!! note "Restart required after edits"
     The configuration is read once during `connect()`. Restart the Python process (or reconnect) after making any changes.

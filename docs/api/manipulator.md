@@ -123,7 +123,7 @@ The `pick_mold()` operation:
 3. Moves manipulator under mold
 4. Moves V-axis up with mold
 5. Moves back to mold ready position
-6. Updates payload state to `"mold"`
+6. Updates payload state to `"mold_without_top_piston"`
 
 ```python
 try:
@@ -158,7 +158,7 @@ except ToolStateError as e:
 
 **Requirements**:
 - Must be at the correct mold slot position
-- Payload must be `"mold"` or `"mold_with_piston"`
+- Payload must be `"mold_without_top_piston"` or `"mold_with_top_piston"`
 
 ### Scale Operations
 
@@ -193,7 +193,7 @@ manipulator.pick_mold_from_scale()
 manipulator.tamp(tamp_depth=40.0, tamp_speed=2000)
 
 # Now safe to insert top piston
-manager.move_to_dispenser(dispenser_index=0)
+manager.move_to_dispenser()
 manipulator.place_top_piston(piston_dispenser)
 ```
 
@@ -283,7 +283,7 @@ print(manipulator.state_machine.context.payload_state)  # "empty"
 
 # Pick mold
 manipulator.pick_mold("0")
-print(manipulator.state_machine.context.payload_state)  # "mold"
+print(manipulator.state_machine.context.payload_state)  # "mold_without_top_piston"
 
 # Place mold
 manipulator.place_mold("0")
@@ -295,8 +295,8 @@ print(manipulator.state_machine.context.payload_state)  # "empty"
 | State | Description | Set By |
 |-------|-------------|--------|
 | `empty` | Nothing held | `place_mold()`, `place_mold_on_scale()` |
-| `mold` | Holding empty mold | `pick_mold()`, `pick_mold_from_scale()` |
-| `mold_with_piston` | Holding mold with piston | Manual update after piston insertion |
+| `mold_without_top_piston` | Holding mold without top piston | `pick_mold()`, `pick_mold_from_scale()` |
+| `mold_with_top_piston` | Holding mold with top piston | Piston retrieval workflow |
 
 ## Configuration
 

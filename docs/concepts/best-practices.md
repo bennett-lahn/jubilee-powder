@@ -116,3 +116,19 @@ The `MotionPlatformStateMachine` validates all movements for safety. Do not send
 When modifying `motion_platform_positions.json` or other configuration files, restart the Python process before the next run. The configuration is loaded once at launch and is not reloaded automatically.
 
 If you adjust physical positions on the machine, update the configuration and verify the new positions by jogging to them manually via Duet Web Interface before running the full automation.
+
+---
+
+## See Also
+
+**How-To Guides**
+
+- [Configuration Guide](../how-to/configuration.md) - how to edit position files and system parameters
+- [Run Operations on New Data](../how-to/run-new-data.md) - step-by-step guide for first-time data runs
+- [Using the Automation UI](../how-to/using-gui.md) - interactive operation through the browser interface
+
+**API Reference**
+
+- [JubileeManager](../api/jubilee-manager.md) - high-level API, including return value semantics
+- [MotionPlatformStateMachine](../api/motion-platform.md) - validation layer details and state tracking
+- [Architecture Overview](architecture.md) - layered architecture and design principles

@@ -168,10 +168,10 @@ well/sample then exits the job loop and returns to `idle`.
 
 #### `cancelJob()`
 
-`POST /api/job/cancel` — returns `{ ok, error? }`. Finish the current mold, stow
-the active tool, return to `idle`. Functionally equivalent to `stopJob()` from the
-server's perspective; the distinction is user-facing (cancel implies intentional
-early termination).
+`POST /api/job/cancel` — returns `{ ok, error? }`. Cancellation takes effect only
+after the current mold or sample completes. Functionally equivalent to `stopJob()`
+from the server's perspective; the distinction is user-facing (cancel implies
+intentional early termination).
 
 #### `abortJob()`
 

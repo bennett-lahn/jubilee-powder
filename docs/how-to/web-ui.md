@@ -6,7 +6,7 @@ This guide explains the two web interfaces available for the Jubilee system.
 
 There are two web interfaces:
 
-1. **Jubilee Automation UI** — the custom React browser application for running automated
+1. **Jubilee Powder UI** — the custom React browser application for running automated
    dispensing and hardness testing jobs. This is the primary interface for day-to-day
    operation. See [Using the Automation UI](using-gui.md) for the full user guide.
 
@@ -20,7 +20,7 @@ There are two web interfaces:
 
 ## Duet Web Control (DWC)
 
-The Jubilee Automation UI provides a **Manual Control** screen that safely disconnects
+The Jubilee Powder UI provides a **Manual Control** screen that safely disconnects
 the automation system before opening DWC in a new browser tab. This is the recommended
 way to access DWC — see [Using the Automation UI](using-gui.md#manual-control) for
 details. The steps below cover direct DWC access when the automation server is not

@@ -1,6 +1,6 @@
 # Web Frontend Reference
 
-The Jubilee Automation web frontend is a browser-based interface for powder dispensing and
+The Jubilee Powder web frontend is a browser-based interface for powder dispensing and
 hardness testing operations. It replaces the former Kivy GUI with a React single-page
 application backed by a FastAPI server.
 
@@ -11,8 +11,22 @@ The frontend provides:
 - Six navigation screens covering home/dashboard, dispensing, hardness testing, data
   browser, manual control, and settings
 - A 4 Hz WebSocket telemetry feed keeping every screen up to date without polling
-- REST API endpoints for discrete commands (connect, start job, stop, abort)
-- A mock hardware mode (`MOCK_HARDWARE = True`) for UI development without physical hardware
+- REST API endpoints for discrete commands (connect, start job, cancel/abort)
+- Mock hardware mode controlled by `server.mock_hardware` in `system_config.json` or `JUBILEE_MOCK_HARDWARE=1`
+
+## Progressive Disclosure
+
+=== "Operator Focus"
+
+    - Use [Using the Automation UI](../../how-to/using-gui.md) for end-to-end workflows.
+    - Focus on connection setup, job start/stop, and run monitoring.
+    - Treat this page as a reference when you need exact API behavior.
+
+=== "Developer Focus"
+
+    - Use this page as the canonical reference for REST, WebSocket, and backend/frontend module boundaries.
+    - Start in `frontend/server.py` and `frontend/src/store/jubileeStore.js` to trace request and telemetry flows.
+    - Use [Jubilee Store Reference](jubilee-view-model.md) for client-side state details.
 
 ## Technology Stack
 
@@ -52,43 +66,9 @@ The frontend follows an MVVM pattern split across the browser and server:
 | ViewModel  | Zustand store (`jubileeStore.js`)| Derived state, REST/WebSocket actions |
 | Model      | FastAPI + `HardwareManager`      | Hardware state, physical operations   |
 
-## Starting the Server
+## Startup
 
-From the `frontend/` directory:
-
-```bash
-uvicorn server:app --host 0.0.0.0 --port 8000 --reload
-```
-
-From the project root:
-
-```bash
-uvicorn frontend.server:app --host 0.0.0.0 --port 8000 --reload
-```
-
-During development, also start the Vite dev server in a second terminal:
-
-```bash
-cd frontend
-npm install   # first time only
-npm run dev
-```
-
-Then navigate to `http://localhost:5173`. The Vite dev server proxies all `/api/*`
-requests to the FastAPI server on port 8000.
-
-## Mock vs Real Hardware
-
-Set `MOCK_HARDWARE` at the top of `server.py`:
-
-```python
-MOCK_HARDWARE: bool = True   # UI development — no physical hardware needed
-MOCK_HARDWARE: bool = False  # Production — real Jubilee machine + scale
-```
-
-`MockHardwareManager` and `HardwareManager` expose an identical public API so no
-other code needs to change when switching modes. The mock simulates realistic weight
-readings (sine-wave drift + Gaussian noise) and job timing (`asyncio.sleep()`).
+Use [Building and Running the Web UI](../../how-to/running.md) as the canonical startup guide for dev, production, and kiosk modes.
 
 ---
 
@@ -147,7 +127,7 @@ DISCONNECTED → HOMING → ERROR   (failure — inspect job.error for reason)
 |--------|-------------------|--------|-----------------------------------------------|
 | `POST` | `/api/job/start`  | 202    | Enqueue a dispensing or hardness job          |
 | `POST` | `/api/job/stop`   | 200    | Graceful stop after the current well/sample   |
-| `POST` | `/api/job/cancel` | 200    | Finish current mold then stow the tool        |
+| `POST` | `/api/job/cancel` | 200    | Cancel after current mold/sample completes     |
 | `POST` | `/api/job/abort`  | 200    | Emergency stop (M112), enters ERROR state     |
 | `GET`  | `/api/job/log`    | 200    | Most recent job log (in-memory or from file)  |
 
@@ -184,7 +164,7 @@ The server returns HTTP 202; track progress via the WebSocket `job` field.
 | Action | Behaviour |
 |--------|-----------|
 | `stop`   | Signal job to exit at the next well boundary. Machine stays at current well, returns to IDLE. |
-| `cancel` | Finish the current mold, then stow the active tool and return to IDLE. |
+| `cancel` | Cancellation takes effect after the current mold or sample completes. |
 | `abort`  | Immediate M112 emergency stop. Machine enters ERROR state and must be reconnected before a new job. |
 
 ### Dispensers
@@ -321,8 +301,7 @@ Every route is wrapped in `RootLayout`, which renders:
   reads directly from the Zustand store
 - The active screen fills the remaining area
 
-On mount, `RootLayout` calls `connectWs()` and `loadStatus()` so all screens have
-live telemetry and an initial REST snapshot from the first render.
+On mount, `RootLayout` calls `connectWs()` so all screens have live telemetry.
 
 ### Key Components
 
@@ -333,22 +312,9 @@ live telemetry and an initial REST snapshot from the first render.
 | `NavRail`     | Navigation bar with route links and connection status          |
 | `BottomBar`   | Persistent status strip with live weight and machine state     |
 
-### `useWellGrid` Hook
+### Grid state ownership
 
-`WellGrid.jsx` exports a `useWellGrid(rows, cols)` hook used by the dispensing and
-hardness screens to manage per-well state locally before submitting a job:
-
-```js
-const grid = useWellGrid(4, 6)
-
-grid.wells          // { [id]: { selected, targetWeight, mode, status, ... } }
-grid.selectedIds    // string[]
-grid.toggleWell(id) // toggle selection of one well
-grid.selectAll()    // select all wells
-grid.clearSelection()
-grid.setWeightForSelected(weight)
-grid.setModeForSelected(mode)
-```
+Grid interaction state is owned in Zustand (`frontend/src/store/jubileeStore.js`) and rendered by `WellGrid` / `SampleTrayGrid` presentational components.
 
 ---
 

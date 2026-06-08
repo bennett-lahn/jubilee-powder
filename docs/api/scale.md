@@ -241,7 +241,8 @@ scale = Scale(
 )
 
 # Connect and test
-if scale.connect():
+try:
+    scale.connect()
     print("Scale connected successfully")
     
     # Test weight reading
@@ -253,8 +254,8 @@ if scale.connect():
         print("Scale is communicating properly")
     
     scale.disconnect()
-else:
-    print("Connection failed - check settings and port")
+except Exception as e:
+    print(f"Connection failed - check settings and port: {e}")
 ```
 
 #### Troubleshooting A&D Scale Setup
@@ -612,10 +613,6 @@ try:
     # ... use scale ...
 finally:
     scale.disconnect()
-
-# BETTER - use context manager (if available)
-with Scale(port="/dev/ttyUSB0") as scale:
-    weight = scale.get_weight(stable=True)
 ```
 
 ## See Also
