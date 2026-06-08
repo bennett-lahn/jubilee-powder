@@ -1,3 +1,6 @@
+# Security
+jubilee_api_config/service_account.json
+
 # Python
 __pycache__/
 *.py[cod]

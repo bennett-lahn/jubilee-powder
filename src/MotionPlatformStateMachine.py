@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from statemachine import State, StateMachine
 from science_jubilee.Machine import Machine
@@ -1157,8 +1157,8 @@ class MotionPlatformStateMachine(StateMachine):
         target_position_id: str | None = None,
         action_id: str | None = None,
         additional_requirements: dict[str, object] | None = None,
-        execution_func=None,
-        **execution_kwargs,
+        execution_func: Callable[..., object] | None = None,
+        **execution_kwargs: object,
     ) -> MoveValidationResult:
         """
         Generic validation and execution for movements and tool actions.
@@ -1774,7 +1774,9 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     @staticmethod
-    def _extract_servo_angles(hardness_tester, button: str) -> tuple:
+    def _extract_servo_angles(
+        hardness_tester: object | None, button: str
+    ) -> tuple[str | None, int | None, int | None, str | None]:
         """Extract and validate servo channel and angles from a HardnessTester.
 
         Args:
@@ -2097,7 +2099,7 @@ class MotionPlatformStateMachine(StateMachine):
             trickler_axis=trickler_axis,
         )
 
-    def validated_pickup_tool(self, tool) -> MoveValidationResult:
+    def validated_pickup_tool(self, tool: object) -> MoveValidationResult:
         """
         Validate and execute picking up a tool.
 

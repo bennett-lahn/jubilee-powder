@@ -1,5 +1,5 @@
 site_name: Jubilee Powder Documentation
-site_description: Documentation for Jubilee Motion Platform powder dispensing system
+site_description: Documentation for the Jubilee automation platform
 site_author: Bennett Lahn
 repo_url: https://github.com/bennett-lahn/jubilee-powder
 repo_name: jubilee-powder
@@ -84,14 +84,20 @@ nav:
     - Quick Start: getting-started/quickstart.md
   - Concepts:
     - Architecture: concepts/architecture.md
+    - Best Practices: concepts/best-practices.md
     - Glossary: concepts/glossary.md
   - How-To Guides:
-    - Running on New Data: how-to/run-new-data.md
-    - Configuration: how-to/configuration.md
-    - Using the Automation UI: how-to/using-gui.md
-    - Using the Jubilee Web UI: how-to/web-ui.md
-    - Reading LCD Displays: how-to/reading-lcd-displays.md
-    - Interpreting Results: how-to/results.md
+    - Setup:
+      - Configuration: how-to/configuration.md
+      - Building and Running: how-to/running.md
+    - Operate:
+      - Using the Automation UI: how-to/using-gui.md
+      - Using the Jubilee Web Interfaces: how-to/web-ui.md
+      - Interpreting Results: how-to/results.md
+    - Maintain:
+      - Reading LCD Displays: how-to/reading-lcd-displays.md
+    - Extend:
+      - Running on New Data: how-to/run-new-data.md
   - API Reference:
     - Core:
       - JubileeManager: api/jubilee-manager.md

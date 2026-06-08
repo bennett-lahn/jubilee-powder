@@ -96,14 +96,14 @@ class HardnessTester(Tool):
         power_release_angle: int | None = None,
         zero_press_angle: int | None = None,
         zero_release_angle: int | None = None,
-        state_machine=None,
+        state_machine: object | None = None,
         threshold_bias: int = 15,
         sharpen_strength: float = 31,
         sharpen_blur_radius: int = 90,
         morph_kernel_size: int = 5,
         morph_iterations: int = 3,
         morph_open: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the LCD reader.
 
@@ -287,7 +287,7 @@ class HardnessTester(Tool):
         value = int(reading)
         return 0 <= value <= 5
 
-    def is_display_on(self, debug=False, debug_prefix="display_on") -> bool:
+    def is_display_on(self, debug: bool = False, debug_prefix: str = "display_on") -> bool:
         """
         Run a consensus display capture and classify display power state.
 
@@ -296,7 +296,7 @@ class HardnessTester(Tool):
             True when a valid reading is displayed
 
         Raises:
-            RuntimeError when capture succeeds but the reading is indeterminate
+            RuntimeError: Capture succeeds but the reading is indeterminate.
         """
         reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
         if reading is None:
@@ -557,7 +557,11 @@ class HardnessTester(Tool):
             cap.release()
         return available
 
-    def capture_image(self, save=False, output_path="lcd_capture.jpg"):
+    def capture_image(
+        self,
+        save: bool = False,
+        output_path: str = "lcd_capture.jpg",
+    ) -> np.ndarray | None:
         """
         Capture an image from the camera.
 
@@ -613,7 +617,12 @@ class HardnessTester(Tool):
 
         return frames
 
-    def preprocess_frame(self, frame, debug=False, debug_prefix="debug"):
+    def preprocess_frame(
+        self,
+        frame: np.ndarray,
+        debug: bool = False,
+        debug_prefix: str = "debug",
+    ) -> np.ndarray:
         """
         Phase 1: Image Acquisition & Advanced Preprocessing
 
@@ -686,7 +695,7 @@ class HardnessTester(Tool):
 
         return cleaned
 
-    def set_digit_rois(self, rois):
+    def set_digit_rois(self, rois: list[tuple[int, int, int, int]]) -> None:
         """
         Set the ROI boundaries for each digit.
 
@@ -793,7 +802,12 @@ class HardnessTester(Tool):
         imageio.mimsave(gif_path, frames, duration=durations, loop=0)
         print(f"Debug GIF saved to {gif_path}")
 
-    def analyze_segment(self, binary_frame, digit_idx, segment_name):
+    def analyze_segment(
+        self,
+        binary_frame: np.ndarray,
+        digit_idx: int,
+        segment_name: str,
+    ) -> int:
         """
         Phase 3: Segment Analysis Logic
 
@@ -836,7 +850,12 @@ class HardnessTester(Tool):
         # Return 1 if more than threshold percentage are active
         return 1 if (active_pixels / total_pixels) > self.segment_threshold else 0
 
-    def recognize_digit(self, binary_frame, digit_idx, debug=False):
+    def recognize_digit(
+        self,
+        binary_frame: np.ndarray,
+        digit_idx: int,
+        debug: bool = False,
+    ) -> str:
         """
         Phase 4: Recognition via Lookup Table
 
@@ -900,8 +919,12 @@ class HardnessTester(Tool):
         return "".join(result)
 
     def read_display(
-        self, frame=None, debug=False, debug_prefix="debug", image_save_path=None
-    ):
+        self,
+        frame: np.ndarray | None = None,
+        debug: bool = False,
+        debug_prefix: str = "debug",
+        image_save_path: str | Path | None = None,
+    ) -> str | None:
         """
         Complete pipeline: Read all digits from LCD display.
 
@@ -959,11 +982,11 @@ class HardnessTester(Tool):
 
     def calibrate(
         self,
-        frame=None,
-        image_path=None,
-        save_calibration=True,
+        frame: np.ndarray | None = None,
+        image_path: str | None = None,
+        save_calibration: bool = True,
         calibration_path: str | None = None,
-    ):
+    ) -> bool:
         """
         Interactive GUI calibration using an OpenCV popup window.
         Uses ``self.calibration_path`` when ``calibration_path`` is omitted.
@@ -1301,7 +1324,7 @@ class HardnessTester(Tool):
 
         return True
 
-    def load_calibration(self, filepath: str | None = None):
+    def load_calibration(self, filepath: str | None = None) -> bool:
         """
         Load calibration from file.
 
@@ -1485,7 +1508,9 @@ def main():
     print("=" * 80)
 
 
-def test_with_image(image_path, calibration_file=_CLI_DEFAULT_CALIBRATION):
+def test_with_image(
+    image_path: str, calibration_file: str = _CLI_DEFAULT_CALIBRATION
+) -> str | None:
     """
     Simple test function to read LCD from a single image.
 

@@ -106,7 +106,7 @@ class Manipulator(Tool):
         if not result.valid:
             raise RuntimeError(f"Tamper homing failed: {result.reason}")
 
-    def tamp(self, tamp_depth: float, tamp_speed: int):
+    def tamp(self, tamp_depth: float, tamp_speed: int) -> bool:
         """
         Perform tamping action to compress powder in the held mold.
 
