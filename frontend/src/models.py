@@ -169,19 +169,6 @@ class JobProgress:
         self.jam_detected = False
         self.jam_well_id = None
 
-    def reset(self) -> None:
-        """Reset all fields to their initial defaults."""
-        self.running = False
-        self.job_type = None
-        self.completed = 0
-        self.total = 0
-        self.current_item = None
-        self.error = None
-        self.started_at = None
-        self.items = []
-        self.jam_detected = False
-        self.jam_well_id = None
-
     def _compute_pass_progress(self) -> tuple[int, int]:
         """Return completed and total measurement passes for progress display.
 

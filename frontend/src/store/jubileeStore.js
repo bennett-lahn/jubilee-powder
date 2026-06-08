@@ -10,7 +10,6 @@
  * Data flow
  * ---------
  *   WebSocket frames (4 Hz) → telemetry slice  (live, high-frequency)
- *   REST responses          → hardwareStatus   (on-demand snapshots)
  *
  * WebSocket lifecycle
  * -------------------
@@ -21,10 +20,9 @@
  * Sections
  *   telemetry      — live frames from the server WebSocket at 4 Hz
  *                    { weight, state, connected, jubilee_ip, job, dispensers, clients }
- *   hardwareStatus — last REST snapshot from GET /api/status
  *   ws             — WebSocket lifecycle (connect / disconnect / auto-reconnect)
  *   hardware       — connectHardware / disconnectHardware actions
- *   job            — submitJob / stopJob actions
+ *   job            — submitJob / cancel/abort actions
  *   dispensers     — updateDispenser action
  */
 
@@ -41,11 +39,9 @@ import {
   HARDNESS_TRAY_COUNT,
 } from '../constants/hardnessTray'
 import {
-  fetchStatus,
   connectHardware as apiConnectHardware,
   disconnectHardware as apiDisconnectHardware,
   startJob,
-  stopJob as apiStopJob,
   cancelJob as apiCancelJob,
   abortJob as apiAbortJob,
   clearJam as apiClearJam,
@@ -108,16 +104,9 @@ export const useJubileeStore = create((set, get) => ({
   },
 
   // -------------------------------------------------------------------------
-  // Hardware status  (REST snapshot — refreshed on mount and after actions)
-  // -------------------------------------------------------------------------
-  hardwareStatus: null,
-  statusError:    null,
-
-  // -------------------------------------------------------------------------
   // Job log  (most recent completed or in-progress job, populated via REST)
   // -------------------------------------------------------------------------
   jobLog:     null,
-  jobLogError: null,
 
   // -------------------------------------------------------------------------
   // UI prep state (persists across route navigation)
@@ -223,19 +212,6 @@ export const useJubileeStore = create((set, get) => ({
   },
 
   // -------------------------------------------------------------------------
-  // REST — status snapshot
-  // -------------------------------------------------------------------------
-
-  async loadStatus() {
-    try {
-      const data = await fetchStatus()
-      set({ hardwareStatus: data, statusError: null })
-    } catch (err) {
-      set({ statusError: err.message })
-    }
-  },
-
-  // -------------------------------------------------------------------------
   // Hardware lifecycle actions
   //
   // Connection progress is visible via telemetry.state transitions:
@@ -268,7 +244,6 @@ export const useJubileeStore = create((set, get) => ({
   async disconnectHardware() {
     try {
       await apiDisconnectHardware()
-      get().loadStatus()
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err.message }
@@ -294,21 +269,6 @@ export const useJubileeStore = create((set, get) => ({
           : { job_type: 'hardness',   samples: items }
 
       await startJob(body)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err.message }
-    }
-  },
-
-  /**
-   * POST /api/job/stop
-   * Signals the running job to exit after the current well/sample.
-   *
-   * @returns {{ ok: boolean, error?: string }}
-   */
-  async stopJob() {
-    try {
-      await apiStopJob()
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err.message }
@@ -369,10 +329,9 @@ export const useJubileeStore = create((set, get) => ({
   async fetchJobLog() {
     try {
       const data = await apiFetchJobLog()
-      set({ jobLog: data.log ?? null, jobLogError: null })
+      set({ jobLog: data.log ?? null })
       return { ok: true }
     } catch (err) {
-      set({ jobLogError: err.message })
       return { ok: false, error: err.message }
     }
   },
@@ -516,15 +475,6 @@ export const useJubileeStore = create((set, get) => ({
     })
   },
 
-  resetDispensingGrid() {
-    set((state) => ({
-      dispensingGrid: {
-        ...state.dispensingGrid,
-        wells: initDispensingWells(),
-      },
-    }))
-  },
-
   // -------------------------------------------------------------------------
   // UI prep actions - hardness
   // -------------------------------------------------------------------------
@@ -587,19 +537,6 @@ export const useJubileeStore = create((set, get) => ({
         },
       }
     })
-  },
-
-  resetHardnessGrid() {
-    set((state) => ({
-      hardnessGrid: {
-        ...state.hardnessGrid,
-        samples: initHardnessSamples(
-          state.hardnessGrid.rows,
-          state.hardnessGrid.cols,
-          state.hardnessGrid.trayCount,
-        ),
-      },
-    }))
   },
 
 }))

@@ -23,9 +23,11 @@ MANIFEST
 
 # Virtual environments
 venv/
+.venv/
 ENV/
 env/
 jubilee-env/
+env_jubilee/
 .test-venv/
 .venv-docs/
 
@@ -46,6 +48,7 @@ site/
 .coverage
 htmlcov/
 *.log
+*.csv
 
 # Configuration (if sensitive)
 # Uncomment if your configs contain secrets

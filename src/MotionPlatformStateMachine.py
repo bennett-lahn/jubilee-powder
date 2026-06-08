@@ -1297,11 +1297,14 @@ class MotionPlatformStateMachine(StateMachine):
             current_pos = self._executor.get_machine_position()
         except RuntimeError as exc:
             return MoveValidationResult(valid=False, reason=str(exc))
+        machine_x, machine_y, machine_z, machine_v = (
+            self._machine_coords_from_position(current_pos)
+        )
         machine_validation = self.validate_machine_state(
-            machine_x=float(current_pos.get("X", 0)),
-            machine_y=float(current_pos.get("Y", 0)),
-            machine_z=float(current_pos.get("Z", 0)),
-            machine_v=float(current_pos.get("V", 0)),
+            machine_x=machine_x,
+            machine_y=machine_y,
+            machine_z=machine_z,
+            machine_v=machine_v,
         )
         if not machine_validation.valid:
             return machine_validation
@@ -1431,11 +1434,14 @@ class MotionPlatformStateMachine(StateMachine):
                 current_pos = self._executor.get_machine_position()
             except RuntimeError as exc:
                 return MoveValidationResult(valid=False, reason=str(exc))
+            machine_x, machine_y, machine_z, machine_v = (
+                self._machine_coords_from_position(current_pos)
+            )
             machine_validation = self.validate_machine_state(
-                machine_x=float(current_pos.get("X", 0)),
-                machine_y=float(current_pos.get("Y", 0)),
-                machine_z=float(current_pos.get("Z", 0)),
-                machine_v=float(current_pos.get("V", 0)),
+                machine_x=machine_x,
+                machine_y=machine_y,
+                machine_z=machine_z,
+                machine_v=machine_v,
             )
         else:
             machine_validation = MoveValidationResult(valid=True)
@@ -2681,6 +2687,16 @@ class MotionPlatformStateMachine(StateMachine):
         if isinstance(expected, (list, tuple, set, frozenset)):
             return actual in expected
         return actual == expected
+
+    @staticmethod
+    def _machine_coords_from_position(current_pos: Mapping[str, object]) -> tuple[float, float, float, float]:
+        """Convert machine position payload into validated numeric coordinates."""
+        return (
+            float(current_pos.get("X", 0)),
+            float(current_pos.get("Y", 0)),
+            float(current_pos.get("Z", 0)),
+            float(current_pos.get("V", 0)),
+        )
 
     @staticmethod
     def _format_options(options: Sequence[str] | Iterable[str]) -> str:

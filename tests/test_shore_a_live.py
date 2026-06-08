@@ -61,7 +61,9 @@ except ImportError:
 from HardnessTester import HardnessTester  # noqa: E402
 
 # Default calibration path: shore_a-specific, then fall back to the generic file
-_SHORE_A_CAL = os.path.join(_PROJECT_ROOT, "jubilee_api_config", "lcd_calibration_shore_a.json")
+_SHORE_A_CAL = os.path.join(
+    _PROJECT_ROOT, "jubilee_api_config", "lcd_calibration_shore_a.json"
+)
 _GENERIC_CAL = os.path.join(_PROJECT_ROOT, "jubilee_api_config", "lcd_calibration.json")
 DEFAULT_CAL = _SHORE_A_CAL if os.path.exists(_SHORE_A_CAL) else _GENERIC_CAL
 
@@ -69,6 +71,7 @@ DEFAULT_CAL = _SHORE_A_CAL if os.path.exists(_SHORE_A_CAL) else _GENERIC_CAL
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _draw_segment_overlay(bgr_frame: np.ndarray, reader: HardnessTester) -> np.ndarray:
     """Return a copy of bgr_frame with segment polygon outlines drawn."""
@@ -81,7 +84,9 @@ def _draw_segment_overlay(bgr_frame: np.ndarray, reader: HardnessTester) -> np.n
             if pts and len(pts) >= 3:
                 poly = reader._normalize_polygon_point_order(pts)
                 if poly is not None:
-                    cv2.polylines(out, [poly], isClosed=True, color=(0, 255, 0), thickness=1)
+                    cv2.polylines(
+                        out, [poly], isClosed=True, color=(0, 255, 0), thickness=1
+                    )
     return out
 
 
@@ -101,37 +106,70 @@ def _annotate_live(frame: np.ndarray, reading: str, calibrated: bool) -> np.ndar
     h, w = out.shape[:2]
 
     if reading.replace("?", "").isdigit() and "?" not in reading:
-        color = (0, 255, 0)       # green - good numeric read
+        color = (0, 255, 0)  # green - good numeric read
     elif reading == "OFF":
-        color = (0, 0, 255)       # red - display off
+        color = (0, 0, 255)  # red - display off
     elif reading == "---":
-        color = (180, 180, 180)   # grey - no read yet
+        color = (180, 180, 180)  # grey - no read yet
     else:
-        color = (0, 165, 255)     # orange - partial/ambiguous
+        color = (0, 165, 255)  # orange - partial/ambiguous
 
     font_scale = max(1.0, w / 700)
     thickness = max(2, int(font_scale * 2))
     text = f"Shore A: {reading}"
-    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    (tw, th), baseline = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
+    )
     cv2.rectangle(out, (10, 10), (20 + tw, 20 + th + baseline), (0, 0, 0), -1)
-    cv2.putText(out, text, (15, 15 + th),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA)
+    cv2.putText(
+        out,
+        text,
+        (15, 15 + th),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        color,
+        thickness,
+        cv2.LINE_AA,
+    )
 
     if not calibrated:
         warn = "NO CALIBRATION - press 'c' to calibrate"
-        cv2.putText(out, warn, (10, h - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.putText(
+            out,
+            warn,
+            (10, h - 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
     return out
 
 
+def _camera_source_for_dev(cam_id: int, cam_usb_path: str | None) -> str:
+    """Pick a value HardnessTester accepts as cam_usb_path (off-Pi uses numeric index)."""
+    if cam_usb_path:
+        return cam_usb_path
+    return str(cam_id)
 
-def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
+
+def run_live_feed(
+    cam_id: int,
+    cam_usb_path: str | None,
+    calibration_path: str,
+    debug: bool,
+):
     """Continuous live camera loop with real-time LCD translation."""
-    print(f"Initializing Shore A camera (USB path: {cam_usb_path})...")
+    cam_source = _camera_source_for_dev(cam_id, cam_usb_path)
+    if cam_usb_path:
+        print(f"Initializing Shore A camera (USB path: {cam_source})...")
+    else:
+        print(f"Initializing Shore A camera (OpenCV device index: {cam_id})...")
     reader = HardnessTester(
         num_digits=4,
-        cam_usb_path=cam_usb_path,
+        cam_usb_path=cam_source,
         use_camera=True,
         tester_mode="shore_a",
         calibration_path=calibration_path,
@@ -150,7 +188,7 @@ def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
 
     last_reading = "---"
     last_read_time = 0.0
-    READ_INTERVAL = 0.4   # single-frame read every 400 ms
+    READ_INTERVAL = 0.4  # single-frame read every 400 ms
     snapshot_count = 0
     debug_active = debug
 
@@ -183,7 +221,9 @@ def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
                     )
             last_read_time = now
 
-        live_view = _annotate_live(frame, last_reading, reader.segment_points is not None)
+        live_view = _annotate_live(
+            frame, last_reading, reader.segment_points is not None
+        )
         proc_view = _make_processed_view(frame, reader)
 
         cv2.imshow(WIN_LIVE, live_view)
@@ -191,10 +231,10 @@ def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
 
         key = cv2.waitKey(30) & 0xFF
 
-        if key in (ord('q'), 27):
+        if key in (ord("q"), 27):
             break
 
-        elif key == ord('c'):
+        elif key == ord("c"):
             print("\nOpening calibration UI on current frame...")
             ret2, cal_frame = reader.cap.read()
             target_frame = cal_frame if (ret2 and cal_frame is not None) else frame
@@ -205,33 +245,33 @@ def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
             )
             print("Calibration complete." if ok else "Calibration cancelled.")
 
-        elif key == ord('r'):
+        elif key == ord("r"):
             print("\nRunning 10-frame consensus read...")
             result = reader.read_display()
             last_reading = result if result is not None else "---"
             print(f"Consensus result: {last_reading}")
 
-        elif key == ord('s'):
+        elif key == ord("s"):
             path = f"shore_a_snapshot_{snapshot_count:03d}.jpg"
             cv2.imwrite(path, frame)
             print(f"Raw snapshot saved: {path}")
             snapshot_count += 1
 
-        elif key == ord('p'):
+        elif key == ord("p"):
             path = f"shore_a_processed_{snapshot_count:03d}.jpg"
             cv2.imwrite(path, proc_view)
             print(f"Processed snapshot saved: {path}")
             snapshot_count += 1
 
-        elif key in (ord('+'), ord('=')):
+        elif key in (ord("+"), ord("=")):
             reader.threshold_bias = max(0, reader.threshold_bias - 5)
             print(f"Threshold bias: {reader.threshold_bias}")
 
-        elif key == ord('-'):
+        elif key == ord("-"):
             reader.threshold_bias += 5
             print(f"Threshold bias: {reader.threshold_bias}")
 
-        elif key == ord('d'):
+        elif key == ord("d"):
             debug_active = not debug_active
             print(f"Debug image dumps: {'ON' if debug_active else 'OFF'}")
 
@@ -243,6 +283,7 @@ def run_live_feed(cam_usb_path: str, calibration_path: str, debug: bool):
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Shore A hardness tester - live camera feed with LCD translation",
@@ -250,11 +291,18 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument(
+        "--cam-id",
+        type=int,
+        default=0,
+        metavar="N",
+        help="OpenCV camera index for dev machines (default: 0). Ignored if --cam-usb-path is set.",
+    )
+    parser.add_argument(
         "--cam-usb-path",
         type=str,
         default=None,
         metavar="PATH",
-        help="USB device path for the camera (e.g. /dev/v4l/by-path/...-video-index0)",
+        help="Linux USB device path (Pi deployment). Overrides --cam-id.",
     )
     parser.add_argument(
         "--calibration",
@@ -270,7 +318,7 @@ def main():
     )
     args = parser.parse_args()
 
-    run_live_feed(args.cam_usb_path, args.calibration, args.debug)
+    run_live_feed(args.cam_id, args.cam_usb_path, args.calibration, args.debug)
 
 
 if __name__ == "__main__":

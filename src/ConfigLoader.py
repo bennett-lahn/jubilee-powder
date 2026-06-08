@@ -197,28 +197,6 @@ class ConfigLoader:
         with open(self._system_config_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
         self._system = _parse_system_config(raw, self._system_config_path)
-        self._config = self._system.model_dump()
-
-    def require(self, key_path: str) -> Any:
-        """Return a config value by dot path (validated data)."""
-        value: Any = self._config
-        for key in key_path.split("."):
-            if not isinstance(value, dict) or key not in value:
-                raise ConfigError(
-                    f"Required config key missing: {key_path} (in {self._system_config_path})"
-                )
-            value = value[key]
-        return value
-
-    def get(self, key_path: str, default: Any = None) -> Any:
-        """Optional dot-path lookup. Prefer typed accessors or ``system`` for required keys."""
-        value: Any = self._config
-        try:
-            for key in key_path.split("."):
-                value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
 
     def get_jubilee_api_config_dir(self) -> Path:
         return self._project_root / "jubilee_api_config"

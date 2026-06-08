@@ -35,15 +35,6 @@ async function request(path, options = {}) {
   return res.json()
 }
 
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
-
-/** GET /api/status — full machine snapshot */
-export function fetchStatus() {
-  return request('/status')
-}
-
 /** GET /api/config — machine settings from system_config.json */
 export function fetchMachineConfig() {
   return request('/config')
@@ -93,13 +84,6 @@ export function startJob(body) {
 }
 
 /**
- * POST /api/job/stop — signal the running job to stop after the current well.
- */
-export function stopJob() {
-  return request('/job/stop', { method: 'POST' })
-}
-
-/**
  * POST /api/job/cancel — graceful cancel: finish current mold, stow tool, return to idle.
  */
 export function cancelJob() {
@@ -126,15 +110,6 @@ export function clearJam() {
  */
 export function fetchJobLog() {
   return request('/job/log')
-}
-
-// ---------------------------------------------------------------------------
-// Dispensers
-// ---------------------------------------------------------------------------
-
-/** GET /api/dispensers — list all dispenser statuses */
-export function fetchDispensers() {
-  return request('/dispensers')
 }
 
 /**

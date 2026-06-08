@@ -5,8 +5,6 @@ from science_jubilee.tools.Tool import (
 from src.trickler_labware import Mold
 from src.PistonDispenser import PistonDispenser
 from typing import Any
-from pathlib import Path
-import json
 
 
 # Re-export ToolStateError for documentation purposes
@@ -53,77 +51,15 @@ class Manipulator(Tool):
         super().__init__(index, name)
         self.state_machine = state_machine  # Reference to MotionPlatformStateMachine
 
-        # Tamper axis (loaded from system_config.json in _load_manipulator_config)
+        # Tamper axis loaded from validated system_config.json
         self.tamper_axis: str = ""
 
         # TODO: tamper_speed should be derived from state machine feedrate default
         # For now, removed as it was only used in get_status() for reporting
 
-        if config_source is None or config_source == "system_config":
-            from src.ConfigLoader import config as _cfg
+        from src.ConfigLoader import config as _cfg
 
-            self.tamper_axis = _cfg.system.manipulator.tamper_axis
-        else:
-            config_dict = self._load_config(config_source)
-            if config_dict:
-                self._load_manipulator_config(config_dict)
-
-    def _load_config(
-        self, config_source_param: str | dict[str, Any] | None
-    ) -> dict[str, Any] | None:
-        """
-        Load configuration from either a file path string or a dict.
-
-        Args:
-            config_source_param: Either a string (path to JSON file) or a dict (already loaded config)
-
-        Returns:
-            Configuration dictionary, or None if loading failed
-        """
-        if isinstance(config_source_param, dict):
-            # Config is already a dictionary
-            return config_source_param
-        elif isinstance(config_source_param, str):
-            if config_source_param == "system_config":
-                from src.ConfigLoader import config as system_config
-
-                return system_config.system.model_dump()
-            # Config is a file path - load from JSON
-            try:
-                # Get project root (parent of src directory)
-                project_root = Path(__file__).parent.parent
-                # Try as path relative to jubilee_api_config
-                config_path = (
-                    project_root / "jubilee_api_config" / f"{config_source_param}.json"
-                )
-                if not config_path.exists():
-                    # Try as absolute or relative path as-is
-                    config_path = Path(config_source_param)
-                    if not config_path.suffix == ".json":
-                        config_path = Path(f"{config_source_param}.json")
-
-                with open(config_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except FileNotFoundError:
-                raise FileNotFoundError("Could not find Manipulator configuration file")
-            except json.JSONDecodeError as e:
-                raise (f"Error: Invalid JSON in manipulator config file: {config_path}")
-                print(f"JSON Error: {e}")
-                raise json.JSONDecodeError("")
-            except Exception as e:
-                print(f"Error loading manipulator config: {e}")
-                raise Exception()
-                return None
-        else:
-            print(
-                f"Warning: Invalid config type: {type(config_source_param)}. Expected str or dict."
-            )
-            print("Exiting program.")
-            exit()
-
-    def _load_manipulator_config(self, config_data: dict[str, Any]) -> None:
-        """Load tamper_axis from a pre-validated config dict (non-system_config sources)."""
-        self.tamper_axis = str(config_data["manipulator"]["tamper_axis"])
+        self.tamper_axis = _cfg.system.manipulator.tamper_axis
 
     def _get_config_dict(self) -> dict[str, Any]:
         """
@@ -212,10 +148,6 @@ class Manipulator(Tool):
             raise ToolStateError(f"Cannot tamp: {result.reason}")
 
         return True
-
-    def vibrate_tamper(self, machine_connection=None):
-        # TODO: Update when vibration functionality added
-        pass
 
     def get_status(self) -> dict[str, Any]:
         """

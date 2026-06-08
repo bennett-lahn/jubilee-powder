@@ -19,8 +19,6 @@
  *                   used on the Home screen to display live job progress and completed job results
  */
 
-import { useState, useCallback, useMemo } from 'react'
-import { DISPENSING_ROWS, DISPENSING_COLS } from '../constants/dispensingBed'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -31,129 +29,6 @@ const SHORE_LABELS = {
   shore_a_d: 'A+D',
   shore_d:   'D',
   none:      '',
-}
-
-// ---------------------------------------------------------------------------
-// useWellGrid hook
-// ---------------------------------------------------------------------------
-
-function initWells(rows, cols) {
-  const wells = {}
-  for (let i = 0; i < rows * cols; i++) {
-    wells[String(i)] = {
-      selected:      false,
-      targetWeight:  0,
-      currentWeight: 0,
-      mode:          'none',
-    }
-  }
-  return wells
-}
-
-export function useWellGrid(rows = DISPENSING_ROWS, cols = DISPENSING_COLS) {
-  const [wells, setWells] = useState(() => initWells(rows, cols))
-
-  // Derived: IDs of currently selected wells (memoised for stable identity)
-  const selectedIds = useMemo(
-    () => Object.entries(wells).filter(([, w]) => w.selected).map(([id]) => id),
-    [wells],
-  )
-
-  const toggleWell = useCallback((id) => {
-    setWells((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], selected: !prev[id].selected },
-    }))
-  }, [])
-
-  const selectAll = useCallback(() => {
-    setWells((prev) => {
-      const next = {}
-      for (const id in prev) next[id] = { ...prev[id], selected: true }
-      return next
-    })
-  }, [])
-
-  const clearSelection = useCallback(() => {
-    setWells((prev) => {
-      const next = {}
-      for (const id in prev) next[id] = { ...prev[id], selected: false }
-      return next
-    })
-  }, [])
-
-  // Toggle: if every well in the row is selected → deselect all; else select all.
-  const selectRow = useCallback((rowIndex) => {
-    setWells((prev) => {
-      const ids = Array.from({ length: cols }, (_, c) => String(rowIndex * cols + c))
-      const allSelected = ids.every((id) => prev[id].selected)
-      const next = { ...prev }
-      for (const id of ids) next[id] = { ...next[id], selected: !allSelected }
-      return next
-    })
-  }, [cols])
-
-  // Toggle: if every well in the column is selected → deselect all; else select all.
-  const selectCol = useCallback((colIndex) => {
-    setWells((prev) => {
-      const ids = Array.from({ length: rows }, (_, r) => String(r * cols + colIndex))
-      const allSelected = ids.every((id) => prev[id].selected)
-      const next = { ...prev }
-      for (const id of ids) next[id] = { ...next[id], selected: !allSelected }
-      return next
-    })
-  }, [rows, cols])
-
-  const setWeight = useCallback((id, targetWeight) => {
-    setWells((prev) => ({ ...prev, [id]: { ...prev[id], targetWeight } }))
-  }, [])
-
-  const setWeightForSelected = useCallback((targetWeight) => {
-    setWells((prev) => {
-      const next = {}
-      for (const id in prev)
-        next[id] = prev[id].selected ? { ...prev[id], targetWeight } : prev[id]
-      return next
-    })
-  }, [])
-
-  const setMode = useCallback((id, mode) => {
-    setWells((prev) => ({ ...prev, [id]: { ...prev[id], mode } }))
-  }, [])
-
-  const setModeForSelected = useCallback((mode) => {
-    setWells((prev) => {
-      const next = {}
-      for (const id in prev)
-        next[id] = prev[id].selected ? { ...prev[id], mode } : prev[id]
-      return next
-    })
-  }, [])
-
-  const setCurrentWeight = useCallback((id, currentWeight) => {
-    setWells((prev) => ({ ...prev, [id]: { ...prev[id], currentWeight } }))
-  }, [])
-
-  // Legacy helper kept for callers that do getSelected()
-  const getSelected = useCallback(() => selectedIds, [selectedIds])
-
-  return {
-    wells,
-    rows,
-    cols,
-    selectedIds,
-    toggleWell,
-    selectAll,
-    clearSelection,
-    selectRow,
-    selectCol,
-    setWeight,
-    setWeightForSelected,
-    setMode,
-    setModeForSelected,
-    setCurrentWeight,
-    getSelected,
-  }
 }
 
 // ---------------------------------------------------------------------------

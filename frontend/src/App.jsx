@@ -19,13 +19,11 @@ import SettingsScreen         from './screens/SettingsScreen'
 function RootLayout() {
   const connectWs          = useJubileeStore((s) => s.connectWs)
   const disconnectWs       = useJubileeStore((s) => s.disconnectWs)
-  const loadStatus         = useJubileeStore((s) => s.loadStatus)
   const errorDialog        = useJubileeStore((s) => s.errorDialog)
   const dismissErrorDialog = useJubileeStore((s) => s.dismissErrorDialog)
 
   useEffect(() => {
     connectWs()
-    loadStatus()
     return () => disconnectWs()
   }, [])
 

@@ -6,12 +6,6 @@
  * spacing between them.
  */
 
-import { useCallback, useMemo, useState } from 'react'
-import {
-  HARDNESS_ROWS,
-  HARDNESS_COLS,
-  HARDNESS_TRAY_COUNT,
-} from '../constants/hardnessTray'
 
 const SHORE_LABELS = {
   shore_a:   'A',
@@ -55,79 +49,6 @@ function HardnessResultLines({ mode, resultShoreA, resultShoreD }) {
 
 export function sampleKeyForTray(trayIndex, sampleId) {
   return `${trayIndex}:${sampleId}`
-}
-
-function initSamples(rows, cols, trayCount) {
-  const samples = {}
-  const trayCapacity = rows * cols
-  for (let trayIndex = 0; trayIndex < trayCount; trayIndex++) {
-    for (let sampleIndex = 0; sampleIndex < trayCapacity; sampleIndex++) {
-      const id = sampleKeyForTray(trayIndex, sampleIndex)
-      samples[id] = {
-        selected: false,
-        mode: 'none',
-      }
-    }
-  }
-  return samples
-}
-
-export function useSampleTrayGrid(
-  rows = HARDNESS_ROWS,
-  cols = HARDNESS_COLS,
-  trayCount = HARDNESS_TRAY_COUNT,
-) {
-  const [samples, setSamples] = useState(() => initSamples(rows, cols, trayCount))
-
-  const selectedIds = useMemo(
-    () => Object.entries(samples).filter(([, sample]) => sample.selected).map(([id]) => id),
-    [samples],
-  )
-
-  const toggleSample = useCallback((id) => {
-    setSamples((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], selected: !prev[id].selected },
-    }))
-  }, [])
-
-  const selectAll = useCallback(() => {
-    setSamples((prev) => {
-      const next = {}
-      for (const id in prev) next[id] = { ...prev[id], selected: true }
-      return next
-    })
-  }, [])
-
-  const clearSelection = useCallback(() => {
-    setSamples((prev) => {
-      const next = {}
-      for (const id in prev) next[id] = { ...prev[id], selected: false }
-      return next
-    })
-  }, [])
-
-  const setModeForSelected = useCallback((mode) => {
-    setSamples((prev) => {
-      const next = {}
-      for (const id in prev) {
-        next[id] = prev[id].selected ? { ...prev[id], mode } : prev[id]
-      }
-      return next
-    })
-  }, [])
-
-  return {
-    samples,
-    rows,
-    cols,
-    trayCount,
-    selectedIds,
-    toggleSample,
-    selectAll,
-    clearSelection,
-    setModeForSelected,
-  }
 }
 
 function SampleCell({ id, sample, onClick, onSampleClick, variant }) {

@@ -9,6 +9,7 @@ The executor is owned by the state machine and is not accessed directly by other
 components, so all movements go through validation.
 """
 
+import logging
 import threading
 import time
 
@@ -18,8 +19,9 @@ from src.Scale import Scale
 from src.HardnessTester import HardnessTester
 from src.PistonDispenser import PistonDispenser
 from src.MotionPlatformStateMachine import PositionType
-from src.ConfigLoader import ConfigLoader
 from src.ConfigLoader import config as _system_config
+
+logger = logging.getLogger(__name__)
 
 
 class MovementExecutor:
@@ -68,6 +70,30 @@ class MovementExecutor:
         """
         return self._machine
 
+    def _well_label_for_slot(self, well_id: str, deck) -> str:
+        """Resolve a human-friendly well label for logs."""
+        try:
+            slot_index = int(well_id)
+            if 0 <= slot_index <= 17 and str(slot_index) in deck.slots:
+                slot = deck.slots[str(slot_index)]
+                if slot.has_labware and hasattr(slot.labware, "wells"):
+                    well = slot.labware.wells.get(well_id)
+                    if well and hasattr(well, "name"):
+                        return well.name
+        except Exception:
+            pass
+        return well_id
+
+    def _home_axis(self, axis: str, label: str) -> bool:
+        """Home one axis using the standard home macro convention."""
+        try:
+            self._machine.gcode(f'M98 P"home{axis.lower()}.g"')
+            logger.info("%s (%s) homing complete. Position reset to 0.0mm", label, axis)
+            return True
+        except Exception as e:
+            logger.error("Error homing %s: %s", label.lower(), e)
+            return False
+
     # ===== MANIPULATOR MOVEMENTS =====
 
     def execute_pick_mold(
@@ -102,24 +128,8 @@ class MovementExecutor:
         Returns:
             True if successful, False otherwise.
         """
-        # TODO: Update to use variable instead of constant for z=90 safe transfer height
-        # Get mold from deck for logging
-        well = None
         try:
-            # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
-            slot_index = int(well_id)
-
-            if 0 <= slot_index <= 17 and str(slot_index) in deck.slots:
-                slot = deck.slots[str(slot_index)]
-                if slot.has_labware and hasattr(slot.labware, "wells"):
-                    if well_id in slot.labware.wells:
-                        well = slot.labware.wells[well_id]
-        except Exception:
-            pass
-
-        try:
-            well_name = well.name if (well and hasattr(well, "name")) else well_id
-            print(f"Picking up mold: {well_name}")
+            logger.info("Picking up mold: %s", self._well_label_for_slot(well_id, deck))
 
             feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
@@ -135,7 +145,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error picking up mold from mold slot {well_id}: {e}")
+            logger.error("Error picking up mold from mold slot %s: %s", well_id, e)
             return False
 
     def execute_place_mold(
@@ -161,23 +171,8 @@ class MovementExecutor:
         Returns:
             True if successful, False otherwise.
         """
-        # Get mold from deck for logging
-        well = None
         try:
-            # Convert well_id to slot index (well_id is already numerical: "0", "1", ... "17")
-            slot_index = int(well_id)
-
-            if 0 <= slot_index <= 17 and str(slot_index) in deck.slots:
-                slot = deck.slots[str(slot_index)]
-                if slot.has_labware and hasattr(slot.labware, "wells"):
-                    if well_id in slot.labware.wells:
-                        well = slot.labware.wells[well_id]
-        except Exception:
-            pass
-
-        try:
-            well_name = well.name if (well and hasattr(well, "name")) else well_id
-            print(f"Placing mold: {well_name}")
+            logger.info("Placing mold: %s", self._well_label_for_slot(well_id, deck))
 
             feedrate = self._feedrate
             self._machine.move_to(v=66, s=feedrate)
@@ -193,7 +188,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error placing mold in mold slot {well_id}: {e}")
+            logger.error("Error placing mold in mold slot %s: %s", well_id, e)
             return False
 
     def execute_place_mold_on_scale(
@@ -227,7 +222,7 @@ class MovementExecutor:
             raise RuntimeError("Jubilee not configured in MovementExecutor")
 
         try:
-            print("Placing mold on scale...")
+            logger.info("Placing mold on scale...")
             feedrate = self._feedrate
             self._machine.move(
                 dy=38, s=feedrate
@@ -255,7 +250,7 @@ class MovementExecutor:
             self._machine.move(dy=-7, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error placing mold on scale: {e}")
+            logger.error("Error placing mold on scale: %s", e)
             return False
 
     def execute_pick_mold_from_scale(
@@ -287,7 +282,7 @@ class MovementExecutor:
             raise RuntimeError("Jubilee not configured in MovementExecutor")
 
         try:
-            print("Picking mold from scale...")
+            logger.info("Picking mold from scale...")
             feedrate = self._feedrate
             # Phase 1: undo the post-place retreat exactly in reverse order.
             self._machine.move(dy=7, s=feedrate)
@@ -310,7 +305,7 @@ class MovementExecutor:
             )  # Restore y position to position before mold was placed
             return True
         except Exception as e:
-            print(f"Error picking mold from scale: {e}")
+            logger.error("Error picking mold from scale: %s", e)
             return False
 
     def execute_place_top_piston(
@@ -338,7 +333,7 @@ class MovementExecutor:
             True if successful, False otherwise.
         """
         try:
-            print(f"Placing top piston from dispenser {piston_dispenser.index}")
+            logger.info("Placing top piston from dispenser %s", piston_dispenser.index)
 
             feedrate = self._feedrate
             self._machine.move_to(
@@ -357,8 +352,10 @@ class MovementExecutor:
 
             return True
         except Exception as e:
-            print(
-                f"Error placing top piston from dispenser {piston_dispenser.index}: {e}"
+            logger.error(
+                "Error placing top piston from dispenser %s: %s",
+                piston_dispenser.index,
+                e,
             )
             return False
 
@@ -388,7 +385,7 @@ class MovementExecutor:
             manipulator.tamp_speed_min/max).
         """
         try:
-            print("Executing tamp at scale_ready position...")
+            logger.info("Executing tamp at scale_ready position...")
 
             feedrate = tamp_speed
 
@@ -410,14 +407,14 @@ class MovementExecutor:
             )
 
             # Home V axis after tamping to ensure axis accuracy
-            print("Homing V axis after tamp to ensure accuracy...")
+            logger.info("Homing V axis after tamp to ensure accuracy...")
             self.execute_home_tamper(tamper_axis)
             self._machine.move_to(v=saved_v, s=feedrate)
 
-            print("Tamping complete")
+            logger.info("Tamping complete")
             return True
         except Exception as e:
-            print(f"Error during tamp: {e}")
+            logger.error("Error during tamp: %s", e)
             return False
 
     # ===== BASIC MOVEMENTS =====
@@ -449,7 +446,7 @@ class MovementExecutor:
             self._machine.move_to(x=x, y=y, z=z, v=v, s=speed)
             return True
         except Exception as e:
-            print(f"Error executing basic move: {e}")
+            logger.error("Error executing basic move: %s", e)
             return False
 
     def execute_move_to_sample_tray(self, x: float, y: float, z: float) -> bool:
@@ -461,11 +458,11 @@ class MovementExecutor:
         """
         try:
             feedrate = self._feedrate
-            print(f"Moving hardness tester to sample tray: x={x}, y={y}, z={z}")
+            logger.info("Moving hardness tester to sample tray: x=%s, y=%s, z=%s", x, y, z)
             self._machine.move_to(x=x, y=y, z=z, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error moving to hardness sample tray: {e}")
+            logger.error("Error moving to hardness sample tray: %s", e)
             return False
 
     def execute_move_to_hardness_sample(
@@ -482,11 +479,11 @@ class MovementExecutor:
         """
         try:
             feedrate = self._feedrate
-            print(f"Moving hardness tester to sample: x={x}, y={y}, z={z}")
+            logger.info("Moving hardness tester to sample: x=%s, y=%s, z=%s", x, y, z)
             self._machine.move_to(x=x, y=y, z=z, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error moving to hardness sample: {e}")
+            logger.error("Error moving to hardness sample: %s", e)
             return False
 
     def execute_test_sample(
@@ -519,10 +516,12 @@ class MovementExecutor:
         # probe routine) and capture the contact Z.
         probed_top_z = None  # Replace with real probe result.
 
-        print(
-            "Hardness sample motion stub "
-            f"(tray={tray_index}, sample={sample_id}, mode={mode}, "
-            f"probed_top_z={probed_top_z})"
+        logger.debug(
+            "Hardness sample motion stub (tray=%s, sample=%s, mode=%s, probed_top_z=%s)",
+            tray_index,
+            sample_id,
+            mode,
+            probed_top_z,
         )
         if hardness_tester is None:
             self.last_hardness_error = (
@@ -601,10 +600,14 @@ class MovementExecutor:
             action: Action label for log messages.
         """
         if servo_channel is None or press_angle is None or release_angle is None:
-            print(
-                f"WARNING: _actuate_servo called with missing parameters "
-                f"(mode={mode}, channel={servo_channel}, press={press_angle}, "
-                f"release={release_angle}, action={action})"
+            logger.warning(
+                "_actuate_servo called with missing parameters "
+                "(mode=%s, channel=%s, press=%s, release=%s, action=%s)",
+                mode,
+                servo_channel,
+                press_angle,
+                release_angle,
+                action,
             )
             return False
         try:
@@ -614,7 +617,7 @@ class MovementExecutor:
             self._machine.gcode("M400")
             return True
         except Exception as e:
-            print(f"Error actuating servo (mode={mode}, action={action}): {e}")
+            logger.error("Error actuating servo (mode=%s, action=%s): %s", mode, action, e)
             return False
 
     def execute_home_all(self, registry) -> bool:
@@ -660,7 +663,7 @@ class MovementExecutor:
                     self._machine.move_to(x=x, y=y, z=z, v=v, s=self._feedrate)
             return True
         except Exception as e:
-            print(f"Error homing all axes: {e}")
+            logger.error("Error homing all axes: %s", e)
             return False
 
     def execute_pickup_tool(
@@ -706,7 +709,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error picking up tool: {e}")
+            logger.error("Error picking up tool: %s", e)
             return False
 
     def execute_park_tool(
@@ -747,7 +750,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error parking tool: {e}")
+            logger.error("Error parking tool: %s", e)
             return False
 
     def execute_home_xyz(self) -> bool:
@@ -761,7 +764,7 @@ class MovementExecutor:
             self._machine.home_z()
             return True
         except Exception as e:
-            print(f"Error homing XYZ axes: {e}")
+            logger.error("Error homing XYZ axes: %s", e)
             return False
 
     def execute_move_to_mold_slot(
@@ -791,8 +794,8 @@ class MovementExecutor:
             self._machine.move_to(x=x, y=y, z=z, v=v, s=feedrate)
             return True
         except Exception as e:
-            print(f"Error moving to well: {e}")
-            print(f"Coordinate: x={x}, y={y}, z={z}, v={v}")
+            logger.error("Error moving to well: %s", e)
+            logger.error("Coordinate: x=%s, y=%s, z=%s, v=%s", x, y, z, v)
             return False
 
     def execute_move_to_scale(
@@ -821,7 +824,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error moving to scale ready position: {e}")
+            logger.error("Error moving to scale ready position: %s", e)
             return False
 
     def get_machine_position(self) -> dict:
@@ -894,7 +897,7 @@ class MovementExecutor:
             )
             return True
         except Exception as e:
-            print(f"Error moving to scale: {e}")
+            logger.error("Error moving to scale: %s", e)
             return False
 
     # ===== JAM DETECTION HELPERS =====
@@ -914,18 +917,19 @@ class MovementExecutor:
 
     def _auto_recover_jam(self, vibration_amplitude: float, wait_seconds: float) -> None:
         """First jam in a fill iteration: bump vibration and wait before retrying."""
-        print(
-            f"[Jam] Powder jam detected - auto-recovery: "
-            f"vibration {vibration_amplitude:.2f} for {wait_seconds:.0f}s"
+        logger.warning(
+            "[Jam] Powder jam detected - auto-recovery: vibration %.2f for %.0fs",
+            vibration_amplitude,
+            wait_seconds,
         )
         try:
             self._set_trickler_vibration(vibration_amplitude)
             self._machine.gcode("M400")
         except Exception as e:
-            print(f"[Jam] Warning: could not set recovery vibration: {e}")
+            logger.warning("[Jam] Could not set recovery vibration: %s", e)
         time.sleep(wait_seconds)
         self._set_trickler_vibration(0.0)
-        print("[Jam] Auto-recovery complete - resuming dispensing.")
+        logger.info("[Jam] Auto-recovery complete - resuming dispensing.")
 
     def _handle_jam(self) -> None:
         """Called when a jam requires operator clearance.
@@ -938,19 +942,19 @@ class MovementExecutor:
             self._set_trickler_vibration(0.0)
             self._machine.gcode("M400")
         except Exception as e:
-            print(f"[Jam] Warning: could not stop vibration: {e}")
+            logger.warning("[Jam] Could not stop vibration: %s", e)
 
         self._jam_resume_event.clear()
-        print("[Jam] Powder jam detected - waiting for operator clearance.")
+        logger.warning("[Jam] Powder jam detected - waiting for operator clearance.")
 
         if self._on_jam_detected is not None:
             try:
                 self._on_jam_detected()
             except Exception as e:
-                print(f"[Jam] on_jam_detected callback raised: {e}")
+                logger.warning("[Jam] on_jam_detected callback raised: %s", e)
 
         self._jam_resume_event.wait()
-        print("[Jam] Jam cleared by operator - resuming dispensing.")
+        logger.info("[Jam] Jam cleared by operator - resuming dispensing.")
 
     def _recover_from_jam_stall(
         self,
@@ -986,26 +990,26 @@ class MovementExecutor:
             True if the target was reached, False if an unrecoverable error
             occurred.
         """
-        cfg = ConfigLoader()
+        trickler = _system_config.system.trickler
 
-        flow_alpha = cfg.get_trickler_flow_ema_alpha()
-        yield_alpha = cfg.get_trickler_yield_ema_alpha()
-        jam_threshold = cfg.get_trickler_jam_yield_threshold()
-        jam_iter_limit = cfg.get_trickler_jam_iter_threshold()
-        jam_recovery_vib_amp = cfg.get_trickler_jam_auto_recovery_vibration_amplitude()
-        jam_recovery_wait_seconds = cfg.get_trickler_jam_auto_recovery_wait_seconds()
-        max_step = cfg.get_trickler_max_step_size_mm()
-        min_step = cfg.get_trickler_min_step_size_mm()
-        warmup_steps = cfg.get_trickler_warmup_steps()
-        warmup_max_step = cfg.get_trickler_warmup_max_step_mm()
-        coarse_pct = cfg.get_trickler_coarse_threshold_pct()
-        finish_pct = cfg.get_trickler_finish_threshold_pct()
-        coarse_tgt_steps = cfg.get_trickler_coarse_target_steps()
-        coarse_feedrate = cfg.get_trickler_coarse_feedrate()
-        fine_feedrate = cfg.get_trickler_fine_feedrate()
-        coarse_vib_amp = cfg.get_trickler_coarse_vibration_amplitude()
-        fine_vib_amp = cfg.get_trickler_fine_vibration_amplitude()
-        max_dribble_step = cfg.get_trickler_max_dribble_step_mm()
+        flow_alpha = trickler.flow_ema_alpha
+        yield_alpha = trickler.yield_ema_alpha
+        jam_threshold = trickler.jam_yield_threshold
+        jam_iter_limit = trickler.jam_iter_threshold
+        jam_recovery_vib_amp = trickler.jam_auto_recovery_vibration_amplitude
+        jam_recovery_wait_seconds = trickler.jam_auto_recovery_wait_seconds
+        max_step = trickler.max_step_size_mm
+        min_step = trickler.min_step_size_mm
+        warmup_steps = trickler.warmup_steps
+        warmup_max_step = trickler.warmup_max_step_mm
+        coarse_pct = trickler.coarse_threshold_pct
+        finish_pct = trickler.finish_threshold_pct
+        coarse_tgt_steps = trickler.coarse_target_steps
+        coarse_feedrate = trickler.coarse_feedrate
+        fine_feedrate = trickler.fine_feedrate
+        coarse_vib_amp = trickler.coarse_vibration_amplitude
+        fine_vib_amp = trickler.fine_vibration_amplitude
+        max_dribble_step = trickler.max_dribble_step_mm
 
         coarse_feedrate_str = f"F{coarse_feedrate}"
         fine_feedrate_str = f"F{fine_feedrate}"
@@ -1017,10 +1021,12 @@ class MovementExecutor:
 
             self._scale.tare()
             initial_weight = self._scale.get_weight(stable=True)
-            print(f"[Fill] Initial weight after tare: {initial_weight:.4f}g")
-            print(
-                f"[Fill] Target: {target_weight:.4f}g  coarse: {coarse_threshold:.4f}g  "
-                f"finish: {finish_threshold:.4f}g"
+            logger.info("[Fill] Initial weight after tare: %.4fg", initial_weight)
+            logger.info(
+                "[Fill] Target: %.4fg coarse: %.4fg finish: %.4fg",
+                target_weight,
+                coarse_threshold,
+                finish_threshold,
             )
 
             self._machine.gcode("G92 W0")  # reset trickler axis
@@ -1041,24 +1047,24 @@ class MovementExecutor:
                 if threshold_crossed:
                     time.sleep(0.15)
                     current_weight = self._scale.get_weight(stable=True)
-                    print(f"[FillTrace] stable sample: weight={current_weight:.4f}")
+                    logger.debug("[FillTrace] stable sample: weight=%.4f", current_weight)
                 else:
                     current_weight = self._scale.get_weight(stable=False)
-                    print(f"[FillTrace] unstable sample: weight={current_weight:.4f}")
+                    logger.debug("[FillTrace] unstable sample: weight=%.4f", current_weight)
 
                 if current_weight >= coarse_threshold:
                     if not threshold_crossed:
                         threshold_crossed = True
                         current_vib_amp = fine_vib_amp
-                        print(
-                            f"[Fill] Coarse threshold crossed at {current_weight:.4f}g"
+                        logger.info(
+                            "[Fill] Coarse threshold crossed at %.4fg", current_weight
                         )
                         self._set_trickler_vibration(current_vib_amp)
                         time.sleep(0.15)
                         current_weight = self._scale.get_weight(stable=True)
-                        print(
-                            f"[FillTrace] stable sample after coarse crossing: "
-                            f"weight={current_weight:.4f}"
+                        logger.debug(
+                            "[FillTrace] stable sample after coarse crossing: weight=%.4f",
+                            current_weight,
                         )
 
                     remaining = max(0.0, finish_threshold - current_weight)
@@ -1075,9 +1081,9 @@ class MovementExecutor:
                     motor_has_moved = True
 
                     weight_after_step = self._scale.get_weight(stable=True)
-                    print(
-                        f"[FillTrace] stable sample after fine step: "
-                        f"weight={weight_after_step:.4f}"
+                    logger.debug(
+                        "[FillTrace] stable sample after fine step: weight=%.4f",
+                        weight_after_step,
                     )
                     weight_gained = max(0.0, weight_after_step - weight_before_step)
                     step_yield = weight_gained / step_size
@@ -1108,14 +1114,14 @@ class MovementExecutor:
                         self._set_trickler_vibration(0.0)
                         time.sleep(4)
                         final_weight = self._scale.get_weight(stable=True)
-                        print(f"[Fill] Stable confirmation: {final_weight:.4f}g")
+                        logger.info("[Fill] Stable confirmation: %.4fg", final_weight)
                         if final_weight >= finish_threshold:
-                            print(f"[Fill] Target reached: {final_weight:.4f}g")
+                            logger.info("[Fill] Target reached: %.4fg", final_weight)
                             self.last_fill_weight = final_weight
                             break
-                        print(
-                            f"[Fill] Stable weight {final_weight:.4f}g below threshold, "
-                            "continuing..."
+                        logger.info(
+                            "[Fill] Stable weight %.4fg below threshold, continuing...",
+                            final_weight,
                         )
                         self._set_trickler_vibration(current_vib_amp)
 
@@ -1165,7 +1171,7 @@ class MovementExecutor:
             return True
 
         except Exception as e:
-            print(f"[Fill] Error filling mold with powder: {e}")
+            logger.error("[Fill] Error filling mold with powder: %s", e)
             return False
         finally:
             try:
@@ -1220,7 +1226,7 @@ class MovementExecutor:
         not_homed = [axis_names[i] for i in range(4) if not axes_homed[i]]
 
         if not_homed:
-            print(f"Axes not homed: {', '.join(not_homed)}")
+            logger.error("Axes not homed: %s", ", ".join(not_homed))
             raise RuntimeError(
                 f"X, Y, Z, and U axes must be homed before homing the tamper "
                 f"({tamper_axis}) axis."
@@ -1229,7 +1235,7 @@ class MovementExecutor:
         # Perform homing for tamper axis
         self._machine.gcode(f'M98 P"home{tamper_axis.lower()}.g"')
 
-        print(f"Homing complete. {tamper_axis} axis position reset to 0.0mm")
+        logger.info("Homing complete. %s axis position reset to 0.0mm", tamper_axis)
         return True
 
     def execute_home_manipulator(self, manipulator_axis: str) -> bool:
@@ -1242,16 +1248,7 @@ class MovementExecutor:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            # Perform homing for manipulator axis
-            self._machine.gcode(f'M98 P"home{manipulator_axis.lower()}.g"')
-            print(
-                f"Manipulator ({manipulator_axis}) homing complete. Position reset to 0.0mm"
-            )
-            return True
-        except Exception as e:
-            print(f"Error homing manipulator: {e}")
-            return False
+        return self._home_axis(manipulator_axis, "Manipulator")
 
     def execute_home_trickler(self, trickler_axis: str = "W") -> bool:
         """
@@ -1263,13 +1260,4 @@ class MovementExecutor:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            # Trickler can be homed at any time, no prerequisites
-            self._machine.gcode(f'M98 P"home{trickler_axis.lower()}.g"')
-            print(
-                f"Trickler ({trickler_axis}) homing complete. Position reset to 0.0mm"
-            )
-            return True
-        except Exception as e:
-            print(f"Error homing trickler: {e}")
-            return False
+        return self._home_axis(trickler_axis, "Trickler")

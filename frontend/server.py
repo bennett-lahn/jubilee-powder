@@ -159,8 +159,7 @@ class StartPowderJobRequest(BaseModel):
     job_type: Literal["dispensing"] = "dispensing"
     wells: list[PowderWell] = Field(
         min_length=1,
-        max_length=24,
-        description="At most 24 wells per job (fixed API limit).",
+        description="One or more wells for the dispensing job.",
     )
 
 
@@ -462,7 +461,6 @@ async def start_job(body: JobRequest):
 
     else:  # hardness
         items = [s.model_dump() for s in body.samples]
-        print(f"[JobStart] hardness job: {len(items)} samples: {items}")
         progress.start_job("hardness", items, now)
         asyncio.create_task(_run_hardness(items))
         return {"accepted": True, "job_type": "hardness", "total": len(items)}
@@ -571,10 +569,7 @@ def _build_progress_log() -> dict:
     """
     items_with_status = []
     for i, item in enumerate(progress.items):
-        if "well_id" in item:
-            item_id = item.get("well_id")
-        else:
-            item_id = f"{item['tray_index']}:{item['sample_index']}"
+        item_id = progress.item_id(item)
         if item.get("status"):
             status = item.get("status")
         elif i < progress.completed:
@@ -853,16 +848,18 @@ async def _run_connect(config: HardwareConfig) -> None:
         # state is already set to ERROR inside each manager's connect()
 
 
-async def _run_dispensing(items: list[dict]) -> None:
-    """Execute a dispensing job in the background and finalise the log on completion.
-
-    Args:
-        items: Ordered list of well dicts (``well_id``, ``target_weight``).
-    """
-    job_log = _make_job_log("dispensing", items)
+async def _run_job(
+    *,
+    job_type: str,
+    items: list[dict],
+    run_job_fn,
+    reset_mold_metadata: bool = False,
+) -> None:
+    """Execute one job type and perform common completion/finalization steps."""
+    job_log = _make_job_log(job_type, items)
     outcome = "cancelled"
     try:
-        await hw.run_dispensing_job(items, progress, job_log)
+        await run_job_fn(items, progress, job_log)
         if progress.completed == progress.total or _all_items_terminal(progress.items):
             outcome = "successful"
         elif hw.state == MachineState.ERROR:
@@ -880,10 +877,25 @@ async def _run_dispensing(items: list[dict]) -> None:
                 _maybe_upload_to_drive(log_path)
             except Exception as exc:
                 print(f"[JobLog] Failed to write log: {exc}")
-        try:
-            hw.reset_mold_job_metadata()
-        except Exception as exc:
-            print(f"[JobCleanup] Failed to reset mold metadata: {exc}")
+        if reset_mold_metadata:
+            try:
+                hw.reset_mold_job_metadata()
+            except Exception as exc:
+                print(f"[JobCleanup] Failed to reset mold metadata: {exc}")
+
+
+async def _run_dispensing(items: list[dict]) -> None:
+    """Execute a dispensing job in the background and finalise the log on completion.
+
+    Args:
+        items: Ordered list of well dicts (``well_id``, ``target_weight``).
+    """
+    await _run_job(
+        job_type="dispensing",
+        items=items,
+        run_job_fn=hw.run_dispensing_job,
+        reset_mold_metadata=True,
+    )
 
 
 async def _run_hardness(items: list[dict]) -> None:
@@ -892,28 +904,12 @@ async def _run_hardness(items: list[dict]) -> None:
     Args:
         items: Ordered list of sample dicts (``tray_index``, ``sample_index``, ``mode``).
     """
-    job_log = _make_job_log("hardness", items)
-    outcome = "cancelled"
-    try:
-        await hw.run_hardness_job(items, progress, job_log)
-        if progress.completed == progress.total or _all_items_terminal(progress.items):
-            outcome = "successful"
-        elif hw.state == MachineState.ERROR:
-            outcome = "aborted"
-    except Exception as exc:
-        traceback.print_exc()
-        progress.error = str(exc)
-        hw.state = MachineState.ERROR
-        outcome = "aborted"
-        print(f"[HardnessJob] Exception: {exc!r}")
-    finally:
-        progress.running = False
-        if job_log is not None:
-            try:
-                log_path = job_log.finalize(outcome)
-                _maybe_upload_to_drive(log_path)
-            except Exception as exc:
-                print(f"[JobLog] Failed to write log: {exc}")
+    await _run_job(
+        job_type="hardness",
+        items=items,
+        run_job_fn=hw.run_hardness_job,
+        reset_mold_metadata=False,
+    )
 
 
 # =============================================================================

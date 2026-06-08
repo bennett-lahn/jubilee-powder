@@ -24,9 +24,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
 import WellGrid from '../components/WellGrid'
-import SampleTrayGrid, { sampleKeyForTray } from '../components/SampleTrayGrid'
+import SampleTrayGrid from '../components/SampleTrayGrid'
 import ArcProgress from '../components/ArcProgress'
 import { Button, Card, Dialog } from '../components/ui'
+import { buildResultWells, formatJobDate } from '../utils/jobDisplay'
 import {
   DISPENSING_LAYOUT,
   DISPENSING_ROWS,
@@ -38,26 +39,6 @@ import {
   HARDNESS_TRAY_COUNT,
 } from '../constants/hardnessTray'
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Return a short date string for the results heading, e.g. "Mar 31, 2026".
- * Accepts a job object that may carry either a `date` field (YYYY-MM-DD, from
- * a persisted log file) or a `started_at` field (ISO-8601, from live progress).
- */
-function formatJobDate(job) {
-  if (!job) return null
-  const raw = job.date ?? (job.started_at ? job.started_at.slice(0, 10) : null)
-  if (!raw) return null
-  // Parse as local midnight so the displayed day matches the job date.
-  const [y, m, d] = raw.split('-').map(Number)
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric',
-  })
-}
-
 /** Format an integer number of seconds as "MM:SS" or "H:MM:SS". */
 function formatElapsed(totalSeconds) {
   const s = totalSeconds % 60
@@ -65,93 +46,6 @@ function formatElapsed(totalSeconds) {
   const h = Math.floor(totalSeconds / 3600)
   const pad = (n) => String(n).padStart(2, '0')
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
-}
-
-/**
- * Build a `wells` map for WellGrid from a job progress object.
- *
- * All ROWS×COLS wells are initialised as `excluded`.  Wells present in
- * `job.items` are marked incomplete / active / complete based on the current
- * `job.completed` counter and `job.current_item`.
- */
-function buildResultWells(rows, cols, job, jobType) {
-  const wells = {}
-
-  if (jobType === 'hardness') {
-    const total = rows * cols
-    for (let trayIndex = 0; trayIndex < HARDNESS_TRAY_COUNT; trayIndex++) {
-      for (let sampleIndex = 0; sampleIndex < total; sampleIndex++) {
-        const id = sampleKeyForTray(trayIndex, sampleIndex)
-        wells[id] = {
-          selected:      false,
-          targetWeight:  0,
-          currentWeight: 0,
-          mode:          'none',
-          status:        'excluded',
-          actualWeight:  null,
-          result:        null,
-          resultShoreA:  null,
-          resultShoreD:  null,
-          sampleError:   null,
-        }
-      }
-    }
-  } else {
-    // Use physical layout to init only real mold positions (skip scale placeholders).
-    DISPENSING_LAYOUT.flat().filter((id) => id !== null).forEach((id) => {
-      wells[String(id)] = {
-        selected:      false,
-        targetWeight:  0,
-        currentWeight: 0,
-        mode:          'none',
-        status:        'excluded',
-        actualWeight:  null,
-        result:        null,
-        resultShoreA:  null,
-        resultShoreD:  null,
-        sampleError:   null,
-      }
-    })
-  }
-
-  const items = job?.items
-  if (!items?.length) return wells
-
-  items.forEach((item, idx) => {
-    const id = item.well_id != null
-      ? String(item.well_id)
-      : sampleKeyForTray(item.tray_index, item.sample_index)
-    if (!(id in wells)) return
-
-    let status
-    if (item.status) {
-      status = item.status
-    } else if (item.sample_error) {
-      status = 'error'
-    } else if (idx < (job.completed ?? 0)) {
-      status = 'complete'
-    } else if (String(job.current_item) === id) {
-      status = 'active'
-    } else {
-      status = 'incomplete'
-    }
-
-    const mode = item.mode ?? 'none'
-
-    wells[id] = {
-      ...wells[id],
-      targetWeight: item.target_weight ?? 0,
-      actualWeight: item.actual_weight ?? null,
-      result:       null,
-      resultShoreA: item.result_shore_a ?? null,
-      resultShoreD: item.result_shore_d ?? null,
-      sampleError:  item.sample_error ?? null,
-      mode,
-      status,
-    }
-  })
-
-  return wells
 }
 
 // ---------------------------------------------------------------------------
@@ -420,8 +314,8 @@ export default function HomeScreen() {
         }
       >
         <p className="text-sm text-slate-300 mb-2">
-          The machine will finish the <span className="font-semibold text-slate-100">current {itemName}</span>, then
-          stop and stow the tool.
+          The machine will finish the
+          <span className="font-semibold text-slate-100"> current {itemName}</span>, then stop the active job.
         </p>
         <p className="text-sm text-slate-500">
           The machine will return to idle and be ready for a new job.

@@ -30,6 +30,7 @@ Example:
 
 from __future__ import annotations
 
+import logging
 import time
 import traceback
 from typing import Callable, TYPE_CHECKING
@@ -47,6 +48,8 @@ from src.Manipulator import Manipulator, ToolStateError
 from src.HardnessTester import HardnessTester
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 from src.ConfigLoader import config
+
+logger = logging.getLogger(__name__)
 
 
 class ScaleResidualObjectError(RuntimeError):
@@ -337,13 +340,13 @@ class JubileeManager:
             # Connect to machine
             real_machine = Machine(address=machine_address)
             real_machine.connect()
-            print(f"[TIMING] Duet connect: {time.monotonic() - _t0:.2f}s")
+            logger.debug("Duet connect: %.2fs", time.monotonic() - _t0)
 
             # Connect to scale first (needed for state machine initialization)
             _t1 = time.monotonic()
             self.scale = Scale(port=scale_port)
             self.scale.connect()
-            print(f"[TIMING] Scale connect: {time.monotonic() - _t1:.2f}s")
+            logger.debug("Scale connect: %.2fs", time.monotonic() - _t1)
 
             project_root = config.project_root
 
@@ -403,7 +406,7 @@ class JubileeManager:
                 cfg=testers.shore_d,
                 state_machine=self.state_machine,
             )
-            print(f"[TIMING] State machine + tools init: {time.monotonic() - _t2:.2f}s")
+            logger.debug("State machine + tools init: %.2fs", time.monotonic() - _t2)
 
             # Ensure state machine context is set correctly for homing
             # Set z_height_id to mold_transfer_safe which is the default height after homing
@@ -418,8 +421,9 @@ class JubileeManager:
             # Returns to global_ready position at mold_transfer_safe z-height
             _t3 = time.monotonic()
             result = self.state_machine.validated_home_all()
-            print(
-                f"[TIMING] validated_home_all (incl. post-home move + M400): {time.monotonic() - _t3:.2f}s"
+            logger.debug(
+                "validated_home_all (incl. post-home move + M400): %.2fs",
+                time.monotonic() - _t3,
             )
             if not result.valid:
                 raise RuntimeError(f"Failed to home all axes: {result.reason}")
@@ -427,10 +431,8 @@ class JubileeManager:
             # Load the manipulator tool (this registers it but doesn't pick it up)
             _t4 = time.monotonic()
             self.machine_read_only.load_tool(self.manipulator)
-            # self.machine_read_only.load_tool(self.hardness_tester_shore_a)
-            # self.machine_read_only.load_tool(self.hardness_tester_shore_d)
-            print(f"[TIMING] load_tool: {time.monotonic() - _t4:.2f}s")
-            print(f"[TIMING] Total connect: {time.monotonic() - _t0:.2f}s")
+            logger.debug("load_tool: %.2fs", time.monotonic() - _t4)
+            logger.debug("Total connect: %.2fs", time.monotonic() - _t0)
 
             self.connected = True
             return True
