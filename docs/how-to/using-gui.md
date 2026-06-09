@@ -12,6 +12,11 @@ The Jubilee Powder UI is a browser-based interface that provides:
 - Hardness testing job setup and monitoring
 - Historical job log browsing
 
+!!! info "Prerequisites"
+    - Web server running (see [Building and Running the Web UI](running.md))
+    - Jubilee powered on and network-reachable
+    - Scale connected; dispenser piston counts configured in Settings
+
 ## Choose Your Depth
 
 === "Operator Workflow"
@@ -108,11 +113,12 @@ Navigate to the **Dispensing** screen.
 
 ### Step 1: Select Wells
 
-Click individual wells in the 4×6 grid to select them. Click again to deselect.
+Click individual wells in the dispensing grid to select them (18 mold slots in a
+3×7 layout with scale access gaps in the bottom row). Click again to deselect.
 
 Toolbar shortcuts:
 
-- **Select All** — select all 24 wells
+- **Select All** — select all 18 wells
 - **Clear** — deselect everything
 
 The selection count is shown in the toolbar.
@@ -153,7 +159,7 @@ Navigate to the **Hardness** screen.
 
 ### Step 1: Select Samples
 
-Click wells in the 4×6 grid to select the sample positions to test. Use **Select All**
+Click wells in the hardness tray grid to select sample positions to test. Use **Select All**
 or **Clear** in the toolbar as needed.
 
 ### Step 2: Assign Test Mode
@@ -231,12 +237,12 @@ the file list from the server.
 
 ## Settings Screen Reference
 
-| Field                        | Default         | Description                             |
-|------------------------------|-----------------|-----------------------------------------|
-| Number of Powder Dispensers  | 2               | Number of piston dispenser trays        |
-| Pistons per Dispenser        | 10              | Pistons per tray                        |
-| Jubilee IP / Hostname        | `jubilee.local` | Machine network address                 |
-| Scale Serial Port            | `/dev/ttyUSB0`  | Serial port for the A&D FX-120i scale   |
+| Field                        | Default (from `system_config.json`) | Description                             |
+|------------------------------|-------------------------------------|-----------------------------------------|
+| Number of Powder Dispensers  | `machine.num_dispensers` (1)        | Number of piston dispenser trays        |
+| Pistons per Dispenser        | `machine.pistons_per_dispenser` (2) | Pistons per tray                      |
+| Jubilee IP / Hostname        | `machine.duet_ip` (`192.168.1.2`)   | Machine network address                 |
+| Scale Serial Port            | `machine.scale_port` (`/dev/ttyUSB0`) | Serial port for the A&D FX-120i scale |
 
 ---
 

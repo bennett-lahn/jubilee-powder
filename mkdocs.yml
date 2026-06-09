@@ -30,12 +30,17 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.annotate
+    - content.tabs.link
 
 plugins:
   - search
   - mkdocstrings:
       handlers:
         python:
+          paths:
+            - .
+            - frontend
+            - frontend/src
           options:
             docstring_style: google
             show_source: true

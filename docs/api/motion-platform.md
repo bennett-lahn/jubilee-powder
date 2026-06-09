@@ -98,9 +98,9 @@ The state machine maintains:
 
 ```python
 {
-    "position": "global_ready",        # Current named position
-    "active_tool_id": 0,               # Active tool (or None)
-    "payload_state": "empty",          # What manipulator holds
+    "position_id": "global_ready",           # Current named position
+    "active_tool_id": "manipulator",         # Active tool name (or None)
+    "payload_state": "empty",                # What manipulator holds
 }
 ```
 
@@ -114,22 +114,25 @@ The state machine maintains:
 
 ### Position Names
 
-Named positions are defined in `motion_platform_positions.json`:
+Named positions are defined in `motion_platform_positions.json`. See [Position Configuration](position-config.md) for the full schema and editing guide.
 
 - `global_ready`: Safe position away from all labware
-- `scale_ready`: Position to access the scale
-- `mold_slot_*`: Positions for specific wells (e.g., `mold_ready_0`, `mold_ready_1`)
-- `dispenser_*_ready`: Positions for piston dispensers
+- `scale_ready` / `scale_active`: Positions for scale access and weighing
+- `mold_ready_N`: Positions for specific wells (e.g., `mold_ready_0`, `mold_ready_1`)
+- `dispenser_ready_N`: Positions for piston dispensers
+
+!!! note "Config is the source of truth"
+    Position IDs, coordinates, transitions, and payload rules live in JSON only. Do not hardcode coordinates or invent position names in application code.
 
 ## Validation Results
 
-All validated methods return a `ValidationResult`:
+All validated methods return a `MoveValidationResult`:
 
 ```python
 @dataclass
-class ValidationResult:
-    valid: bool       # Whether operation is allowed
-    reason: str = ""  # Explanation if not valid
+class MoveValidationResult:
+    valid: bool              # Whether operation is allowed
+    reason: str | None = None  # Explanation if not valid
 ```
 
 ### Example Usage
@@ -142,6 +145,9 @@ if result.valid:
 else:
     print(f"Movement failed: {result.reason}")
 ```
+
+!!! tip "Always check `MoveValidationResult.valid`"
+    Validated methods never raise for rule violations; they return `valid=False` with a `reason` string. Log or surface `result.reason` before retrying or changing state.
 
 ## Common Operations
 
@@ -225,36 +231,58 @@ result = state_machine.validated_retrieve_piston(
 
 ## Creating from Configuration
 
-### From File
+=== "Python"
 
-```python
-from pathlib import Path
-from science_jubilee.Machine import Machine
-from src.Scale import Scale
-from src.MotionPlatformStateMachine import MotionPlatformStateMachine
+    ```python
+    from pathlib import Path
+    from science_jubilee.Machine import Machine
+    from src.Scale import Scale
+    from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 
-# Connect to hardware
-machine = Machine(address="192.168.1.100")
-machine.connect()
+    machine = Machine(address="192.168.1.100")
+    machine.connect()
 
-scale = Scale(port="/dev/ttyUSB0")
-scale.connect()
+    scale = Scale(port="/dev/ttyUSB0")
+    scale.connect()
 
-# Create state machine from config
-config_path = Path("jubilee_api_config/motion_platform_positions.json")
-state_machine = MotionPlatformStateMachine.from_config_file(
-    config_file=config_path,
-    machine=machine,
-    scale=scale
-)
+    config_path = Path("jubilee_api_config/motion_platform_positions.json")
+    state_machine = MotionPlatformStateMachine.from_config_file(
+        path=config_path,
+        machine=machine,
+        scale=scale,
+    )
 
-# Initialize components
-state_machine.initialize_deck()
-state_machine.initialize_dispensers(
-    num_piston_dispensers=2,
-    num_pistons_per_dispenser=10
-)
-```
+    state_machine.initialize_deck()
+    state_machine.initialize_dispensers(
+        num_piston_dispensers=2,
+        num_pistons_per_dispenser=10,
+    )
+    ```
+
+=== "Config"
+
+    Positions load from `jubilee_api_config/motion_platform_positions.json` (validated by Pydantic models in `src/motion_config.py`). Tool names referenced in position `requirements` come from `system_config.json` via `ConfigLoader`.
+
+    ```json
+    {
+      "id": "scale_ready",
+      "type": "SCALE_READY",
+      "coordinates": {
+        "x": 150.0,
+        "y": 80.0,
+        "z": "USE_Z_HEIGHT_POLICY",
+        "v": 30.0
+      },
+      "requirements": {
+        "active_tool_id": "manipulator"
+      },
+      "z_height_policy": {
+        "allowed": ["mold_transfer_safe"]
+      }
+    }
+    ```
+
+    Restart or reconnect after editing position JSON. See [Position Configuration](position-config.md) for the full file layout.
 
 ## State Updates
 
@@ -265,12 +293,12 @@ In some cases, you may need to manually update the state:
 ```python
 # Update multiple state fields
 state_machine.update_context(
-    active_tool_id=0,
-    payload_state="mold_without_top_piston"
+    active_tool_id="manipulator",
+    payload_state="mold_without_top_piston",
 )
 
 # Update position
-state_machine.context.position = "scale_ready"
+state_machine.context.position_id = "scale_ready"
 ```
 
 !!! danger "Manual Updates"
@@ -302,73 +330,63 @@ result = state_machine.validated_move_to_scale()
 
 ## Configuration Structure
 
-The state machine reads from `motion_platform_positions.json`:
+The state machine reads `motion_platform_positions.json` at connect time. The file uses top-level `z_heights`, `coordinate_tolerance`, `positions` (array), and `actions` keys. Movement rules are expressed through each position's `allowed_origins`, `allowed_destinations`, and `requirements`, not a separate transitions map.
 
-```json
-{
-  "positions": {
-    "position_name": {
-      "coordinates": {"x": 100, "y": 100, "z": 50, "safe_z": 150},
-      "description": "Position description",
-      "requires_tool": "manipulator",
-      "allowed_payloads": ["empty", "mold_without_top_piston"]
-    }
-  },
-  "transitions": {
-    "from_position": {
-      "to": ["target_position1", "target_position2"]
-    }
-  }
-}
-```
+!!! warning "Do not use legacy position schemas"
+    Older examples that show `positions` as a dict with a `transitions` block are obsolete. Follow [Position Configuration](position-config.md) and the checked-in JSON under `jubilee_api_config/`.
 
 ## Advanced Usage
 
-### Custom Movement Sequences
+???+ note "Custom sequences and internal state"
+    Chain validated methods for multi-step workflows, or inspect context when debugging. Prefer `JubileeManager` for production dispense flows.
 
-For complex operations, chain validated movements:
+    ### Custom Movement Sequences
 
-```python
-def custom_operation(state_machine, well_id, target_weight):
-    """Example custom operation using state machine."""
-    
-    # Move to mold slot
-    result = state_machine.validated_move_to_mold_slot(well_id)
-    if not result.valid:
-        return False, f"Move to slot failed: {result.reason}"
-    
-    # Update payload (after picking mold)
-    state_machine.update_context(payload_state="mold_without_top_piston")
-    
-    # Move to scale
-    result = state_machine.validated_move_to_scale()
-    if not result.valid:
-        return False, f"Move to scale failed: {result.reason}"
-    
-    # Fill powder
-    result = state_machine.validated_fill_powder(target_weight)
-    if not result.valid:
-        return False, f"Fill failed: {result.reason}"
-    
-    return True, "Success"
-```
+    For complex operations, chain validated movements:
 
-### Accessing Internal State
+    ```python
+    def custom_operation(state_machine, manipulator, well_id, target_weight):
+        """Example custom operation using state machine."""
 
-```python
-# Get current state
-position = state_machine.context.position
-tool = state_machine.context.active_tool_id
-payload = state_machine.context.payload_state
+        result = state_machine.validated_move_to_mold_slot(well_id)  # (1)!
+        if not result.valid:
+            return False, f"Move to slot failed: {result.reason}"
 
-print(f"State: pos={position}, tool={tool}, payload={payload}")
+        manipulator.pick_mold(well_id)  # (2)!
 
-# Access components
-machine = state_machine.machine
-scale = state_machine.context.scale
-deck = state_machine.context.deck
-dispensers = state_machine.context.piston_dispensers
-```
+        result = state_machine.validated_move_to_scale()  # (3)!
+        if not result.valid:
+            return False, f"Move to scale failed: {result.reason}"
+
+        manipulator.place_mold_on_scale()  # (4)!
+
+        result = state_machine.validated_fill_powder(target_weight)  # (5)!
+        if not result.valid:
+            return False, f"Fill failed: {result.reason}"
+
+        return True, "Success"
+    ```
+
+    1. Validate and execute each move before continuing.
+    2. Pick updates payload state via `validated_pick_mold` (raises `ToolStateError` on failure).
+    3. Destination rules come from position `requirements` in JSON.
+    4. Place engages the tool at `scale_active` so fill can run on the scale.
+    5. Powder fill runs trickler logic through the state machine.
+
+    ### Accessing Internal State
+
+    ```python
+    position = state_machine.context.position_id
+    tool = state_machine.context.active_tool_id
+    payload = state_machine.context.payload_state
+
+    print(f"State: pos={position}, tool={tool}, payload={payload}")
+
+    machine = state_machine.machine
+    scale = state_machine.context.scale
+    deck = state_machine.context.deck
+    dispensers = state_machine.context.piston_dispensers
+    ```
 
 ## Error Handling
 
@@ -389,11 +407,14 @@ result = state_machine.validated_move_to_scale()
 
 if not result.valid:
     print(f"Validation failed: {result.reason}")
-    print(f"Current state:")
-    print(f"  Position: {state_machine.context.position}")
+    print("Current state:")
+    print(f"  Position: {state_machine.context.position_id}")
     print(f"  Tool: {state_machine.context.active_tool_id}")
     print(f"  Payload: {state_machine.context.payload_state}")
 ```
+
+!!! tip "Compare against position requirements"
+    Cross-check `result.reason` with the target position's `requirements` and `allowed_origins` / `allowed_destinations` in [Position Configuration](position-config.md). Most failures are a payload, tool, or transition mismatch.
 
 ## Thread Safety
 
@@ -403,7 +424,8 @@ if not result.valid:
 ## See Also
 
 - [JubileeManager](jubilee-manager.md) - High-level interface (recommended)
-- [ConfigLoader](config-loader.md) - Configuration loading details
+- [Position Configuration](position-config.md) - `motion_platform_positions.json` schema and transitions
+- [ConfigLoader](config-loader.md) - `system_config.json` loading
 - [Architecture Guide](../concepts/architecture.md) - System design overview
 - [Configuration Guide](../how-to/configuration.md) - Setting up positions and transitions
 

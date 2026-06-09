@@ -1,30 +1,20 @@
-"""Segment-based LCD reading for 7-segment displays.
+"""Shore hardness tester toolhead and 7-segment LCD display reader.
 
-INSTALLATION:
-Required:
-    pip install opencv-python
-    pip install imageio  # For bundling debug images into animated GIFs
+Combines Shore hardness testing (validated pick, press, and sample workflows)
+with segment-based 7-segment LCD decoding for low-contrast tester displays.
 
-Optional (Raspberry Pi):
-    pip install opencv-python  # For camera capture
+Note:
+    Display reading uses calibrated segment polygons, not OCR. Pipeline:
+    camera capture, grayscale conversion, unsharp masking (sharpening, on by
+    default), CLAHE preprocessing, Otsu binarization, segment analysis, and
+    lookup-table digit recognition.
 
-METHODOLOGY:
-This approach reads 7-segment LCD displays by detecting which segments are active,
-rather than using traditional OCR. This is much more reliable for LCD displays.
+Example:
+    Offline verification from a saved image::
 
-PIPELINE:
-Phase 1: Image Acquisition & Advanced Preprocessing
-    - Direct camera capture with automatic camera settings
-    - Grayscale conversion for primary preprocessing
-    - CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        from src.HardnessTester import test_with_image
 
-Phase 2: Segment Analysis Logic
-    - Extract individual digit ROIs
-    - Map 7 segments per digit (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
-    - Count active pixels in each segment
-
-Phase 3: Recognition via Lookup Table
-    - Map segment patterns to digits using predefined lookup table
+        result = test_with_image("lcd_photo.jpg", "api_config/lcd_calibration_shore_a.json")
 """
 
 import glob
@@ -53,8 +43,38 @@ except ImportError:
 
 
 class HardnessTester(Tool):
-    """
-    LCD 7-Segment Display Reader using segment detection instead of OCR.
+    """Shore hardness tester toolhead with segment-based LCD reading.
+
+    Serves as both a Jubilee ``Tool`` for sample testing workflows and a
+    camera-driven reader for the tester's 7-segment LCD display.
+
+    Configuration is loaded from ``system_config.json`` via
+    :meth:`from_system_config`. LCD geometry comes from a calibration JSON
+    file produced by :meth:`calibrate`.
+
+    Attributes:
+        num_digits: Number of digits on the LCD.
+        segment_threshold: Fraction of segment pixels that must be active
+            (default 0.5) before a segment is counted ON.
+        tester_mode: Shore mode key (``"shore_a"`` or ``"shore_d"``).
+
+    Example:
+        Build from config and read the display::
+
+            from src.HardnessTester import HardnessTester
+            from src.ConfigLoader import config
+
+            tester = HardnessTester.from_system_config(
+                tester_mode="shore_a",
+                cfg=config.system.hardness_testers.shore_a,
+            )
+            if tester.load_assigned_calibration():
+                print(tester.read_display())
+
+    Note:
+        For full sample workflows prefer
+        :meth:`~src.JubileeManager.JubileeManager.test_sample` rather than
+        calling :meth:`test_sample` on this class directly.
     """
 
     # Segment order: (top, top-left, top-right, middle, bottom-left, bottom-right, bottom)
@@ -104,21 +124,19 @@ class HardnessTester(Tool):
         morph_iterations: int = 3,
         morph_open: bool = False,
     ) -> None:
-        """
-        Initialize the LCD reader.
+        """Initialize the Shore tester and LCD reader.
 
         Args:
-            num_digits: Number of digits in the display (default: 4)
+            calibration_path: Path to the LCD calibration JSON for this tester.
+            num_digits: Number of digits in the display (default 4).
             cam_usb_path: Filesystem path to the camera USB device
-                (e.g. /dev/v4l/by-path/...-video-index0). This is the only
-                supported camera config source. When None, the camera cannot
-                be opened until camera discrimination runs and sets the
-                resolved index via identify_hardness_camera().
-            use_camera: Whether to initialize and use a camera device
-            index: Jubilee tool index for this tester
-            name: Jubilee tool name for this tester
-            tester_mode: Shore tester mode ("shore_a" or "shore_d")
-            calibration_path: Path to the LCD calibration json for this tester
+                (for example ``/dev/v4l/by-path/...-video-index0``). When
+                ``None``, the camera cannot open until USB discrimination
+                resolves an index.
+            use_camera: Whether to initialize and use a camera device.
+            index: Jubilee tool index for this tester.
+            name: Jubilee tool name for this tester.
+            tester_mode: Shore tester mode (``"shore_a"`` or ``"shore_d"``).
             tip_length_mm: Physical tip length for this tester
             servo: Servo identifier for the shared button servo (e.g. "S1" = servo
                 channel 1). The same physical servo actuates both the power and zero
@@ -130,13 +148,12 @@ class HardnessTester(Tool):
             state_machine: Optional MotionPlatformStateMachine reference. When set,
                 turn_on(), turn_off(), and zero() use it directly without requiring
                 a per-call argument (same pattern as Manipulator).
-            threshold_bias: Amount to subtract from Otsu's computed threshold
-                before applying binarization. Increase this value to make
-                binarization less sensitive (fewer pixels classified as black),
-                which helps when reflections or lens artifacts create spurious
-                dark regions. Default is 0 (pure Otsu behavior).
+            threshold_bias: Amount subtracted from Otsu's threshold before
+                binarization (default 15). Increase to classify fewer pixels as
+                active when reflections create spurious dark regions.
             sharpen_strength: Unsharp masking strength applied to the grayscale
-                image before CLAHE. 0.0 disables sharpening. Values in the range
+                image before CLAHE. On by default (31.0). Set to 0.0 to disable
+                sharpening. Values in the range
                 1.0-2.0 work well for mildly blurry images; go higher (e.g. 3.0)
                 for strongly blurred captures. Higher values risk amplifying
                 noise, so pair with a larger sharpen_blur_radius if needed.
@@ -203,9 +220,20 @@ class HardnessTester(Tool):
         tester_mode: str,
         cfg: "HardnessTesterConfig",
         num_digits: int = 4,
-        state_machine=None,
+        state_machine: object | None = None,
     ) -> "HardnessTester":
-        """Build a configured Shore tester from validated ``HardnessTesterConfig``."""
+        """Build a configured Shore tester from validated system config.
+
+        Args:
+            tester_mode: Shore tester key (``"shore_a"`` or ``"shore_d"``).
+            cfg: Validated ``HardnessTesterConfig`` from ``ConfigLoader.system``.
+            num_digits: Number of LCD digits to read (default 4).
+            state_machine: Optional ``MotionPlatformStateMachine`` for validated
+                button actuation and sample workflows.
+
+        Returns:
+            Configured ``HardnessTester`` instance.
+        """
         calibration_path = cfg.lcd_calibration_path
         if calibration_path and not os.path.isabs(calibration_path):
             project_root = Path(__file__).resolve().parent.parent
@@ -230,12 +258,22 @@ class HardnessTester(Tool):
         )
 
     def load_assigned_calibration(self) -> bool:
-        """Load the calibration configured for this Shore tester."""
+        """Load the LCD calibration file configured for this tester mode.
+
+        Returns:
+            True if :attr:`calibration_path` loaded successfully.
+        """
         return self.load_calibration(self.calibration_path)
 
     def turn_on(self) -> bool:
-        """
-        Actuate the tester power button via the stored state machine.
+        """Actuate the tester power button via the stored state machine.
+
+        Returns:
+            True if the validated turn-on action succeeded.
+
+        Raises:
+            ValueError: If ``state_machine`` was not set on this instance.
+            RuntimeError: If the state machine rejects the action.
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
@@ -247,8 +285,14 @@ class HardnessTester(Tool):
         return True
 
     def turn_off(self) -> bool:
-        """
-        Actuate the tester power button for shutdown via the stored state machine.
+        """Actuate the tester power button for shutdown via the stored state machine.
+
+        Returns:
+            True if the validated turn-off action succeeded.
+
+        Raises:
+            ValueError: If ``state_machine`` was not set on this instance.
+            RuntimeError: If the state machine rejects the action.
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
@@ -260,8 +304,14 @@ class HardnessTester(Tool):
         return True
 
     def zero(self) -> bool:
-        """
-        Actuate the tester zero button via the stored state machine.
+        """Actuate the tester zero button via the stored state machine.
+
+        Returns:
+            True if the validated zero action succeeded.
+
+        Raises:
+            ValueError: If ``state_machine`` was not set on this instance.
+            RuntimeError: If the state machine rejects the action.
         """
         if self.state_machine is None:
             raise ValueError(f"state_machine is not set on {self.tester_mode} tester")
@@ -272,9 +322,18 @@ class HardnessTester(Tool):
             raise RuntimeError(result.reason or "Hardness zero action failed")
         return True
 
-    def is_display_zero(self, debug=False, debug_prefix="display_zero") -> bool:
-        """
-        Run a consensus display capture and check whether value is 0000-0005.
+    def is_display_zero(self, debug: bool = False, debug_prefix: str = "display_zero") -> bool:
+        """Check whether the LCD reads effectively zero (0000-0005).
+
+        Runs a consensus :meth:`read_display` capture before classifying.
+
+        Args:
+            debug: Save debug preprocessing images when True.
+            debug_prefix: Filename prefix for debug images.
+
+        Returns:
+            True when the consensus reading is a digit value from 0 to 5.
+            False for ``OFF``, ``None``, or non-numeric readings.
         """
         reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
         if reading is None:
@@ -288,15 +347,20 @@ class HardnessTester(Tool):
         return 0 <= value <= 5
 
     def is_display_on(self, debug: bool = False, debug_prefix: str = "display_on") -> bool:
-        """
-        Run a consensus display capture and classify display power state.
+        """Classify whether the LCD display is powered and showing a value.
+
+        Runs a consensus :meth:`read_display` capture before classifying.
+
+        Args:
+            debug: Save debug preprocessing images when True.
+            debug_prefix: Filename prefix for debug images.
 
         Returns:
-            False when all segments are off ("OFF")
-            True when a valid reading is displayed
+            False when all segments are off (``"OFF"``).
+            True when a valid numeric reading is displayed.
 
         Raises:
-            RuntimeError: Capture succeeds but the reading is indeterminate.
+            RuntimeError: When capture succeeds but the reading is indeterminate.
         """
         reading = self.read_display(debug=debug, debug_prefix=debug_prefix)
         if reading is None:
@@ -314,13 +378,21 @@ class HardnessTester(Tool):
     def _parse_hardness_reading(
         self, reading: str | None
     ) -> tuple[float | None, str | None]:
-        """Convert a consensus LCD string to a hardness float."""
+        """Convert a consensus LCD string to a hardness float.
+
+        Args:
+            reading: Consensus digit string from :meth:`read_display`.
+
+        Returns:
+            Tuple of ``(hardness_value, error_message)``. On success the error
+            is ``None``; on failure the value is ``None``.
+        """
         if reading is None:
-            return None, "No consensus OCR reading was captured."
+            return None, "No consensus display reading was captured."
         if reading == "OFF":
             return None, "Hardness tester display reported OFF."
         if not reading.isdigit():
-            return None, f"OCR returned non-numeric reading '{reading}'."
+            return None, f"Display returned non-numeric reading '{reading}'."
 
         # The display does not include a decimal point, so we apply the
         # fixed one-decimal scaling used by existing hardness UI expectations.
@@ -328,21 +400,36 @@ class HardnessTester(Tool):
             numeric_value = int(reading)
         else:
             numeric_value = int(reading) / 10.0
-        return numeric_value
+        return numeric_value, None
 
     def test_sample(
         self,
         tray_index: str | int,
         sample_id: str | int,
-        state_machine,
-        image_save_path=None,
+        state_machine: object,
+        image_save_path: str | Path | None = None,
     ) -> dict[str, float | str | None]:
-        """
-        Execute one hardness sample operation via the state machine move/action path.
+        """Execute one hardness sample test via the state machine.
 
-        Mirrors the mold pick/place architecture: movement to the target position
-        is a separate validated step from the measurement action itself. The state
-        machine owns all coordinate resolution and position validation.
+        Moves to the sample tray and target sample, then runs the validated
+        press-and-read action. Coordinate resolution and position validation
+        are owned by the state machine.
+
+        Args:
+            tray_index: Sample tray identifier.
+            sample_id: Sample slot identifier within the tray.
+            state_machine: ``MotionPlatformStateMachine`` that executes moves
+                and the sample action.
+            image_save_path: Optional path to save the consensus camera frame.
+
+        Returns:
+            Dict with keys ``result`` (hardness float or None),
+            ``sample_error`` (error message or None), and ``image_path``
+            (saved frame path or None).
+
+        Raises:
+            ValueError: If ``state_machine`` is None.
+            RuntimeError: If any validated move or sample action fails.
         """
         if state_machine is None:
             raise ValueError("state_machine is required for test_sample()")
@@ -541,13 +628,14 @@ class HardnessTester(Tool):
         return None
 
     @staticmethod
-    def enumerate_available_cam_indices(max_id: int = 10) -> list:
-        """Return all camera indices in [0, max_id) that OpenCV can open.
+    def enumerate_available_cam_indices(max_id: int = 10) -> list[int]:
+        """Return camera indices in ``[0, max_id)`` that OpenCV can open.
 
-        Each index is tested by attempting to open a VideoCapture; only
-        indices where the capture reports isOpened() are returned. Always
-        picks index 0 of each USB device (actual image stream, not
-        metadata) when using numeric indices.
+        Args:
+            max_id: Exclusive upper bound for indices to probe.
+
+        Returns:
+            Indices where ``VideoCapture(idx).isOpened()`` succeeds.
         """
         available = []
         for idx in range(max_id):
@@ -562,15 +650,15 @@ class HardnessTester(Tool):
         save: bool = False,
         output_path: str = "lcd_capture.jpg",
     ) -> np.ndarray | None:
-        """
-        Capture an image from the camera.
+        """Capture one BGR frame from the configured camera.
 
         Args:
-            save: Whether to save the captured image
-            output_path: Path to save the image
+            save: Write the frame to ``output_path`` when True.
+            output_path: Destination path when ``save`` is True.
 
         Returns:
-            numpy array (BGR format) or None if capture failed
+            BGR ``numpy`` array, or ``None`` when camera mode is disabled or
+            capture fails.
         """
         if not self.use_camera:
             print("WARNING: Camera capture requested but camera mode is disabled")
@@ -623,19 +711,19 @@ class HardnessTester(Tool):
         debug: bool = False,
         debug_prefix: str = "debug",
     ) -> np.ndarray:
-        """
-        Phase 1: Image Acquisition & Advanced Preprocessing
+        """Preprocess a camera frame for segment detection.
 
-        Converts frame to grayscale and applies CLAHE to enhance LCD segment
-        contrast.
+        Pipeline: grayscale conversion, unsharp masking (sharpening; on by
+        default via ``sharpen_strength``), CLAHE contrast enhancement, Otsu
+        thresholding (with ``threshold_bias``), and morphological cleanup.
 
         Args:
-            frame: Input BGR frame from camera
-            debug: Whether to save debug images
-            debug_prefix: Prefix for debug image filenames
+            frame: Input BGR frame from the camera.
+            debug: Save intermediate step images when True.
+            debug_prefix: Filename prefix for debug images.
 
         Returns:
-            Binary image with enhanced LCD segments
+            Binary image with enhanced LCD segments.
         """
         if frame is None:
             raise ValueError("Input frame is None")
@@ -648,7 +736,7 @@ class HardnessTester(Tool):
         if debug:
             cv2.imwrite(f"{debug_prefix}_step2_gray.png", gray)
 
-        # Step 2 (optional): Unsharp masking to recover blurred edges
+        # Step 2: Unsharp masking (on by default; sharpen_strength=0 disables)
         # sharpened = original + strength * (original - blurred)
         if self.sharpen_strength > 0.0:
             radius = self.sharpen_blur_radius | 1  # ensure odd
@@ -696,11 +784,13 @@ class HardnessTester(Tool):
         return cleaned
 
     def set_digit_rois(self, rois: list[tuple[int, int, int, int]]) -> None:
-        """
-        Set the ROI boundaries for each digit.
+        """Set the bounding box for each LCD digit.
 
         Args:
-            rois: List of tuples [(x1, y1, x2, y2), ...] for each digit
+            rois: List of ``(x1, y1, x2, y2)`` tuples, one per digit.
+
+        Raises:
+            ValueError: If the ROI count does not match ``num_digits``.
         """
         if len(rois) != self.num_digits:
             raise ValueError(f"Expected {self.num_digits} ROIs, got {len(rois)}")
@@ -808,18 +898,17 @@ class HardnessTester(Tool):
         digit_idx: int,
         segment_name: str,
     ) -> int:
-        """
-        Phase 3: Segment Analysis Logic
-
-        Analyzes a single segment within a digit ROI to determine if it's active.
+        """Classify one 7-segment polygon as ON or OFF.
 
         Args:
-            binary_frame: Full preprocessed binary image
-            digit_idx: Index of digit in display
-            segment_name: Name of the segment ('top', 'middle', etc.)
+            binary_frame: Full preprocessed binary image from
+                :meth:`preprocess_frame`.
+            digit_idx: Zero-based digit index in the display.
+            segment_name: Segment key from :attr:`SEGMENT_ORDER`.
 
         Returns:
-            1 if segment is active (ON), 0 if inactive (OFF)
+            ``1`` when active pixels exceed :attr:`segment_threshold`; ``0``
+            otherwise.
         """
         if (
             binary_frame is None
@@ -856,18 +945,16 @@ class HardnessTester(Tool):
         digit_idx: int,
         debug: bool = False,
     ) -> str:
-        """
-        Phase 4: Recognition via Lookup Table
-
-        Recognizes a single digit by analyzing all 7 segments.
+        """Recognize one digit from its seven segment states.
 
         Args:
-            binary_frame: Full preprocessed binary image
-            digit_idx: Index of digit in display
-            debug: Whether to print debug information
+            binary_frame: Full preprocessed binary image from
+                :meth:`preprocess_frame`.
+            digit_idx: Zero-based digit index in the display.
+            debug: Print the segment pattern when True.
 
         Returns:
-            Recognized digit as string or '?' if not recognized
+            Recognized digit string, ``"OFF"``, or ``"?"`` when unmatched.
         """
         if binary_frame is None:
             return "?"
@@ -925,22 +1012,32 @@ class HardnessTester(Tool):
         debug_prefix: str = "debug",
         image_save_path: str | Path | None = None,
     ) -> str | None:
-        """
-        Complete pipeline: Read all digits from LCD display.
+        """Read all LCD digits through the full decode pipeline.
+
+        Preprocessing applies grayscale conversion, sharpening (by default),
+        CLAHE, thresholding, and morphological cleanup before segment lookup.
+
+        When ``frame`` is supplied, decodes that single frame. Otherwise
+        captures ten frames over one second and returns the strict majority
+        consensus.
 
         Args:
-            frame: Input BGR frame. If provided, decode once and return result.
-                   If None, collect 10 readings and return strict majority.
-            debug: Whether to save debug images
-            debug_prefix: Prefix for debug image filenames
-            image_save_path: Optional path (str or Path) to save a raw camera
-                frame alongside the reading.  The first frame that produced the
-                consensus result is saved; if consensus fails the last captured
-                frame is used as a fallback.  Parent directories are created
-                automatically.  Has no effect when ``frame`` is supplied.
+            frame: Optional BGR frame. When provided, decodes once and returns.
+            debug: Save debug preprocessing images when True.
+            debug_prefix: Filename prefix for debug images.
+            image_save_path: Optional path to save the consensus camera frame.
+                Parent directories are created automatically. Ignored when
+                ``frame`` is supplied.
 
         Returns:
-            String with recognized digits or None if reading failed
+            Digit string (for example ``"0425"``), ``"OFF"``, or ``None`` when
+            capture or consensus fails.
+
+        Example:
+            Standalone read after loading calibration::
+
+                tester.load_assigned_calibration()
+                result = tester.read_display()
         """
         if frame is not None:
             return self._read_display_from_frame(
@@ -987,36 +1084,28 @@ class HardnessTester(Tool):
         save_calibration: bool = True,
         calibration_path: str | None = None,
     ) -> bool:
-        """
-        Interactive GUI calibration using an OpenCV popup window.
-        Uses ``self.calibration_path`` when ``calibration_path`` is omitted.
+        """Run interactive OpenCV calibration for digit ROIs and segment polygons.
 
-        ROI phase
-        ---------
-        Click and drag on the image to draw a bounding rectangle around each
-        digit.  Release the mouse button to set the pending ROI (shown in cyan).
-        Press Enter to confirm that digit's ROI and advance to the next digit.
-        You can re-drag before pressing Enter to redo the current digit.
-
-        Segment phase
-        -------------
-        For each segment of each digit the default polygon vertices are
-        pre-loaded.  Click anywhere on the image to append a point; the polygon
-        preview updates live.  Controls:
-            d       - reset to default vertices
-            c       - clear all vertices
-            Backspace / Delete - remove last vertex
-            Enter   - confirm vertices and advance to next segment
-            q / Esc - cancel and discard all changes
+        Uses :attr:`calibration_path` when ``calibration_path`` is omitted.
 
         Args:
-            frame: Input BGR frame (if None, uses image_path or captures from camera)
-            image_path: Path to an existing image for calibration (optional)
-            save_calibration: Whether to save calibration to file
-            calibration_path: Path where calibration JSON should be saved
+            frame: Input BGR frame. When ``None``, uses ``image_path`` or
+                captures from the camera.
+            image_path: Path to an existing calibration image.
+            save_calibration: Write calibration JSON on success.
+            calibration_path: Output path for the calibration JSON.
 
         Returns:
-            True if calibration was completed and saved successfully
+            True when calibration completed and was saved successfully.
+
+        Note:
+            **ROI phase:** click-drag a bounding box per digit, then press
+            Enter to confirm and advance.
+
+            **Segment phase:** click to place polygon vertices for each of the
+            seven segments. Keys: ``d`` reset defaults, ``c`` clear vertices,
+            Backspace/Delete remove last vertex, Enter confirm segment, ``q`` or
+            Esc cancel.
         """
         import json
 
@@ -1325,14 +1414,13 @@ class HardnessTester(Tool):
         return True
 
     def load_calibration(self, filepath: str | None = None) -> bool:
-        """
-        Load calibration from file.
+        """Load digit ROIs and segment polygons from a calibration JSON file.
 
         Args:
-            filepath: Path to calibration JSON file (defaults to self.calibration_path)
+            filepath: Calibration JSON path. Defaults to :attr:`calibration_path`.
 
         Returns:
-            True if loaded successfully
+            True when ``digit_rois`` and ``segment_points`` loaded successfully.
         """
         filepath = filepath or self.calibration_path
         if not filepath:
@@ -1371,7 +1459,7 @@ _CLI_DEFAULT_CALIBRATION = os.path.abspath(
     os.path.join(
         os.path.dirname(__file__),
         "..",
-        "jubilee_api_config",
+        "api_config",
         "lcd_calibration_shore_a.json",
     )
 )
@@ -1511,12 +1599,24 @@ def main():
 def test_with_image(
     image_path: str, calibration_file: str = _CLI_DEFAULT_CALIBRATION
 ) -> str | None:
-    """
-    Simple test function to read LCD from a single image.
+    """Read an LCD display from a static image file (no camera).
+
+    Convenience helper for calibration verification and offline debugging.
 
     Args:
-        image_path: Path to LCD image
-        calibration_file: Path to calibration file (optional)
+        image_path: Path to a BGR image of the LCD display.
+        calibration_file: Path to the segment calibration JSON file.
+
+    Returns:
+        Digit string from :meth:`HardnessTester.read_display`, or ``None`` when
+        the image or calibration could not be loaded.
+
+    Example:
+        Verify calibration without hardware::
+
+            from src.HardnessTester import test_with_image
+
+            print(test_with_image("lcd_photo.jpg"))
     """
     reader = HardnessTester(
         num_digits=4,

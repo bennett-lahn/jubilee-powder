@@ -1,3 +1,23 @@
+"""Weight-based labware types for powder dispensing molds.
+
+Extends ``science_jubilee`` ``Well`` / ``WellSet`` with gram-based tracking and
+state-machine position names used by the manipulator and motion platform.
+
+Example:
+    Build a mold set from configured ready positions::
+
+        from src.trickler_labware import Mold, MoldSet
+
+        molds = MoldSet(
+            wells={
+                "0": Mold(name="0", ready_pos="mold_ready_0", max_weight=60.0),
+                "1": Mold(name="1", ready_pos="mold_ready_1", max_weight=60.0),
+            }
+        )
+        molds["0"].set_weight(12.5)
+        print(molds["0"].well_id)  # "0"
+"""
+
 from dataclasses import dataclass
 
 from science_jubilee.labware.Labware import Well, WellSet
@@ -7,24 +27,45 @@ from science_jubilee.labware.Labware import Well, WellSet
 
 @dataclass
 class Mold(Well):
-    """A wrapper class for Well that uses weight (in grams) instead of liquid volume.
+    """Powder mold that tracks weight in grams instead of liquid volume.
 
-    This class represents a mold that can hold powder and tracks weight instead of volume.
+    Attributes:
+        valid: Whether this slot should be used (e.g. contains a physical mold).
+        has_top_piston: Whether a top piston has been placed on the mold.
+        current_weight: Current powder weight in grams.
+        target_weight: Target fill weight in grams for the active job.
+        max_weight: Maximum capacity in grams, or ``None`` if uncapped.
+        ready_pos: State-machine position name (e.g. ``"mold_ready_0"``).
+
+    Example:
+        ```python
+        mold = Mold(name="0", ready_pos="mold_ready_0", max_weight=60.0)
+        mold.add_weight(0.5)
+        assert mold.well_id == "0"
+        ```
+
+    Note:
+        :attr:`well_id` is derived from :attr:`ready_pos` for job logging and UI
+        selection. It falls back to :attr:`name` when ``ready_pos`` is unset.
     """
 
-    valid: bool = True  # Whether the mold should be used (e.g. contains a mold)
-    has_top_piston: bool = False  # Whether the mold has a top piston
-    current_weight: float = 0.0  # Current weight in grams
-    target_weight: float = 0.0  # Target weight in grams
-    max_weight: float = None  # Maximum weight capacity in grams
-    ready_pos: str = None  # State machine position name (e.g., "mold_ready_0")
+    valid: bool = True
+    has_top_piston: bool = False
+    current_weight: float = 0.0
+    target_weight: float = 0.0
+    max_weight: float = None
+    ready_pos: str = None
 
     @property
     def well_id(self) -> str:
-        """Extract well_id from ready_pos by removing 'mold_ready_' prefix.
+        """Return the well identifier for UI and job logging.
 
-        Returns the identifier part (e.g., '0' from 'mold_ready_0').
-        If ready_pos is not set, returns the mold name.
+        Parses ``ready_pos`` by stripping the ``mold_ready_`` prefix (e.g.
+        ``"mold_ready_0"`` → ``"0"``). Falls back to ``name`` when
+        ``ready_pos`` is unset.
+
+        Returns:
+            str: Stable well identifier string.
         """
         if self.ready_pos:
             # Remove 'mold_ready_' prefix if present
@@ -34,11 +75,14 @@ class Mold(Well):
         # Fallback to name if ready_pos not set
         return self.name
 
-    def add_weight(self, weight: float):
-        """Add weight to the mold.
+    def add_weight(self, weight: float) -> None:
+        """Add powder weight to the mold.
 
-        :param weight: Weight to add in grams
-        :type weight: float
+        Args:
+            weight: Weight to add in grams.
+
+        Raises:
+            ValueError: If the new total would exceed ``max_weight``.
         """
         if self.max_weight is not None:
             if self.current_weight + weight > self.max_weight:
@@ -47,21 +91,27 @@ class Mold(Well):
                 )
         self.current_weight += weight
 
-    def remove_weight(self, weight: float):
-        """Remove weight from the mold.
+    def remove_weight(self, weight: float) -> None:
+        """Remove powder weight from the mold.
 
-        :param weight: Weight to remove in grams
-        :type weight: float
+        Args:
+            weight: Weight to remove in grams.
+
+        Raises:
+            ValueError: If the result would be negative.
         """
         if self.current_weight - weight < 0:
             raise ValueError(f"Removing {weight}g would result in negative weight")
         self.current_weight -= weight
 
-    def set_weight(self, weight: float):
-        """Set the current weight of the mold.
+    def set_weight(self, weight: float) -> None:
+        """Set the current powder weight.
 
-        :param weight: New weight in grams
-        :type weight: float
+        Args:
+            weight: New weight in grams.
+
+        Raises:
+            ValueError: If ``weight`` exceeds ``max_weight``.
         """
         if self.max_weight is not None and weight > self.max_weight:
             raise ValueError(
@@ -70,24 +120,42 @@ class Mold(Well):
         self.current_weight = weight
 
     def get_weight(self) -> float:
-        """Get the current weight of the mold.
+        """Return the current powder weight.
 
-        :return: Current weight in grams
-        :rtype: float
+        Returns:
+            float: Current weight in grams.
         """
         return self.current_weight
 
 
 @dataclass(repr=False)
 class MoldSet(WellSet):
-    """A wrapper class for WellSet that works with Mold objects.
+    """Collection of :class:`Mold` instances indexed by name or integer slot.
 
-    This class allows for weight-based operations on sets of molds.
-    Use the name of the Mold to access the Mold object, just like the WellSet class.
+    Supports the same lookup conventions as ``WellSet`` (name key, integer
+    index, or slice for a sub-list).
+
+    Example:
+        ```python
+        slot = mold_set["0"]       # by well name / key
+        first = mold_set[0]        # by integer index
+        batch = mold_set[0:4]      # slice returns list[Mold]
+        ```
+
+    Note:
+        Integer indexing falls back to positional order when the key is not
+        present in the ``wells`` mapping.
     """
 
     def __getitem__(self, id_: str | int):
-        """Override to return Mold objects."""
+        """Return one or more :class:`Mold` instances by key, index, or slice.
+
+        Args:
+            id_: Mold name, integer index, or slice over slot indices.
+
+        Returns:
+            Mold | list[Mold]: A single mold or list when ``id_`` is a slice.
+        """
         try:
             if isinstance(id_, slice):
                 well_list = []

@@ -1,5 +1,24 @@
-"""
-Upload completed job logs to Google Drive as a per-job folder (JSON, CSV, images).
+"""Upload completed job logs to Google Drive as per-job folders.
+
+Each job becomes a Drive subfolder under ``google_drive.drive_folder_id``
+containing the JSON log, derived CSV files, and hardness images when present.
+
+Example:
+    Upload one finished job log::
+
+        from pathlib import Path
+        from src.google_drive.drive_backup import JobDriveBackup
+
+        backup = JobDriveBackup()
+        backup.upload_result(Path("frontend/api/files/0012_2026-06-07_dispensing_6.json"))
+
+Note:
+    Artifact layout and CSV formatting are built by
+    :mod:`src.google_drive.job_export` before upload.
+
+Warning:
+    :meth:`JobDriveBackup.upload_result` requires a non-empty
+    ``google_drive.drive_folder_id`` in config.
 """
 
 from __future__ import annotations
@@ -27,9 +46,42 @@ def _escape_drive_query_literal(value: str) -> str:
 
 
 class JobDriveBackup:
-    """Builds export artifacts from JobLog JSON and uploads them to Drive."""
+    """Build export artifacts from JobLog JSON and upload them to Google Drive.
+
+    Each completed job becomes a Drive subfolder under
+    ``google_drive.drive_folder_id`` containing the JSON log, derived CSV
+    files, and hardness images when present.
+
+    Attributes:
+        folder_id: Parent Drive folder ID from config (may be empty when disabled).
+        folder_configured: ``True`` when ``folder_id`` is non-empty.
+        last_upload: ISO-8601 UTC timestamp of the last successful upload, or ``None``.
+        last_error: Most recent upload failure message, or ``None``.
+
+    Example:
+        ```python
+        backup = JobDriveBackup()
+        if backup.folder_configured:
+            backup.upload_result(job_json_path)
+        ```
+
+    Note:
+        Use :meth:`record_error` to surface upload failures in the Settings UI
+        without raising from background retry loops.
+    """
 
     def __init__(self, auth: GoogleAuthManager | None = None) -> None:
+        """Initialise backup using config and optional shared auth manager.
+
+        Args:
+            auth: Authenticated manager to reuse across uploads. A new
+                :class:`~src.google_drive.auth_manager.GoogleAuthManager` is
+                created when omitted.
+
+        Raises:
+            ValueError: If ``google_drive.enabled`` is true but
+                ``google_drive.drive_folder_id`` is empty.
+        """
         self._auth = auth or GoogleAuthManager()
         self._cfg = ConfigLoader()
         if self._cfg.get_google_drive_enabled():
@@ -45,10 +97,12 @@ class JobDriveBackup:
 
     @property
     def folder_id(self) -> str:
+        """Parent Drive folder ID from ``system_config.json``."""
         return self._folder_id
 
     @property
     def folder_configured(self) -> bool:
+        """Return whether a non-empty Drive parent folder ID is configured."""
         return bool(self._folder_id)
 
     @property
@@ -60,14 +114,29 @@ class JobDriveBackup:
 
     @property
     def last_error(self) -> str | None:
+        """Most recent upload failure message, or ``None`` after a success."""
         return self._last_error
 
     def record_error(self, message: str) -> None:
-        """Store the most recent failure without raising an exception."""
+        """Store the most recent failure without raising an exception.
+
+        Args:
+            message: Human-readable error text for the Settings UI.
+        """
         self._last_error = message
 
     def upload_result(self, file_path: Path) -> None:
-        """Export and upload one job log JSON and derived files."""
+        """Export and upload one completed job log and derived artifacts.
+
+        Builds CSV and image files via :mod:`job_export`, stages them in a
+        temporary directory, then uploads the full tree under a per-job folder.
+
+        Args:
+            file_path: Path to a finished JobLog JSON file on disk.
+
+        Raises:
+            ValueError: If ``google_drive.drive_folder_id`` is not configured.
+        """
         if not self._folder_id:
             raise ValueError(
                 "google_drive.drive_folder_id is not set in system_config.json"
@@ -89,6 +158,7 @@ class JobDriveBackup:
         log.info("[JobDriveBackup] Uploaded job folder %s to Drive", artifacts.stem)
 
     def _find_or_create_folder(self, drive, name: str, parent_id: str) -> str:
+        """Return the Drive folder ID for ``name`` under ``parent_id``, creating if needed."""
         safe_name = _escape_drive_query_literal(name)
         safe_parent = _escape_drive_query_literal(parent_id)
         query = (
@@ -113,6 +183,7 @@ class JobDriveBackup:
         return created["id"]
 
     def _upload_tree(self, drive, local_dir: Path, parent_id: str) -> None:
+        """Recursively upload ``local_dir`` contents under ``parent_id`` on Drive."""
         for entry in sorted(local_dir.iterdir(), key=lambda p: p.name):
             if entry.is_dir():
                 folder_id = self._find_or_create_folder(drive, entry.name, parent_id)

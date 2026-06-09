@@ -1,3 +1,20 @@
+"""Serial interface to A&D precision balance hardware (FX/FZ series protocol).
+
+Provides weight measurement, taring, and low-level scale command access for
+the Jubilee powder dispensing workflow.
+
+Example:
+    Connect, tare, and read a stable weight::
+
+        from src.Scale import Scale
+
+        scale = Scale(port="/dev/ttyUSB0")
+        scale.connect()
+        scale.tare()
+        weight = scale.get_weight(stable=True)
+        scale.disconnect()
+"""
+
 import logging
 import time
 import threading
@@ -56,6 +73,8 @@ ACK_TIMEOUT_DUAL = 20.0  # seconds to wait for ACK in dual-ACK commands
 
 
 class ScaleError(Enum):
+    """A&D scale error codes parsed from ``EC,<code>`` serial responses."""
+
     E00 = "E00"  # Communications error
     E01 = "E01"  # Undefined command error
     E02 = "E02"  # Not ready
@@ -76,7 +95,8 @@ class ScaleError(Enum):
     # ... add more as needed
 
     @property
-    def desc(self):
+    def desc(self) -> str:
+        """Human-readable description for this error code."""
         return {
             ScaleError.E00: "Communications error: A protocol error occurred in communications. Confirm the format, baud rate and parity.",
             ScaleError.E01: "Undefined command error: An undefined command was received. Confirm the command.",
@@ -101,7 +121,16 @@ class ScaleError(Enum):
         )
 
     @staticmethod
-    def from_response(resp: str):
+    def from_response(resp: str) -> "ScaleError | str | None":
+        """Parse a scale ``EC,<code>`` response into a ``ScaleError`` member.
+
+        Args:
+            resp: Raw error line from the scale (e.g. ``"EC,E02"``).
+
+        Returns:
+            Matching ``ScaleError``, a raw code string for unknown codes, or
+            ``None`` if ``resp`` is not an error line.
+        """
         if resp.startswith("EC,"):
             code = resp[4:7]
             try:
@@ -112,32 +141,31 @@ class ScaleError(Enum):
 
 
 class ScaleException(Exception):
-    pass
+    """Base exception for scale communication and protocol errors."""
 
 
 class ScaleUnitException(ScaleException):
-    pass
+    """Raised when the scale reports a weighing unit other than grams."""
 
 
 class ScaleHeaderException(ScaleException):
-    pass
+    """Raised when a weight response header does not match the expected command."""
 
 
 class ScaleOverloadException(ScaleException):
-    pass
+    """Raised when the scale reports overload (``OL`` header)."""
 
 
 class ScaleMaxWeightException(ScaleException):
-    # to string: Max weight exceeded: The measured weight exceeds the maximum weight allowed in the mold/container.
-    pass
+    """Raised when parsed weight exceeds the configured maximum container weight."""
 
 
 class ScaleAckTimeoutException(ScaleException):
-    pass
+    """Raised when the scale does not ACK a command within the retry window."""
 
 
 class ScaleCommandFailedException(ScaleException):
-    pass
+    """Raised when a command fails after all configured retry attempts."""
 
 
 # Data format for weight responses from the scale:
@@ -151,9 +179,27 @@ class ScaleCommandFailedException(ScaleException):
 
 
 class Scale:
-    """
-    Class for a digital scale connected via serial port (A&D FX-120i protocol).
-    Provides methods to send commands and parse responses according to the scale's protocol.
+    """Interface to a digital balance connected via USB serial.
+
+    Communicates using the A&D FX-120i serial protocol. Supports stable and
+    instant weight reads, taring, and direct access to scale commands.
+
+    Attributes:
+        port: Serial device path (for example ``/dev/ttyUSB0``).
+        is_connected: Whether the serial port is open and ready.
+
+    Note:
+        The default scale port is configured in ``system_config.json`` under
+        ``machine.scale_port``. Baud rate and timeout are constructor
+        parameters on this class and must match the scale menu settings.
+        Prefer :class:`~src.JubileeManager.JubileeManager` for production
+        dispensing workflows.
+
+    Example:
+        Stable versus instant reads::
+
+            stable = scale.get_weight(stable=True)
+            live = scale.get_weight(stable=False)
     """
 
     HANDLED_RETRY_ERRORS = (ScaleError.E02, ScaleError.E03, ScaleError.E11)
@@ -174,22 +220,26 @@ class Scale:
         port: str,
         baudrate: int = 9600,
         timeout: int = 10,
-        parity=serial.PARITY_NONE,
-        stopbits=serial.STOPBITS_ONE,
-        bytesize=serial.EIGHTBITS,
-        serial_instance=None,
+        parity: str = serial.PARITY_NONE,
+        stopbits: float = serial.STOPBITS_ONE,
+        bytesize: int = serial.EIGHTBITS,
+        serial_instance: serial.Serial | None = None,
     ):
-        """
-        Initialize the Scale object and connection parameters.
-        :param port: Serial port (e.g., 'COM1' or '/dev/ttyUSB0')
-        :param baudrate: Baud rate for serial communication
-        :param timeout: Read timeout in seconds
-        :param parity: Parity setting (default: PARITY_NONE)
-        :param stopbits: Stop bits setting (default: STOPBITS_ONE)
-        :param bytesize: Byte size setting (default: EIGHTBITS)
-        :param serial_instance: Optional pre-built serial-like object to use instead of
-            opening a real port. Pass a FakeSerial (or any duck-typed replacement) here
-            during testing to avoid touching real hardware.
+        """Initialize serial connection parameters.
+
+        Args:
+            port: Serial port (for example ``COM1`` or ``/dev/ttyUSB0``).
+            baudrate: Baud rate; must match the scale menu (default 9600).
+            timeout: Read timeout in seconds (default 10).
+            parity: Parity setting (default ``PARITY_NONE``).
+            stopbits: Stop bits setting (default ``STOPBITS_ONE``).
+            bytesize: Byte size setting (default ``EIGHTBITS``).
+            serial_instance: Optional serial-like test double. When provided,
+                :meth:`connect` uses it instead of opening a real port.
+
+        Note:
+            Production port values come from ``machine.scale_port`` in
+            ``system_config.json``.
         """
         self.port = port
         self.baudrate = baudrate
@@ -218,13 +268,15 @@ class Scale:
         self._last_weight_time: float | None = None
         self._last_weight_message: str | None = None
 
-    def connect(self):
-        """
-        Establish a serial connection to the scale.
-        If a *serial_instance* was supplied at construction time, that object is
-        used directly and no real port is opened. Otherwise a real
+    def connect(self) -> None:
+        """Establish a serial connection to the scale.
+
+        If a ``serial_instance`` was supplied at construction time, that object
+        is used directly and no real port is opened. Otherwise a
         ``serial.Serial`` connection is created from the stored parameters.
-        Raises ScaleException if connection fails.
+
+        Raises:
+            ScaleException: If the connection or initial display-on command fails.
         """
         try:
             if self._serial_instance is not None:
@@ -254,10 +306,8 @@ class Scale:
             traceback.print_exc()
             raise ScaleException(f"Error connecting to scale: {e}") from e
 
-    def disconnect(self):
-        """
-        Close the serial connection to the scale.
-        """
+    def disconnect(self) -> None:
+        """Close the serial connection and mark the scale as disconnected."""
         if self.serial and self.serial.is_open:
             self.serial.close()
         self._is_connected = False
@@ -265,19 +315,19 @@ class Scale:
 
     @property
     def is_connected(self) -> bool:
-        """
-        Check if the scale is currently connected.
-        :return: True if connected, False otherwise
+        """Whether the scale serial port is open and connected.
+
+        Returns:
+            True if connected, False otherwise.
         """
         return self._is_connected and self.serial and self.serial.is_open
 
     def _acquire_busy(self) -> bool:
-        """
-        Atomically wait until no command is running, then mark the scale as
-        busy for the calling thread.
+        """Wait until idle, then mark the scale busy for the calling thread.
 
-        Returns True if the caller had to block (another command was in flight
-        when this was called), False if the scale was idle immediately.
+        Returns:
+            True if the caller blocked on another in-flight command; False if
+            the scale was idle immediately.
         """
         with self._cmd_condition:
             blocked = self._busy
@@ -291,21 +341,17 @@ class Scale:
         return blocked
 
     def _acquire_busy_for_telemetry(self) -> bool:
-        """
-        Variant of _acquire_busy for the telemetry thread.
+        """Acquire the scale for telemetry reads with lower priority than jobs.
 
-        In addition to the normal wait-until-idle behaviour, every time this
-        thread is woken it checks whether other threads are still queued on
-        the monitor.  If they are, it re-notifies one of them and goes back
-        to sleep, effectively giving non-telemetry commands priority.  This
-        repeats until no other waiters remain, at which point the telemetry
-        thread acquires the busy flag normally.
+        Yields to other threads queued on the command monitor so dispensing
+        commands are not starved by the 4 Hz telemetry loop.
 
-        The behavior of this function is unspecified if multiple threads call acquire_busy_for_telemetry()
-        at the same time; it may cause starvation through livelock.
+        Returns:
+            True if the caller blocked at any point; False if idle on entry.
 
-        Returns True if the caller had to block at any point, False if the
-        scale was idle when first called.
+        Note:
+            Behavior is unspecified when multiple telemetry threads call this
+            concurrently; livelock may result.
         """
         with self._cmd_condition:
             if not self._busy:
@@ -332,9 +378,7 @@ class Scale:
                 return True
 
     def _release_busy(self) -> None:
-        """
-        Clear the busy flag and wake exactly one thread that is waiting on
-        the monitor (if any).
+        """Clear the busy flag and wake one waiting thread.
 
         Includes a 0.5 s inter-command sleep to prevent EC,02 "not ready"
         errors when the scale needs a moment after executing a command before
@@ -493,9 +537,8 @@ class Scale:
 
     def _wait_for_ack(
         self, timeout: float = ACK_TIMEOUT, initial_buffer: bytes = b""
-    ) -> tuple:
-        """
-        Wait for an ACK response from the scale.
+    ) -> tuple[bool, bytes, ScaleError | str | None]:
+        """Wait for an ACK response from the scale.
 
         Args:
             timeout: Timeout in seconds
@@ -798,95 +841,175 @@ class Scale:
         )
 
     # --- Command Methods ---
-    def cancel(self):
-        """Cancel the S or SIR command."""
+    def cancel(self) -> str:
+        """Cancel an in-progress ``S`` or ``SIR`` weight stream command.
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("C")
 
-    def query_weight(self):
-        """Request the weight data immediately (Q command)."""
+    def query_weight(self) -> str:
+        """Request the current weight immediately (``Q`` command).
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("Q", expect_data=True)
 
-    def request_stable_weight(self):
-        """Request the weight data when stabilized (S command)."""
+    def request_stable_weight(self) -> str:
+        """Request weight data when stabilized (``S`` command).
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("S", expect_data=True)
 
-    def request_instant_weight(self):
-        """Request the weight data immediately (SI command)."""
+    def request_instant_weight(self) -> str:
+        """Request the current weight immediately (``SI`` command).
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("SI", expect_data=True)
 
-    def request_continuous_weight(self):
-        """Request the weight data continuously (SIR command)."""
+    def request_continuous_weight(self) -> str:
+        """Request continuous weight streaming (``SIR`` command).
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("SIR", expect_data=True)
 
-    def request_stable_weight_escp(self):
-        """Request the weight data when stabilized (ESC+P command)."""
+    def request_stable_weight_escp(self) -> str:
+        """Request stabilized weight via ``ESC+P`` command.
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("\x1bP", expect_data=True)  # ESC+P
 
-    def calibrate(self):
-        """Perform calibration (CAL command)."""
+    def calibrate(self) -> str:
+        """Perform internal calibration (``CAL`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("CAL")
 
-    def calibrate_external(self):
-        """Calibrate using an external weight (EXC command)."""
+    def calibrate_external(self) -> str:
+        """Calibrate using an external reference weight (``EXC`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("EXC")
 
-    def display_off(self):
-        """Turn the display off (OFF command)."""
+    def display_off(self) -> str:
+        """Turn the scale display off (``OFF`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("OFF")
 
-    def display_on(self):
-        """Turn the display on (ON command)."""
+    def display_on(self) -> str:
+        """Turn the scale display on (``ON`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("ON")
 
     def power_on(self):
-        """Alias for turning the display on."""
+        """Alias for :meth:`display_on`."""
         return self.display_on()
 
     def power_off(self):
-        """Alias for turning the display off."""
+        """Alias for :meth:`display_off`."""
         return self.display_off()
 
-    def print_weight(self):
-        """Print the current weight (PRT command)."""
+    def print_weight(self) -> str:
+        """Print the current weight to the scale output (``PRT`` command).
+
+        Returns:
+            Raw weight data string from the scale.
+        """
         return self._send_command("PRT", expect_data=True)
 
-    def re_zero(self):
-        """Re-zero the scale (R command)."""
+    def re_zero(self) -> str:
+        """Re-zero the scale (``R`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("R")
 
-    def sample(self):
-        """Sample command (SMP command)."""
+    def sample(self) -> str:
+        """Trigger a sample capture (``SMP`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("SMP")
 
-    def tare(self):
-        """Tare the scale (T command)."""
+    def tare(self) -> str:
+        """Tare (zero) the scale (``T`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("T")
 
-    def mode(self):
-        """Change the weighing mode (U command)."""
+    def mode(self) -> str:
+        """Change the weighing mode (``U`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("U")
 
-    def get_id(self):
-        """Request the ID number (?ID command)."""
+    def get_id(self) -> str:
+        """Request the scale ID number (``?ID`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("?ID", expect_data=True)
 
-    def get_serial_number(self):
-        """Request the serial number (?SN command)."""
+    def get_serial_number(self) -> str:
+        """Request the scale serial number (``?SN`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("?SN", expect_data=True)
 
-    def get_model(self):
-        """Request the model name (?TN command)."""
+    def get_model(self) -> str:
+        """Request the scale model name (``?TN`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("?TN", expect_data=True)
 
-    def get_tare_weight(self):
-        """Request the tare weight (?PT command)."""
+    def get_tare_weight(self) -> str:
+        """Request the current tare weight (``?PT`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
         return self._send_command("?PT", expect_data=True)
 
-    def set_tare_weight(self, value: float, unit: str = "g"):
-        """
-        Set the tare weight (PT command).
-        :param value: Tare weight value
-        :param unit: Weighing unit (default 'g')
+    def set_tare_weight(self, value: float, unit: str = "g") -> str:
+        """Set the tare weight (``PT`` command).
+
+        Args:
+            value: Tare weight value.
+            unit: Weighing unit suffix (default ``"g"``).
+
+        Returns:
+            Raw response string from the scale.
         """
         cmd = f"PT:{value:.3f}{unit}"
         return self._send_command(cmd)
@@ -894,10 +1017,17 @@ class Scale:
     # --- Standard weight commands ---
 
     def get_weight(self, stable: bool = True) -> float:
-        """
-        Get the current weight from the scale, parsing the response according to the data format.
-        :param stable: If True, waits for stable weight; otherwise, allows unstable
-        :return: The weight in grams
+        """Get the current weight in grams.
+
+        Args:
+            stable: If True, wait for a stable reading (``S`` command). If
+                False, return the instant reading (``SI`` command).
+
+        Returns:
+            Parsed weight in grams.
+
+        Raises:
+            ScaleException: On protocol violations, overload, or bad units.
         """
         resp = self.request_stable_weight() if stable else self.request_instant_weight()
         if stable:
@@ -905,29 +1035,24 @@ class Scale:
         return self._parse_weight(resp, expect_stable=stable)
 
     def get_weight_for_telemetry(self) -> float:
-        """
-        Get the current unstable weight for use by the telemetry background
-        thread.
+        """Get an unstable weight reading optimized for background telemetry.
 
-        Behaviour differs from get_weight(stable=False) in two ways:
+        Differs from :meth:`get_weight` with ``stable=False`` in two ways:
 
-        Priority yielding: if, upon waking from a wait, other threads are
-        still queued on the monitor, this thread re-notifies one of them and
-        goes back to sleep.  This repeats until no other waiters remain,
-        giving non-telemetry commands effective priority over the telemetry
-        thread.
+        Priority yielding: if other threads are queued for the scale monitor,
+        this thread yields until the queue is empty, giving non-telemetry
+        commands priority.
 
-        This function's behavior is unspecified if multiple threads call it simultaneously, as it will cause livelock.
+        Cache shortcut: when this call had to block and the most recent cached
+        weight is less than 500 ms old, the cached value is returned without
+        sending a new command.
 
-        Cache shortcut: if this call had to block at any point and the most
-        recently cached weight result is less than 400 ms old when this
-        thread finally acquires the scale, the cached value is returned
-        immediately without sending any command to the scale.  In all other
-        cases (no blocking occurred, or the cache is stale / absent) the scale
-        is queried with the SI (instant/unstable weight) command exactly as
-        get_weight(stable=False) would do, and the result becomes the new cached
-        weight.
+        Returns:
+            Parsed weight in grams.
 
+        Note:
+            Behavior is unspecified if multiple telemetry threads call this
+            method concurrently; livelock may result.
         """
         blocked = self._acquire_busy_for_telemetry()
         try:
@@ -954,11 +1079,10 @@ class Scale:
 
     @staticmethod
     def _is_weight_message(message: str) -> bool:
-        """
-        True if message is a weight data line (``ST,`` or ``US,`` header).
+        """Return True when ``message`` looks like a weight data line.
 
-        Matches the headers accepted by ``_parse_weight`` when
-        ``expect_stable=False``; does not validate length, sign, or unit.
+        Matches ``ST,`` or ``US,`` headers accepted by :meth:`_parse_weight`
+        when ``expect_stable=False``; does not validate unit or overload.
         """
         # Guard against malformed payloads such as "ST,T00000  g".
         if len(message) < 13:
@@ -975,12 +1099,24 @@ class Scale:
         self._last_weight_time = time.time()
 
     def _parse_weight(self, data: str, expect_stable: bool = True) -> float:
-        """
-        Parse the weight data string from the scale according to the protocol data format.
-        Checks header, sign, value, unit, and overload state. Throws errors for protocol violations.
-        :param data: Raw data string from the scale
-        :param expect_stable: If True, expects 'ST' header; else allows 'ST' or 'US'
-        :return: Parsed weight as float
+        """Parse an A&D weight data string into grams.
+
+        Validates header, sign, numeric value, unit, and overload state.
+
+        Args:
+            data: Raw data string from the scale.
+            expect_stable: If True, require ``ST`` header; otherwise allow
+                ``ST`` or ``US``.
+
+        Returns:
+            Parsed weight as a float in grams.
+
+        Raises:
+            ScaleException: On malformed data or protocol violations.
+            ScaleOverloadException: When the scale reports overload.
+            ScaleHeaderException: When the header does not match expectations.
+            ScaleUnitException: When the unit is not grams.
+            ScaleMaxWeightException: When weight exceeds ``MAX_WEIGHT``.
         """
         # Data format: HH,PSDDDDDD UNIT\r\n
         # Example: 'ST,+00123.45  g\r\n' or 'US,-00012.34  g\r\n' or 'OL,+00000.00  g\r\n'

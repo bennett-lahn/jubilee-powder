@@ -76,13 +76,31 @@ Use [Building and Running the Web UI](../../how-to/running.md) as the canonical 
 
 All endpoints are prefixed with `/api`.
 
-### Status
+!!! info "Async lifecycle endpoints"
+    `POST /api/hardware/connect` and `POST /api/job/start` return **HTTP 202** immediately. Monitor the WebSocket `state` and `job` fields for progress; do not poll REST for connection or job completion.
 
-| Method | Path          | Description                |
-|--------|---------------|----------------------------|
-| `GET`  | `/api/status` | Full machine state snapshot |
+### Configuration and Status
 
-**Response:**
+| Method | Path           | Description                                      |
+|--------|----------------|--------------------------------------------------|
+| `GET`  | `/api/config`  | Machine settings from `system_config.json`       |
+| `GET`  | `/api/status`  | Full machine state snapshot                        |
+
+**`GET /api/config` response (abbreviated):**
+
+```json
+{
+  "duet_ip": "192.168.1.2",
+  "scale_port": "/dev/ttyUSB0",
+  "num_dispensers": 2,
+  "pistons_per_dispenser": 10,
+  "hardness_tray": { "rows": 2, "cols": 6, "tray_count": 2 },
+  "google_drive_enabled": false,
+  "mock_hardware": false
+}
+```
+
+**`GET /api/status` response (abbreviated):**
 
 ```json
 {
@@ -128,8 +146,9 @@ DISCONNECTED → HOMING → ERROR   (failure — inspect job.error for reason)
 | `POST` | `/api/job/start`  | 202    | Enqueue a dispensing or hardness job          |
 | `POST` | `/api/job/stop`   | 200    | Graceful stop after the current well/sample   |
 | `POST` | `/api/job/cancel` | 200    | Cancel after current mold/sample completes     |
-| `POST` | `/api/job/abort`  | 200    | Emergency stop (M112), enters ERROR state     |
-| `GET`  | `/api/job/log`    | 200    | Most recent job log (in-memory or from file)  |
+| `POST` | `/api/job/abort`      | 200    | Emergency stop (M112), enters ERROR state     |
+| `POST` | `/api/job/clear_jam`  | 200    | Resume dispensing after a powder jam pause    |
+| `GET`  | `/api/job/log`        | 200    | Most recent job log (in-memory or from file)  |
 
 **`POST /api/job/start` — dispensing job:**
 
@@ -149,8 +168,8 @@ DISCONNECTED → HOMING → ERROR   (failure — inspect job.error for reason)
 {
   "job_type": "hardness",
   "samples": [
-    { "sample_id": "0", "mode": "shore_a" },
-    { "sample_id": "1", "mode": "shore_d" }
+    { "tray_index": 0, "sample_index": 0, "mode": "shore_a" },
+    { "tray_index": 0, "sample_index": 1, "mode": "shore_d" }
   ]
 }
 ```
@@ -159,13 +178,13 @@ Valid hardness modes: `shore_a`, `shore_a_d`, `shore_d`.
 
 The server returns HTTP 202; track progress via the WebSocket `job` field.
 
-**Stop vs Cancel vs Abort:**
-
-| Action | Behaviour |
-|--------|-----------|
-| `stop`   | Signal job to exit at the next well boundary. Machine stays at current well, returns to IDLE. |
-| `cancel` | Cancellation takes effect after the current mold or sample completes. |
-| `abort`  | Immediate M112 emergency stop. Machine enters ERROR state and must be reconnected before a new job. |
+??? info "Stop vs Cancel vs Abort"
+    | Action | Behaviour |
+    |--------|-----------|
+    | `stop`   | Signal job to exit at the next well boundary. Machine stays at current well, returns to IDLE. |
+    | `cancel` | Cancellation takes effect after the current mold or sample completes. |
+    | `abort`  | Immediate M112 emergency stop. Machine enters ERROR state and must be reconnected before a new job. |
+    | `clear_jam` | Clears a dispensing jam pause so the job loop can resume. Returns 400 when no jam is active. |
 
 ### Dispensers
 
@@ -184,8 +203,16 @@ The server returns HTTP 202; track progress via the WebSocket `job` field.
 | `GET`  | `/api/files/{filename}` | Return full JSON content of one log file |
 
 File names follow the pattern `{id}_{date}_{job_type}_{n}.json`,
-e.g. `0012_2026-04-12_dispensing_1.json`. Files are stored in
-`frontend/api/files/`.
+e.g. `0012_2026-04-12_dispensing_1.json`. Files are stored in the path
+configured by `paths.job_files_dir` in `system_config.json`.
+
+### Google Drive Backup
+
+| Method | Path                 | Description                          |
+|--------|----------------------|--------------------------------------|
+| `GET`  | `/api/drive/status`  | Backup enablement and upload status  |
+
+Only active when `google_drive.enabled` is `true` in `system_config.json`.
 
 ---
 
@@ -244,38 +271,89 @@ least one browser is connected; the server skips the broadcast when `clients == 
 
 ## Backend Module Reference
 
+`server.py` is the FastAPI entry point (REST, WebSocket, telemetry loop, job log I/O).
+`hardware_manager.py` exposes `MockHardwareManager` and `HardwareManager` with identical
+public APIs. `models.py` holds shared enums and job-progress state.
+
 ### `server.py`
 
-FastAPI application entry point. Responsible for:
+::: server.ConnectionManager
+    options:
+      members: true
+      show_root_heading: true
+      show_source: false
 
-- Defining all REST and WebSocket endpoints
-- Running the 4 Hz `telemetry_loop` background task
-- Instantiating `HardwareManager` (or `MockHardwareManager`), `ConnectionManager`,
-  and `JobProgress` as module-level singletons
-- Writing and reading job log files in `frontend/api/files/`
+::: server.telemetry_loop
+    options:
+      show_root_heading: true
+      show_source: false
 
 ### `hardware_manager.py`
 
-Provides two classes with identical public APIs, selected by `MOCK_HARDWARE`:
+::: hardware_manager.MockHardwareManager
+    options:
+      members:
+        - connect
+        - disconnect
+        - get_weight_unstable
+        - get_weight_stable
+        - get_weight_telemetry
+        - get_dispensers
+        - update_dispenser_pistons
+        - run_dispensing_job
+        - run_hardness_job
+        - abort
+        - clear_jam
+      show_root_heading: true
+      show_source: false
 
-- **`MockHardwareManager`** — standalone simulation; scale readings use a sine-wave
-  drift plus Gaussian noise to mimic the A&D FX-120i; job execution advances
-  `JobProgress` via `asyncio.sleep()` for realistic per-well timing.
-- **`HardwareManager`** — production wrapper around `JubileeManager`; all blocking
-  serial/network calls are offloaded to `asyncio.to_thread()` so the uvicorn event
-  loop is never stalled; `JubileeManager` is imported lazily inside `connect()` so
-  the server starts cleanly on machines without `science_jubilee`.
+::: hardware_manager.HardwareManager
+    options:
+      members:
+        - connect
+        - disconnect
+        - get_weight_unstable
+        - get_weight_stable
+        - get_weight_telemetry
+        - get_dispensers
+        - update_dispenser_pistons
+        - run_dispensing_job
+        - run_hardness_job
+        - abort
+        - clear_jam
+      show_root_heading: true
+      show_source: false
 
 ### `models.py`
 
-Shared Pydantic models and enums imported by both `server.py` and
-`hardware_manager.py`:
+::: models.MachineState
+    options:
+      show_root_heading: true
+      show_source: false
 
-- **`MachineState`** — string enum for the five hardware states
-- **`HardwareConfig`** — settings posted by the Settings screen on connect
-- **`DispenserStatus`** — per-dispenser index and remaining piston count
-- **`JobProgress`** — mutable in-memory job state threaded through server endpoints
-  and hardware managers
+::: models.HardwareConfig
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: models.DispenserStatus
+    options:
+      show_root_heading: true
+      show_source: false
+
+::: models.JobProgress
+    options:
+      members:
+        - item_id
+        - start_job
+        - mark_item_active
+        - mark_item_complete
+        - mark_item_error
+        - set_jam
+        - clear_jam
+        - to_dict
+      show_root_heading: true
+      show_source: false
 
 ---
 

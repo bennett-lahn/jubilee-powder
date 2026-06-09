@@ -13,6 +13,14 @@ The HardnessTester provides automated reading of 7-segment LCD displays by:
 
 This approach is much more reliable than traditional OCR for LCD displays.
 
+## Prerequisites
+
+!!! info "Before you start"
+    - [ ] Camera positioned with a clear view of the LCD
+    - [ ] `opencv-python` installed (`pip install opencv-python`)
+    - [ ] One-time calibration completed (see [First-Time Setup](#first-time-setup))
+    - [ ] Consistent, indirect lighting for camera to prevent glare 
+
 ## Quick Start
 
 ### Install Dependencies
@@ -30,19 +38,22 @@ pip install picamera2
 
 ```python
 from src.HardnessTester import HardnessTester
+from src.ConfigLoader import config
 
-# Initialize reader for 4-digit display
-reader = HardnessTester(num_digits=4)
+reader = HardnessTester.from_system_config(
+    tester_mode="shore_a",
+    cfg=config.system.hardness_testers.shore_a,
+)
 
-# Load calibration
-reader.load_calibration('lcd_calibration.json')
-
-# Read the display
-result = reader.read_display()
-print(f"LCD shows: {result}")  # e.g., "1234"
+if reader.load_assigned_calibration():
+    result = reader.read_display()
+    print(f"LCD shows: {result}")  # e.g., "1234"
 ```
 
 ## First-Time Setup
+
+!!! warning "Calibration is required once per display setup"
+    Accuracy depend on digit ROIs and segment polygons saved during calibration. Re-calibrate if the camera or display position changes.
 
 ### Step 1: Capture Test Image
 
@@ -51,7 +62,10 @@ Capture an image of your LCD display for calibration:
 ```python
 from src.HardnessTester import HardnessTester
 
-reader = HardnessTester(num_digits=4)
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=4,
+)
 frame = reader.capture_image(save=True, output_path='lcd_calibration_test.jpg')
 print("Image saved - review it before calibration")
 ```
@@ -72,7 +86,7 @@ reader.calibrate(frame=frame, save_calibration=True)
 The system will:
 1. Save debug images showing preprocessing steps
 2. Open an interactive GUI where you click and drag to draw a bounding box around each digit, then click to set the segment polygon vertices for each of the 7 segments per digit
-3. Save calibration to the configured `calibration_path` (default: `lcd_calibration.json`)
+3. Save calibration to the configured `calibration_path` (for Shore A: `jubilee_api_config/lcd_calibration_shore_a.json`)
 4. Test the calibration immediately and print the result
 
 !!! tip
@@ -86,8 +100,11 @@ Once calibrated, reading displays is simple:
 from src.HardnessTester import HardnessTester
 
 # Initialize with calibration
-reader = HardnessTester(num_digits=4)
-reader.load_calibration('lcd_calibration.json')
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=4,
+)
+reader.load_calibration()
 
 # Read display
 result = reader.read_display()
@@ -107,7 +124,10 @@ Test with saved images:
 ```python
 from src.HardnessTester import test_with_image
 
-result = test_with_image('lcd_photo.jpg', 'lcd_calibration.json')
+result = test_with_image(
+    "lcd_photo.jpg",
+    "jubilee_api_config/lcd_calibration_shore_a.json",
+)
 print(f"Result: {result}")
 ```
 
@@ -116,8 +136,13 @@ print(f"Result: {result}")
 Read from camera in a loop:
 
 ```python
-reader = HardnessTester(num_digits=4)
-reader.load_calibration('lcd_calibration.json')
+from src.HardnessTester import HardnessTester
+
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=4,
+)
+reader.load_calibration()
 
 while True:
     result = reader.read_display()
@@ -141,6 +166,7 @@ result = reader.read_display(debug=True, debug_prefix="debug")
 This saves images at each preprocessing step:
 - `debug_step1_original.png` - Raw camera capture
 - `debug_step2_gray.png` - Grayscale conversion
+- `debug_step3_sharpened.png` - Unsharp masking (sharpening; on by default)
 - `debug_step4_clahe.png` - Enhanced contrast
 - `debug_step5_binary.png` - Binary threshold
 - `debug_step6_cleaned.png` - Final cleaned image
@@ -170,8 +196,13 @@ for i in range(reader.num_digits):
 If segments aren't being detected reliably:
 
 ```python
-reader = HardnessTester(num_digits=4)
-reader.load_calibration('lcd_calibration.json')
+from src.HardnessTester import HardnessTester
+
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=4,
+)
+reader.load_calibration()
 
 # More sensitive (detects dimmer segments)
 reader.segment_threshold = 0.3
@@ -229,11 +260,12 @@ Pattern: `(1, 1, 0, 1, 0, 1, 1)` → Recognized as "5"
 ### Preprocessing Pipeline
 
 1. **Grayscale**: Converts BGR to grayscale as the primary preprocessing path
-2. **CLAHE**: Adaptive histogram equalization enhances local contrast
-3. **Thresholding**: Otsu's method creates binary image
-4. **Morphological Cleaning**: Removes noise
+2. **Sharpening**: Unsharp masking applied by default to recover blurred segment edges
+3. **CLAHE**: Adaptive histogram equalization enhances local contrast
+4. **Thresholding**: Otsu's method creates binary image
+5. **Morphological Cleaning**: Removes noise
 
-This pipeline is specifically optimized for LCD displays.
+This pipeline (including sharpening) is specifically optimized for LCD displays.
 
 ## Troubleshooting
 
@@ -299,9 +331,14 @@ result = reader.read_display(frame=frame, debug=False)
 ### Error Handling
 
 ```python
-reader = HardnessTester(num_digits=4)
+from src.HardnessTester import HardnessTester
 
-if not reader.load_calibration('lcd_calibration.json'):
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=4,
+)
+
+if not reader.load_calibration():
     print("Calibration failed - run calibration first")
     exit(1)
 
@@ -351,14 +388,24 @@ else:
 ### 3-Digit Displays
 
 ```python
-reader = HardnessTester(num_digits=3)
+from src.HardnessTester import HardnessTester
+
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=3,
+)
 # Calibrate for 3 digits
 ```
 
 ### 6-Digit Displays
 
 ```python
-reader = HardnessTester(num_digits=6)
+from src.HardnessTester import HardnessTester
+
+reader = HardnessTester(
+    calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+    num_digits=6,
+)
 # Calibrate for 6 digits
 ```
 
@@ -373,18 +420,19 @@ result = reader.read_display()  # "1234"
 value = int(result) / 100  # 12.34
 ```
 
-## Next Steps
+## See Also
 
-- Read [HardnessTester API Reference](../api/hardness-tester.md) for detailed documentation
-- Explore the [HardnessTester API Reference](../api/hardness-tester.md) for technical implementation details
-- Review [Architecture](../concepts/architecture.md) to understand system integration
+- [HardnessTester API Reference](../api/hardness-tester.md)
+- [Glossary: LCD terms](../concepts/glossary.md#lcd-display-reading-terms)
+- [Architecture](../concepts/architecture.md)
 
 ## Getting Help
 
-If readings aren't working:
+If readings are not working:
 
 1. Run with `debug=True` and review preprocessing images
-2. Check segment patterns to see what's being detected
+2. Check segment patterns to see what is being misdetected
 3. Adjust segment threshold or ROI positions
-4. Re-calibrate with better test image
-5. Consult [API Reference](../api/hardness-tester.md) for advanced options
+4. Re-calibrate with a better test image
+5. Modify `system_config.json` CV parameters
+6. Consult [API Reference](../api/hardness-tester.md) for advanced options

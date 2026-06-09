@@ -62,9 +62,9 @@ from HardnessTester import HardnessTester  # noqa: E402
 
 # Default calibration path: shore_a-specific, then fall back to the generic file
 _SHORE_A_CAL = os.path.join(
-    _PROJECT_ROOT, "jubilee_api_config", "lcd_calibration_shore_a.json"
+    _PROJECT_ROOT, "api_config", "lcd_calibration_shore_a.json"
 )
-_GENERIC_CAL = os.path.join(_PROJECT_ROOT, "jubilee_api_config", "lcd_calibration.json")
+_GENERIC_CAL = os.path.join(_PROJECT_ROOT, "api_config", "lcd_calibration.json")
 DEFAULT_CAL = _SHORE_A_CAL if os.path.exists(_SHORE_A_CAL) else _GENERIC_CAL
 
 

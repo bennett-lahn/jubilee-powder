@@ -8,6 +8,7 @@ shared as mutable state between server endpoints and the hardware manager.
 """
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,13 @@ class MachineState(str, Enum):
     Serialised as a lowercase string in WebSocket telemetry frames and REST
     responses so the React frontend can compare states without importing this
     enum.
+
+    Attributes:
+        IDLE: Connected and ready for a job.
+        HOMING: Connection or homing in progress.
+        RUNNING: Job loop executing.
+        ERROR: Emergency stop or failure; reconnect required.
+        DISCONNECTED: No hardware session.
     """
 
     IDLE = "idle"
@@ -40,7 +48,14 @@ class MachineState(str, Enum):
 class HardwareConfig(BaseModel):
     """Sent from the Settings screen when the user clicks Connect.
 
-    Omitted or null fields are filled from system_config.json on the server.
+    Omitted or null fields are filled from ``system_config.json`` on the server
+    by :func:`server._merge_hardware_config`.
+
+    Attributes:
+        num_dispensers: Piston dispenser count.
+        pistons_per_dispenser: Initial piston inventory per dispenser.
+        machine_address: Duet hostname or IP.
+        scale_port: Serial device path for the balance.
     """
 
     num_dispensers: int | None = Field(default=None, ge=0)
@@ -50,7 +65,12 @@ class HardwareConfig(BaseModel):
 
 
 class DispenserStatus(BaseModel):
-    """Per-dispenser status reported in telemetry frames and REST responses."""
+    """Per-dispenser status reported in telemetry frames and REST responses.
+
+    Attributes:
+        index: Zero-based dispenser index.
+        pistons_remaining: Software piston count remaining in the dispenser.
+    """
 
     index: int
     pistons_remaining: int
@@ -78,6 +98,20 @@ class JobProgress:
         error: Error message string if the job failed, otherwise ``None``.
         started_at: ISO-8601 UTC timestamp set when the job starts.
         items: Ordered list of item dicts from the original job request.
+        jam_detected: ``True`` when a powder jam pause is active.
+        jam_well_id: Well identifier associated with an active jam.
+
+    Example:
+        Start a dispensing job and mark the first well complete::
+
+            progress = JobProgress()
+            progress.start_job(
+                "dispensing",
+                [{"well_id": "0", "target_weight": 50.0}],
+                started_at="2026-04-16T14:30:00Z",
+            )
+            progress.mark_item_active(0)
+            progress.mark_item_complete(0, actual_weight=49.8)
     """
 
     def __init__(self) -> None:
@@ -121,7 +155,13 @@ class JobProgress:
         return next_item
 
     def start_job(self, job_type: str, items: list[dict], started_at: str) -> None:
-        """Initialize all progress fields at job start."""
+        """Initialize all progress fields at job start.
+
+        Args:
+            job_type: ``"dispensing"`` or ``"hardness"``.
+            items: Ordered item dicts from the job request.
+            started_at: ISO-8601 UTC timestamp for ``started_at``.
+        """
         self.job_type = job_type
         self.total = len(items)
         self.completed = 0
@@ -132,7 +172,11 @@ class JobProgress:
         self.running = True
 
     def mark_item_active(self, index: int) -> None:
-        """Mark one item active and reset other active slots to incomplete."""
+        """Mark one item active and reset other active slots to incomplete.
+
+        Args:
+            index: Zero-based index into ``self.items``. No-op when out of range.
+        """
         if index < 0 or index >= len(self.items):
             return
         self.current_item = self.item_id(self.items[index])
@@ -143,16 +187,28 @@ class JobProgress:
             if idx != index and item.get("status") == "active":
                 item["status"] = "incomplete"
 
-    def mark_item_complete(self, index: int, **updates) -> None:
-        """Mark one item complete and attach optional result fields."""
+    def mark_item_complete(self, index: int, **updates: Any) -> None:
+        """Mark one item complete and attach optional result fields.
+
+        Args:
+            index: Zero-based index into ``self.items``. No-op when out of range.
+            **updates: Extra fields merged into the item (e.g. ``actual_weight``,
+                ``result_shore_a``). Increments ``completed``.
+        """
         if index < 0 or index >= len(self.items):
             return
         self.items[index].update(updates)
         self.items[index]["status"] = "complete"
         self.completed += 1
 
-    def mark_item_error(self, index: int, sample_error: str, **updates) -> None:
-        """Mark one item as an error while leaving it not-complete."""
+    def mark_item_error(self, index: int, sample_error: str, **updates: Any) -> None:
+        """Mark one item as an error without incrementing ``completed``.
+
+        Args:
+            index: Zero-based index into ``self.items``. No-op when out of range.
+            sample_error: Error message stored on the item.
+            **updates: Extra fields merged into the item before status is set.
+        """
         if index < 0 or index >= len(self.items):
             return
         self.items[index].update(updates)
@@ -160,7 +216,11 @@ class JobProgress:
         self.items[index]["sample_error"] = sample_error
 
     def set_jam(self, well_id: str) -> None:
-        """Mark a powder jam as active for the given well."""
+        """Mark a powder jam as active for the given well.
+
+        Args:
+            well_id: Well identifier shown in the jam dialog.
+        """
         self.jam_detected = True
         self.jam_well_id = well_id
 

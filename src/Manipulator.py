@@ -1,42 +1,87 @@
+"""Manipulator toolhead for mold pick/place and tamping.
+
+The :class:`Manipulator` is a Jubilee :class:`~science_jubilee.tools.Tool.Tool`
+that drives mold handling through :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`.
+Operations validate state before execution and update payload context
+(``empty``, ``mold_without_top_piston``, ``mold_with_top_piston``).
+
+Example:
+    Pick a mold and place it on the scale::
+
+        from src.Manipulator import Manipulator, ToolStateError
+
+        manipulator = Manipulator(
+            index=0,
+            name="manipulator",
+            state_machine=state_machine,
+        )
+        try:
+            manipulator.pick_mold("0")
+            manipulator.place_mold_on_scale()
+        except ToolStateError as exc:
+            print(f"Operation failed: {exc}")
+
+Warning:
+    A connected state machine is required. Motion methods raise
+    :class:`RuntimeError` when ``state_machine`` is ``None``.
+
+See Also:
+    :class:`~src.JubileeManager.JubileeManager` for full dispense workflows.
+"""
+
 from science_jubilee.tools.Tool import (
     Tool,
     ToolStateError as _ExternalToolStateError,
 )
 from src.trickler_labware import Mold
 from src.PistonDispenser import PistonDispenser
+from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 from typing import Any
 
 
 # Re-export ToolStateError for documentation purposes
 class ToolStateError(_ExternalToolStateError):
-    """
-    Exception raised when a tool operation is attempted in an invalid state.
+    """Raised when a manipulator operation is attempted in an invalid state.
 
-    This error is raised when trying to perform operations that require
-    specific tool or payload states that are not currently met.
+    Common causes:
 
-    Examples:
-        - Attempting to pick a mold when already holding one
-        - Trying to place a mold when not holding one
-        - Operating at wrong position for the requested action
+    - Picking a mold when already holding one
+    - Placing a mold when the payload is empty
+    - Acting at the wrong named position for the requested operation
+    - Tamp depth or speed outside bounds from ``system_config.json``
+
+    Example:
+        Handle at the call site::
+
+            try:
+                manipulator.pick_mold("0")
+            except ToolStateError as exc:
+                print(f"Pick blocked: {exc}")
     """
 
     pass
 
 
 class Manipulator(Tool):
-    """
-    Jubilee toolhead for mold handling and tamping operations.
-    Tracks a Mold object representing the current mold being carried.
+    """Jubilee gripper toolhead for mold handling and tamping.
 
-    State tracking:
-    - current_well: Mold object representing the current mold (None if not carrying one)
-    - The Mold object tracks has_top_piston, valid, weight, and other mold properties
+    Delegates validation and motion to
+    :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine` and
+    mirrors mold state on ``state_machine.context``.
 
-    Operations:
-    - Tamping: Only allowed when carrying a mold without a top piston
-    - Top piston placement: Only allowed when carrying a mold without a top piston
-    - Mold handling: Pick up and place Mold objects
+    Attributes:
+        state_machine: Motion platform FSM used for every pick/place/tamp call.
+        tamper_axis: V-axis letter loaded from ``system_config.json``.
+        current_well: :class:`~src.trickler_labware.Mold` carried by the
+            manipulator, or ``None`` when empty (property).
+
+    Warning:
+        Direct :class:`~science_jubilee.Machine.Machine` moves bypass safety.
+        Always move via :meth:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_move_to_mold_slot`
+        (or manager helpers) before pick/place.
+
+    Note:
+        Tamping and top-piston placement require a mold **without** a top piston.
     """
 
     # ============================================================================
@@ -47,7 +92,27 @@ class Manipulator(Tool):
     # throughout this class, including gcode commands.
     # ============================================================================
 
-    def __init__(self, index, name, state_machine=None, config_source=None):
+    def __init__(
+        self,
+        index: int,
+        name: str,
+        state_machine: MotionPlatformStateMachine | None = None,
+        config_source: Any | None = None,
+    ):
+        """Initialize the manipulator tool.
+
+        Args:
+            index: Jubilee tool index (see ``tools.manipulator`` in config).
+            name: Jubilee tool name registered with the firmware.
+            state_machine: Connected
+                :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`.
+                Required for all motion methods.
+            config_source: Unused; retained for call-site compatibility.
+
+        Note:
+            ``tamper_axis`` loads from ``system_config.json`` via
+            :mod:`src.ConfigLoader` at construction time.
+        """
         super().__init__(index, name)
         self.state_machine = state_machine  # Reference to MotionPlatformStateMachine
 
@@ -62,40 +127,47 @@ class Manipulator(Tool):
         self.tamper_axis = _cfg.system.manipulator.tamper_axis
 
     def _get_config_dict(self) -> dict[str, Any]:
-        """
-        Helper to package manipulator configuration for state machine calls.
+        """Package manipulator settings for state machine validated calls.
 
-        Note: Only returns tamper_axis; Z policies use context z_height_id and motion z_heights.
+        Returns:
+            Dict with ``tamper_axis`` only. Z policies use ``context.z_height_id``
+            and motion ``z_heights`` from JSON.
         """
         return {
             "tamper_axis": self.tamper_axis,
         }
 
     @property
-    def current_well(self):
-        """Access to current well through state machine."""
+    def current_well(self) -> Mold | None:
+        """
+        Mold object currently carried by the manipulator.
+
+        Returns:
+            ``Mold`` instance from the state machine context, or ``None`` when
+            the manipulator is empty or no state machine is configured.
+        """
         if self.state_machine:
             return self.state_machine.context.current_well
         return None
 
     def home_tamper(self, machine_connection: Any | None = None):
-        """
-        Perform homing for the tamper axis (V-axis).
+        """Home the tamper (V) axis through the state machine.
 
-        Can be performed while holding a mold WITHOUT a top piston. The homing
-        process uses the mold itself as a reference:
-        - Start position: v=2 (tamper inserted into mold)
-        - End position: v=-7 (tamper touching bottom of mold)
+        Safe while holding a mold **without** a top piston. Homing uses the mold
+        cavity as a mechanical reference:
 
-        This allows accurate positioning establishment using the mold as a reference.
-
-        Validates and executes through MotionPlatformStateMachine.
+        - Start: ``v=2`` (tamper inserted into mold)
+        - End: ``v=-7`` (tamper at mold bottom)
 
         Args:
-            machine_connection: Deprecated parameter (for backward compatibility)
+            machine_connection: Deprecated; ignored.
 
-        Note:
-            Do not home when the mold has a top piston inserted.
+        Raises:
+            RuntimeError: If ``state_machine`` is missing or homing fails.
+
+        Warning:
+            Do not home when the mold has a top piston. The travel path can
+            damage the tamper or piston.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -107,32 +179,27 @@ class Manipulator(Tool):
             raise RuntimeError(f"Tamper homing failed: {result.reason}")
 
     def tamp(self, tamp_depth: float, tamp_speed: int) -> bool:
-        """
-        Perform tamping action to compress powder in the held mold.
+        """Compress powder in the held mold (tamping).
 
-        Tamping reduces powder volume for two purposes:
-        1. Allowing the top piston to fit in the mold if it otherwise wouldn't
-        2. Reducing the amount of powder that becomes airborne when the top piston is inserted
-
-        Only allowed if carrying a mold without a top piston. Typically performed at
-        the scale_ready position after filling the mold with powder.
-
-        After tamping, the V axis is automatically re-homed to ensure axis accuracy.
+        Tamping reduces powder volume so the top piston fits and limits airborne
+        powder during piston insertion. Typically run at ``scale_ready`` after
+        filling. The V axis is re-homed automatically afterward.
 
         Args:
-            tamp_depth: Target depth for tamping movement in mm
-            tamp_speed: Speed for tamping movement in mm/min
+            tamp_depth: Target depth in mm.
+            tamp_speed: Feed rate in mm/min.
 
         Returns:
-            True if successful
+            ``True`` on success.
 
         Raises:
-            RuntimeError: If state machine not configured
-            ToolStateError: If tamping is not allowed in current state or parameters out of bounds
+            RuntimeError: If ``state_machine`` is not configured.
+            ToolStateError: If tamping is blocked or parameters are out of bounds.
 
         Note:
-            Valid parameter ranges are defined in system_config.json under manipulator settings
-            (tamp_depth_min/max, tamp_speed_min/max).
+            Bounds and defaults live in ``system_config.json`` under
+            ``manipulator``. Use :meth:`src.ConfigLoader.config.get_tamp_defaults`
+            rather than hardcoding values.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -150,11 +217,11 @@ class Manipulator(Tool):
         return True
 
     def get_status(self) -> dict[str, Any]:
-        """
-        Get current manipulator status and configuration.
+        """Return manipulator status for telemetry and debugging.
 
         Returns:
-            Dictionary containing manipulator status information
+            Dict with ``has_mold``, ``tamper_axis``, and optional ``current_well``
+            metadata (name, weights, ``has_top_piston``, ``valid``).
         """
         status = {
             "has_mold": self.current_well is not None,
@@ -176,23 +243,26 @@ class Manipulator(Tool):
         return status
 
     def is_carrying_mold(self) -> bool:
-        """
-        Check if the manipulator is currently carrying a mold.
+        """Return whether the manipulator is carrying a mold.
 
         Returns:
-            True if carrying a mold, False otherwise
+            ``True`` when :attr:`current_well` is not ``None``.
         """
         return self.current_well is not None
 
     def pick_mold(self, well_id: str):
-        """
-        Pick up mold from mold slot.
-
-        Assumes toolhead is directly above the mold slot at safe_z height with tamper axis in travel position.
-        Validates move through state machine before execution.
+        """Pick up a mold from ``mold_ready_{well_id}``.
 
         Args:
-            well_id: Mold slot identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string ``"0"`` through ``"17"``).
+
+        Raises:
+            RuntimeError: If ``state_machine`` is not configured.
+            ToolStateError: If pickup is not allowed in the current state.
+
+        Note:
+            Call :meth:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine.validated_move_to_mold_slot`
+            first. Requires empty payload and manipulator tool active.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -204,17 +274,18 @@ class Manipulator(Tool):
             raise ToolStateError(f"Cannot pick mold: {result.reason}")
 
     def place_mold(self, well_id: str) -> Mold | None:
-        """
-        Place down the current mold and return it.
-
-        Assumes toolhead is directly above the mold slot at safe_z height with tamper axis in travel position.
-        Validates move through state machine before execution.
+        """Place the carried mold into ``mold_ready_{well_id}``.
 
         Args:
-            well_id: Mold slot identifier using numerical indexing (e.g., "0", "1", "2")
+            well_id: Mold slot identifier (for example ``"0"``, ``"1"``).
 
         Returns:
-            The Mold object that was placed, or None if no mold was being carried
+            The :class:`~src.trickler_labware.Mold` that was placed, or ``None``
+            if nothing was carried.
+
+        Raises:
+            RuntimeError: If ``state_machine`` is not configured.
+            ToolStateError: If placement is not allowed in the current state.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -229,12 +300,22 @@ class Manipulator(Tool):
 
         return mold_to_place
 
-    def place_top_piston(self, piston_dispenser: PistonDispenser):
+    def place_top_piston(self, piston_dispenser: PistonDispenser) -> bool:
         """
-        Place the top piston on the current mold. Only allowed if carrying a mold without a top piston.
+        Place a top piston on the mold currently held by the manipulator.
 
-        Assumes toolhead is at dispenser position.
-        Validates move through state machine before execution.
+        Only allowed when carrying a mold without a top piston and when the
+        state machine is at a dispenser ready position.
+
+        Args:
+            piston_dispenser: Dispenser supplying the piston.
+
+        Returns:
+            True if successful.
+
+        Raises:
+            RuntimeError: If the state machine is not configured.
+            ToolStateError: If placement is not allowed in the current state.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -250,11 +331,19 @@ class Manipulator(Tool):
 
         return True
 
-    def place_mold_on_scale(self):
+    def place_mold_on_scale(self) -> bool:
         """
-        Place the current mold on the scale. Only allowed if carrying a mold without a top piston.
+        Place the mold currently held by the manipulator onto the scale.
 
-        Validates move through state machine before execution.
+        Only allowed when carrying a mold without a top piston. Engages the
+        tool at ``scale_active`` on success.
+
+        Returns:
+            True if successful.
+
+        Raises:
+            RuntimeError: If the state machine is not configured.
+            ToolStateError: If placement is not allowed in the current state.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -269,11 +358,19 @@ class Manipulator(Tool):
 
         return True
 
-    def pick_mold_from_scale(self):
+    def pick_mold_from_scale(self) -> bool:
         """
-        Pick up the current mold from the scale. Only allowed if carrying a mold without a top piston.
+        Pick up the mold resting on the scale.
 
-        Validates move through state machine before execution.
+        Requires the mold to be on the scale (``scale_active`` / tool engaged).
+        Disengages the tool and returns to ``scale_ready`` on success.
+
+        Returns:
+            True if successful.
+
+        Raises:
+            RuntimeError: If the state machine is not configured.
+            ToolStateError: If pickup is not allowed in the current state.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")

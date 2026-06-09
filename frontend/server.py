@@ -13,7 +13,7 @@ Transport:
     WebSocket /ws  - continuous 4 Hz telemetry pushed to every connected browser
 
 Mock vs real hardware:
-    Set ``server.mock_hardware`` in ``jubilee_api_config/system_config.json``, or
+    Set ``server.mock_hardware`` in ``api_config/system_config.json``, or
     override at process start with ``JUBILEE_MOCK_HARDWARE=1`` (see ``_mock_hardware_enabled()``).
     Both manager classes expose the same API.
 
@@ -62,7 +62,7 @@ from pydantic import BaseModel, Field
 
 from models import HardwareConfig, JobProgress, MachineState
 from hardware_manager import HardwareManager, MockHardwareManager
-from jubilee_api_config.constants import (
+from api_config.constants import (
     HARDNESS_COLS,
     HARDNESS_ROWS,
     HARDNESS_TRAY_CAPACITY,
@@ -139,10 +139,14 @@ def _mock_hardware_enabled() -> bool:
     
 
 class UpdateDispenserRequest(BaseModel):
+    """Request body for ``PUT /api/dispensers/{index}``."""
+
     num_pistons: int = Field(ge=0)
 
 
 class PowderWell(BaseModel):
+    """One well in a powder dispensing job request."""
+
     well_id: str = Field(min_length=1)
     target_weight: float = Field(
         gt=0.0, le=5_000.0, description="Target weight in grams"
@@ -150,12 +154,22 @@ class PowderWell(BaseModel):
 
 
 class HardnessSample(BaseModel):
+    """One sample in a hardness testing job request.
+
+    Attributes:
+        tray_index: Zero-based hardness tray index.
+        sample_index: Zero-based slot within the tray.
+        mode: Measurement mode (``shore_a``, ``shore_d``, or ``shore_a_d``).
+    """
+
     tray_index: int = Field(ge=0, le=HARDNESS_TRAY_COUNT - 1)
     sample_index: int = Field(ge=0, le=HARDNESS_TRAY_CAPACITY - 1)
     mode: Literal["shore_a", "shore_a_d", "shore_d"]
 
 
 class StartPowderJobRequest(BaseModel):
+    """Request body for ``POST /api/job/start`` with ``job_type: dispensing``."""
+
     job_type: Literal["dispensing"] = "dispensing"
     wells: list[PowderWell] = Field(
         min_length=1,
@@ -164,6 +178,8 @@ class StartPowderJobRequest(BaseModel):
 
 
 class StartHardnessJobRequest(BaseModel):
+    """Request body for ``POST /api/job/start`` with ``job_type: hardness``."""
+
     job_type: Literal["hardness"] = "hardness"
     samples: list[HardnessSample] = Field(
         min_length=1,
@@ -193,6 +209,9 @@ class ConnectionManager:
     Maintains the list of active connections and provides broadcast helpers.
     Dead connections (clients that have closed their tab) are detected during
     broadcast and removed automatically.
+
+    Attributes:
+        active: Currently connected :class:`fastapi.WebSocket` instances.
     """
 
     def __init__(self) -> None:
@@ -262,6 +281,10 @@ async def telemetry_loop() -> None:
     Runs indefinitely as an ``asyncio.Task`` created in the app lifespan.
     Weight is only queried when hardware is connected. The broadcast is skipped
     entirely when no browser tabs are open (``ws_mgr.client_count == 0``).
+
+    Note:
+        Frame fields mirror :meth:`models.JobProgress.to_dict` plus live weight,
+        machine state, and dispenser snapshots.
     """
     while True:
         if ws_mgr.client_count > 0:
@@ -299,6 +322,11 @@ async def drive_upload_retry_loop(backup: "JobDriveBackup") -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Start background telemetry and Drive retry tasks; cancel them on shutdown.
+
+    Args:
+        app: FastAPI application instance (unused; required by the lifespan API).
+    """
     global _drive_backup, _drive_init_error
     _drive_backup, _drive_init_error = _load_drive_backup()
     tasks = [asyncio.create_task(telemetry_loop())]
@@ -855,7 +883,16 @@ async def _run_job(
     run_job_fn,
     reset_mold_metadata: bool = False,
 ) -> None:
-    """Execute one job type and perform common completion/finalization steps."""
+    """Execute one job type and perform common completion and finalization steps.
+
+    Args:
+        job_type: ``"dispensing"`` or ``"hardness"``.
+        items: Ordered item dicts from the job request.
+        run_job_fn: Async callable ``(items, progress, job_log)`` on the
+            active hardware manager.
+        reset_mold_metadata: When ``True``, call ``hw.reset_mold_job_metadata()``
+            after the job ends (dispensing only).
+    """
     job_log = _make_job_log(job_type, items)
     outcome = "cancelled"
     try:

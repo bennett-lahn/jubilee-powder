@@ -1,623 +1,332 @@
-# Scale API Reference
+# Scale
 
-The `Scale` class provides an interface to precision balance hardware for weight measurements.
+The `Scale` class provides a serial interface to A&D precision balances (FX/FZ series) for weight measurements in the Jubilee powder dispensing workflow.
 
-## Overview
+=== "Operator Guide"
 
-The Scale class:
+    !!! warning "Prefer JubileeManager"
+        Most production code should call `JubileeManager.get_weight_stable()` or `get_weight_unstable()` rather than using `Scale` directly. Use this class when integrating standalone scale tests or debugging serial communication.
 
-- Connects to balance via USB serial
-- Reads weight measurements
-- Supports stable and unstable readings
-- Handles taring and calibration
+    ## Overview
 
-## Class Reference
+    The Scale class:
 
-::: src.Scale.Scale
-    options:
-      members: true
-      show_root_heading: true
-      show_source: false
-      filters:
-        - "!^_[^_]"  # Hide private methods (except __init__)
+    - Connects to the balance via USB serial
+    - Reads stable and unstable weight measurements
+    - Handles taring and low-level A&D protocol commands
+    - Serializes concurrent access with an internal command lock
 
-## Usage Examples
+    ## Usage Examples
 
-### Basic Connection and Reading
+    ### Basic Connection and Reading
 
-```python
-from src.Scale import Scale
+    ```python
+    from src.Scale import Scale
 
-# Create and connect to scale
-scale = Scale(port="/dev/ttyUSB0")
-scale.connect()
-
-if scale.is_connected:
-    # Get stable weight reading
-    weight = scale.get_weight(stable=True)
-    print(f"Weight: {weight}g")
-    
-    # Disconnect when done
-    scale.disconnect()
-```
-
-### Stable vs Unstable Readings
-
-```python
-# Stable reading (waits for weight to stabilize)
-stable_weight = scale.get_weight(stable=True)
-print(f"Stable: {stable_weight}g")
-
-# Unstable reading (immediate, may be changing)
-unstable_weight = scale.get_weight(stable=False)
-print(f"Unstable: {unstable_weight}g")
-```
-
-**When to use each**:
-
-- **Stable**: For measurements you'll record or use for decisions
-- **Unstable**: For real-time monitoring or progress display
-
-### Taring the Scale
-
-```python
-# Tare (zero) the scale
-scale.tare()
-
-# Now readings are relative to current weight
-# Place object on scale
-weight = scale.get_weight(stable=True)
-print(f"Object weight: {weight}g")
-```
-
-## Integration with JubileeManager
-
-The scale is typically used through JubileeManager:
-
-```python
-from src.JubileeManager import JubileeManager
-
-manager = JubileeManager()
-manager.connect(scale_port="/dev/ttyUSB0")
-
-# Get stable weight
-weight = manager.get_weight_stable()
-print(f"Weight: {weight}g")
-
-# Get unstable weight (faster)
-weight = manager.get_weight_unstable()
-print(f"Weight: {weight}g")
-```
-
-## Weight Monitoring
-
-### Continuous Monitoring
-
-```python
-import time
-
-def monitor_weight(scale, duration=10):
-    """Monitor weight for specified duration."""
-    print("Monitoring weight...")
-    start_time = time.time()
-    
-    while time.time() - start_time < duration:
-        weight = scale.get_weight(stable=False)
-        print(f"Weight: {weight:6.2f}g", end='\r')
-        time.sleep(0.1)
-    
-    print()  # New line
-
-# Usage
-monitor_weight(scale, duration=30)
-```
-
-### Waiting for Stability
-
-```python
-def wait_for_stable(scale, timeout=30):
-    """Wait for weight to stabilize."""
-    import time
-    
-    start_time = time.time()
-    previous_weight = None
-    stable_count = 0
-    required_stable_readings = 5
-    tolerance = 0.01  # grams
-    
-    while time.time() - start_time < timeout:
-        weight = scale.get_weight(stable=False)
-        
-        if previous_weight is not None:
-            if abs(weight - previous_weight) < tolerance:
-                stable_count += 1
-                if stable_count >= required_stable_readings:
-                    return weight, True
-            else:
-                stable_count = 0
-        
-        previous_weight = weight
-        time.sleep(0.2)
-    
-    return previous_weight, False
-
-# Usage
-weight, is_stable = wait_for_stable(scale)
-if is_stable:
-    print(f"Stable weight: {weight}g")
-else:
-    print("Timeout waiting for stability")
-```
-
-## Configuration
-
-### A&D Scale Setup (FX-120i and FX/FZ Series)
-
-The Jubilee Powder system is designed to work with A&D precision balances, particularly the **FX-120i** model. The FX and FZ series scales from A&D should work without modification using the expected settings.
-
-#### Required Scale Configuration
-
-Configure your A&D FX-120i (or compatible FX/FZ series scale) with the following settings. Consult your scale manual for menu access instructions.
-
-The Scale class is compatible with any desired weighing unit, as long as the maximum weight is set correctly in the `jubilee_api_config` folder.
-
-##### Communication Settings
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| **Baud Rate** | Faster better | Must match `scale_baud_rate` in software config |
-| **Data Bits** | 8 | Standard configuration |
-| **Parity** | None | Must match Scale object parameters |
-| **Stop Bits** | 1 | Standard configuration |
-| **Terminator** | CRLF | Carriage Return + Line Feed (required) |
-
-##### Scale Behavior Settings
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| **Stability Bandwidth** | 1 | Determines when weight is considered stable |
-| **Condition** | 1 (Medium Response) | Controls response speed and stability tradeoff |
-| **Time/Date Output** | No Output | Disables time/date in data stream |
-| **Zero After Output** | 0 (Not Used) | Disables auto-zero after reading |
-| **AK Error Code** | 1 (Output) | Enables error code output and error-correcting communication |
-
-##### Data Format Settings
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| **Data Format** | A&D Standard Format | Required for proper parsing |
-
-#### Configuration Steps
-
-1. **Access Configuration Menu**
-   - Power on the scale
-   - Press and hold the `MODE` button (or appropriate menu button per your manual)
-   - Navigate to communication settings
-
-2. **Set Communication Parameters**
-   ```
-   Baud Rate:    9600
-   Data Bits:    8
-   Parity:       None
-   Stop Bits:    1
-   Terminator:   CRLF
-   ```
-
-3. **Set Response Characteristics**
-   ```
-   Stability Bandwidth:  1
-   Condition:            1 (Medium Response)
-   ```
-   
-   !!! note "Display Refresh Rate"
-       The display refresh rate automatically adjusts based on the Condition setting.
-       Condition 1 (Medium Response) provides a good balance between speed and stability.
-
-4. **Configure Output Settings**
-   ```
-   Data Format:       A&D Standard
-   Time/Date Output:  No Output
-   Zero After Output: 0 (Not Used)
-   AK Error Code:     1 (Output)
-   ```
-
-5. **Save and Exit**
-   - Save the configuration
-   - Exit the menu
-   - Power cycle the scale to ensure settings take effect
-
-#### Verifying Configuration
-
-Test the scale communication before using with the Jubilee system:
-
-```python
-from src.Scale import Scale
-
-# Create scale instance with matching parameters
-scale = Scale(
-    port="/dev/ttyUSB0",  # Your scale's serial port
-    baudrate=9600,        # Must match scale setting
-    timeout=2.0
-)
-
-# Connect and test
-try:
+    scale = Scale(port="/dev/ttyUSB0")
     scale.connect()
-    print("Scale connected successfully")
-    
-    # Test weight reading
-    weight = scale.get_weight(stable=True)
-    print(f"Weight reading: {weight}g")
-    
-    # Test stability detection
-    if weight is not None:
-        print("Scale is communicating properly")
-    
-    scale.disconnect()
-except Exception as e:
-    print(f"Connection failed - check settings and port: {e}")
-```
 
-#### Troubleshooting A&D Scale Setup
-
-**Scale not responding:**
-- Verify baud rate matches between scale and software (9600)
-- Check that terminator is set to CRLF
-- Ensure cable is properly connected
-- Try power cycling the scale
-
-**Readings always unstable:**
-- Increase Stability Bandwidth (try value 2 or 3)
-- Check for vibrations, air currents, or static. Scale must be grounded for proper use.
-- Ensure scale is on level, stable surface
-- Adjust Condition setting if needed
-
-**Incorrect weight values:**
-- Verify Data Format is set to "A&D Standard"
-- Check that scale is calibrated
-- Ensure no environmental factors affecting readings
-
-**Communication errors:**
-- Check Data Bits (must be 8)
-- Verify Parity is set to None
-- Confirm Stop Bits is 1
-- Check that AK Error Code output is enabled
-
-#### Compatible Models
-
-The following A&D scales should work with these settings:
-
-- **FX Series**: FX-120i, FX-200i, FX-300i (Precision balances)
-- **FZ Series**: FZ-120i, FZ-200i, FZ-300i (Compact balances)
-- Other A&D models with standard format output
-
-!!! tip "Model-Specific Notes"
-    While most FX/FZ series scales use identical settings, always consult your specific model's manual.
-
-### Serial Port Configuration
-
-The scale port is configured in `system_config.json`:
-
-```json
-{
-  "system": {
-    "scale_port": "/dev/ttyUSB0",
-    "scale_baud_rate": 9600,
-    "scale_timeout": 2.0
-  }
-}
-```
-
-### Finding the Serial Port
-
-**Linux**:
-```bash
-# List USB serial devices
-ls -l /dev/ttyUSB*
-ls -l /dev/ttyACM*
-
-# Check dmesg for recent connections
-dmesg | grep tty
-```
-
-**Windows**:
-```powershell
-# List COM ports
-Get-WmiObject Win32_SerialPort | Select-Object Name, DeviceID
-```
-
-**macOS**:
-```bash
-# List serial devices
-ls -l /dev/tty.*
-ls -l /dev/cu.*
-```
-
-## Error Handling
-
-### Connection Failures
-
-```python
-from src.Scale import Scale
-
-scale = Scale(port="/dev/ttyUSB0")
-
-try:
-    scale.connect()
-    if not scale.is_connected:
-        raise ConnectionError("Scale connection failed")
-except Exception as e:
-    print(f"Error connecting to scale: {e}")
-    # Common causes:
-    # - Wrong port
-    # - Port already in use
-    # - Insufficient permissions
-    # - Hardware not connected
-```
-
-### Reading Failures
-
-```python
-try:
-    weight = scale.get_weight(stable=True)
-    if weight is None:
-        print("Failed to read weight")
-except Exception as e:
-    print(f"Error reading scale: {e}")
-    # Common causes:
-    # - Communication timeout
-    # - Scale not responding
-    # - Invalid data from scale
-```
-
-### Handling Disconnection
-
-```python
-def safe_read_weight(scale):
-    """Safely read weight with error handling."""
-    if not scale.is_connected:
-        print("Scale not connected")
-        return None
-    
-    try:
+    if scale.is_connected:
         weight = scale.get_weight(stable=True)
-        return weight
-    except Exception as e:
-        print(f"Error reading weight: {e}")
-        return None
-```
+        print(f"Weight: {weight}g")
+        scale.disconnect()
+    ```
 
-## Advanced Usage
+    ### Stable vs Unstable Readings
 
-### Calibration
+    ```python
+    stable_weight = scale.get_weight(stable=True)
+    print(f"Stable: {stable_weight}g")
 
-```python
-def calibrate_scale(scale, known_weight):
-    """
-    Calibrate scale using a known reference weight.
-    
-    Args:
-        scale: Connected Scale instance
-        known_weight: Weight of calibration standard in grams
-    """
-    print("Remove all items from scale, then press Enter")
-    input()
-    
-    # Tare the empty scale
+    unstable_weight = scale.get_weight(stable=False)
+    print(f"Unstable: {unstable_weight}g")
+    ```
+
+    | Mode | When to use |
+    |------|-------------|
+    | **Stable** (`stable=True`) | Recorded measurements and dispensing decisions |
+    | **Unstable** (`stable=False`) | Live monitoring, progress display, telemetry |
+
+    ### Taring the Scale
+
+    ```python
     scale.tare()
-    print("Scale tared")
-    
-    print(f"Place {known_weight}g calibration weight on scale, then press Enter")
-    input()
-    
-    # Read calibration weight
-    measured = scale.get_weight(stable=True)
-    print(f"Measured: {measured}g")
-    print(f"Expected: {known_weight}g")
-    print(f"Error: {measured - known_weight}g ({((measured - known_weight) / known_weight) * 100:.2f}%)")
-    
-    if abs(measured - known_weight) > 0.1:
-        print("Warning: Calibration error exceeds 0.1g")
-```
+    weight = scale.get_weight(stable=True)
+    print(f"Object weight: {weight}g")
+    ```
 
-### Data Logging
+    ## Integration with JubileeManager
 
-```python
-import csv
-import time
-from datetime import datetime
+    ```python
+    from src.JubileeManager import JubileeManager
 
-def log_weight_data(scale, output_file, duration=60, interval=1.0):
-    """
-    Log weight data to CSV file.
-    
-    Args:
-        scale: Connected Scale instance
-        output_file: Path to output CSV file
-        duration: How long to log in seconds
-        interval: Time between readings in seconds
-    """
-    with open(output_file, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['Timestamp', 'Weight (g)', 'Stable'])
-        
+    manager = JubileeManager(
+        num_piston_dispensers=2,
+        num_pistons_per_dispenser=10,
+    )
+    manager.connect(scale_port="/dev/ttyUSB0")
+
+    weight = manager.get_weight_stable()
+    print(f"Weight: {weight}g")
+
+    weight = manager.get_weight_unstable()
+    print(f"Weight: {weight}g")
+    ```
+
+    ## Weight Monitoring
+
+    ### Continuous Monitoring
+
+    ```python
+    import time
+
+    def monitor_weight(scale, duration=10):
+        """Monitor weight for specified duration."""
         start_time = time.time()
         while time.time() - start_time < duration:
-            timestamp = datetime.now().isoformat()
-            
-            # Get both stable and unstable readings
-            unstable = scale.get_weight(stable=False)
-            stable = scale.get_weight(stable=True)
-            
-            writer.writerow([timestamp, unstable, 'No'])
-            writer.writerow([timestamp, stable, 'Yes'])
-            
-            time.sleep(interval)
-    
-    print(f"Data logged to {output_file}")
+            weight = scale.get_weight(stable=False)
+            print(f"Weight: {weight:6.2f}g", end="\r")
+            time.sleep(0.1)
+        print()
 
-# Usage
-log_weight_data(scale, "weight_log.csv", duration=300, interval=5.0)
-```
+    monitor_weight(scale, duration=30)
+    ```
 
-### Multi-Scale Setup
+    ### Waiting for Stability
 
-For systems with multiple scales:
+    ```python
+    def wait_for_stable(scale, timeout=30):
+        """Wait for weight to stabilize."""
+        import time
 
-```python
-class ScaleManager:
-    """Manage multiple scales."""
-    
-    def __init__(self, ports):
-        """
-        Initialize multiple scales.
-        
-        Args:
-            ports: List of serial port paths
-        """
-        self.scales = []
-        for i, port in enumerate(ports):
-            scale = Scale(port=port)
-            scale.connect()
-            if scale.is_connected:
-                self.scales.append((i, scale))
-                print(f"Scale {i} connected on {port}")
-            else:
-                print(f"Failed to connect scale {i} on {port}")
-    
-    def read_all(self, stable=True):
-        """Read all scales."""
-        readings = {}
-        for index, scale in self.scales:
-            readings[index] = scale.get_weight(stable=stable)
-        return readings
-    
-    def disconnect_all(self):
-        """Disconnect all scales."""
-        for index, scale in self.scales:
-            scale.disconnect()
+        start_time = time.time()
+        previous_weight = None
+        stable_count = 0
+        required_stable_readings = 5
+        tolerance = 0.01
 
-# Usage
-manager = ScaleManager(["/dev/ttyUSB0", "/dev/ttyUSB1"])
-readings = manager.read_all(stable=True)
-print(f"Scale readings: {readings}")
-manager.disconnect_all()
-```
+        while time.time() - start_time < timeout:
+            weight = scale.get_weight(stable=False)
 
-## Troubleshooting
+            if previous_weight is not None:
+                if abs(weight - previous_weight) < tolerance:
+                    stable_count += 1
+                    if stable_count >= required_stable_readings:
+                        return weight, True
+                else:
+                    stable_count = 0
 
-### Scale Not Responding
+            previous_weight = weight
+            time.sleep(0.2)
 
-**Symptoms**:
-- `is_connected` is False
-- Timeout errors when reading
+        return previous_weight, False
+    ```
 
-**Solutions**:
-1. Verify physical connection (USB cable plugged in)
-2. Check that port is correct (`ls /dev/ttyUSB*`)
-3. Verify user has permission to access serial port:
-   ```bash
-   sudo usermod -a -G dialout $USER
-   # Log out and log back in
-   ```
-4. Try different USB port
-5. Check that no other program is using the scale
-6. Verify scale is powered on
+    ## Configuration
 
-### Incorrect Readings
+    ### Software (`system_config.json`)
 
-**Symptoms**:
-- Readings don't match display on scale
-- Readings are always zero
-- Readings are unstable
+    The serial port is configured under `machine`:
 
-**Solutions**:
-1. Tare the scale: `scale.tare()`
-2. Calibrate using known weight
-3. Check for environmental factors:
-   - Drafts/air currents
-   - Vibrations
-   - Temperature changes
-4. Verify scale settings (units, precision)
-5. Check baud rate matches scale configuration
+    ```json
+    {
+      "machine": {
+        "scale_port": "/dev/ttyUSB0"
+      }
+    }
+    ```
 
-### Permission Denied
+    Baud rate, timeout, and parity are passed to the `Scale` constructor (defaults: `baudrate=9600`, `timeout=10`). They must match the scale's communication settings.
 
-**Linux symptom**: `PermissionError: [Errno 13] Permission denied: '/dev/ttyUSB0'`
+    ### A&D Scale Setup (FX-120i and FX/FZ Series)
 
-**Solutions**:
-```bash
-# Add user to dialout group
-sudo usermod -a -G dialout $USER
+    The Jubilee Powder system targets A&D precision balances, particularly the **FX-120i**. Compatible FX/FZ series scales should work with the settings below.
 
-# Or use udev rule
-sudo nano /etc/udev/rules.d/50-scale.rules
-# Add: SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", MODE="0666"
+    #### Communication Settings
 
-# Reload udev rules
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
+    | Setting | Value | Notes |
+    |---------|-------|-------|
+    | **Baud Rate** | 9600 (typical) | Must match `Scale(baudrate=...)` |
+    | **Data Bits** | 8 | Standard |
+    | **Parity** | None | Default in `Scale.__init__` |
+    | **Stop Bits** | 1 | Standard |
+    | **Terminator** | CRLF | Required for A&D protocol |
 
-## Best Practices
+    #### Scale Behavior Settings
 
-### Always Tare Before Measurements
+    | Setting | Value | Description |
+    |---------|-------|-------------|
+    | **Stability Bandwidth** | 1 | When weight is considered stable |
+    | **Condition** | 1 (Medium Response) | Response speed vs stability |
+    | **Time/Date Output** | No Output | Keeps data stream clean |
+    | **Zero After Output** | 0 (Not Used) | Disables auto-zero after reading |
+    | **AK Error Code** | 1 (Output) | Enables error-correcting communication |
 
-```python
-# GOOD
-scale.tare()
-# ... place object ...
-weight = scale.get_weight(stable=True)
+    #### Data Format Settings
 
-# BAD
-weight = scale.get_weight(stable=True)  # May include previous object's weight
-```
+    | Setting | Value |
+    |---------|-------|
+    | **Data Format** | A&D Standard Format |
 
-### Use Stable Readings for Decisions
+    ??? note "Menu configuration sequence"
+        1. Access the scale configuration menu (see your model manual).
+        2. Set communication parameters: baud 9600, 8 data bits, no parity, 1 stop bit, CRLF terminator.
+        3. Set response characteristics: stability bandwidth 1, condition 1 (medium response).
+        4. Set output: A&D standard format, no time/date, zero-after-output off, AK error code on.
+        5. Save, exit, and power-cycle the scale.
 
-```python
-# GOOD - for recording data
-final_weight = scale.get_weight(stable=True)
-save_to_database(final_weight)
+    #### Verifying Configuration
 
-# BAD - for recording data
-weight = scale.get_weight(stable=False)  # Might be changing!
-save_to_database(weight)
+    ```python
+    from src.Scale import Scale
 
-# OK - for real-time monitoring
-while filling:
-    current = scale.get_weight(stable=False)
-    print(f"Current: {current}g")
-```
+    scale = Scale(port="/dev/ttyUSB0", baudrate=9600, timeout=10)
 
-### Handle Connection State
+    try:
+        scale.connect()
+        print("Scale connected successfully")
+        weight = scale.get_weight(stable=True)
+        print(f"Weight reading: {weight}g")
+        scale.disconnect()
+    except Exception as e:
+        print(f"Connection failed - check settings and port: {e}")
+    ```
 
-```python
-# GOOD
-if scale.is_connected:
-    weight = scale.get_weight(stable=True)
-else:
-    print("Scale not connected")
+    ### Finding the Serial Port
 
-# BAD
-weight = scale.get_weight(stable=True)  # Might fail if not connected
-```
+    === "Linux"
+        ```bash
+        ls -l /dev/ttyUSB*
+        ls -l /dev/ttyACM*
+        dmesg | grep tty
+        ```
 
-### Clean Up Resources
+    === "Windows"
+        ```powershell
+        Get-WmiObject Win32_SerialPort | Select-Object Name, DeviceID
+        ```
 
-```python
-# GOOD
-scale = Scale(port="/dev/ttyUSB0")
-try:
-    scale.connect()
-    # ... use scale ...
-finally:
-    scale.disconnect()
-```
+    === "macOS"
+        ```bash
+        ls -l /dev/tty.*
+        ls -l /dev/cu.*
+        ```
+
+    ## Error Handling
+
+    ### Connection Failures
+
+    ```python
+    from src.Scale import Scale
+
+    scale = Scale(port="/dev/ttyUSB0")
+
+    try:
+        scale.connect()
+        if not scale.is_connected:
+            raise ConnectionError("Scale connection failed")
+    except Exception as e:
+        print(f"Error connecting to scale: {e}")
+    ```
+
+    Common causes: wrong port, port in use, insufficient permissions, hardware disconnected.
+
+    ### Reading Failures
+
+    ```python
+    try:
+        weight = scale.get_weight(stable=True)
+        print(f"Weight: {weight}g")
+    except Exception as e:
+        print(f"Error reading scale: {e}")
+    ```
+
+    ### Handling Disconnection
+
+    ```python
+    def safe_read_weight(scale):
+        if not scale.is_connected:
+            return None
+        try:
+            return scale.get_weight(stable=True)
+        except Exception as e:
+            print(f"Error reading weight: {e}")
+            return None
+    ```
+
+    ## Advanced Usage
+
+    ??? example "Calibration with known weight"
+        ```python
+        def calibrate_scale(scale, known_weight):
+            print("Remove all items from scale, then press Enter")
+            input()
+            scale.tare()
+            print(f"Place {known_weight}g calibration weight on scale, then press Enter")
+            input()
+            measured = scale.get_weight(stable=True)
+            error = measured - known_weight
+            print(f"Measured: {measured}g  Expected: {known_weight}g  Error: {error}g")
+        ```
+
+    ??? example "CSV data logging"
+        ```python
+        import csv
+        import time
+        from datetime import datetime
+
+        def log_weight_data(scale, output_file, duration=60, interval=1.0):
+            with open(output_file, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Timestamp", "Weight (g)", "Stable"])
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    timestamp = datetime.now().isoformat()
+                    writer.writerow([timestamp, scale.get_weight(stable=False), "No"])
+                    writer.writerow([timestamp, scale.get_weight(stable=True), "Yes"])
+                    time.sleep(interval)
+        ```
+
+    ## Troubleshooting
+
+    | Symptom | Likely cause | Fix |
+    |---------|--------------|-----|
+    | Scale not responding | Wrong port or baud | Verify `machine.scale_port` and scale menu settings |
+    | Permission denied (Linux) | User not in `dialout` | `sudo usermod -a -G dialout $USER`, re-login |
+    | Readings always unstable | Vibration or bandwidth | Increase stability bandwidth; ground the scale |
+    | Incorrect values | Wrong data format | Set A&D Standard Format on the scale |
+    | Timeout errors | Busy scale or E02 | Wait and retry; check for concurrent access |
+
+    !!! tip "Linux serial permissions"
+        Add your user to the `dialout` group or create a udev rule granting access to the scale's USB vendor ID.
+
+    ## Best Practices
+
+    - Tare before each measurement when the container changes.
+    - Use `get_weight(stable=True)` for recorded values; `stable=False` only for live display.
+    - Check `is_connected` before reading.
+    - Always call `disconnect()` in a `finally` block.
+
+=== "API Reference"
+
+    ## Class Reference
+
+    ::: src.Scale.Scale
+        options:
+          members: true
+          show_root_heading: true
+          show_source: false
+          filters:
+            - "!^_[^_]"
+
+    ## ScaleError Codes
+
+    The `ScaleError` enum maps A&D `EC,<code>` responses. See the generated reference above for `ScaleError` members and descriptions.
+
+---
 
 ## See Also
 
 - [JubileeManager](jubilee-manager.md) - High-level scale operations
 - [Configuration Guide](../how-to/configuration.md) - Setting up scale port
 - [Results Interpretation](../how-to/results.md) - Analyzing weight data
-

@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root))
 from science_jubilee.Machine import Machine
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 from src.Manipulator import Manipulator
-from jubilee_api_config.constants import FeedRate
+from api_config.constants import FeedRate
 from src.ConfigLoader import config
 from src.trickler_labware import Mold
 from tests.hardware_helpers import (
@@ -56,7 +56,7 @@ def main():
     # Resolve config path relative to project root
     project_root = Path(__file__).parent.parent
     STATE_MACHINE_CONFIG = str(
-        project_root / "jubilee_api_config" / "motion_platform_positions.json"
+        project_root / "api_config" / "motion_platform_positions.json"
     )
 
     print("\n" + "=" * 60)

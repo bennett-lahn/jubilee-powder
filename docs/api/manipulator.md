@@ -10,6 +10,12 @@ The Manipulator is a custom toolhead that provides:
 - **V-Axis**: Vertical movement independent of machine Z-axis
 - **State Integration**: Automatically updates state machine context
 
+!!! warning "State machine required"
+    Pass a connected `MotionPlatformStateMachine` to `__init__`. Methods that move or change payload raise `RuntimeError` if `state_machine` is missing.
+
+!!! tip "Prefer JubileeManager for workflows"
+    Construct a `Manipulator` when extending low-level tool behavior. For dispense and tamp sequences, use [JubileeManager](jubilee-manager.md) so movements and payload state stay synchronized.
+
 ## Class Reference
 
 ::: src.Manipulator.Manipulator
@@ -82,12 +88,12 @@ manipulator.place_mold(well_id="0")
 ### V-Axis Movement and Homing
 
 ```python
-# Move V-axis to specific position
-manipulator.move_v_axis(position=50.0)  # 50mm
-
-# Home V-axis
-manipulator.home_tamper()  # or home_v_axis()
+# Home V-axis (tamper axis) through the state machine
+manipulator.home_tamper()
 ```
+
+Direct V-axis positioning is not exposed on `Manipulator`; use validated moves to
+`scale_ready` or `mold_ready_N` positions and let pick/place/tamp sequences drive V.
 
 **Homing with a Mold**:
 
@@ -98,25 +104,31 @@ The V-axis can be homed while holding a mold, **as long as the mold does not hav
 - This allows the system to establish accurate positioning reference using the mold itself
 
 ```python
+from src.ConfigLoader import config
+
+tamp_depth, tamp_speed = config.get_tamp_defaults()
+
 # Example: Homing after picking up a mold without top piston
 manipulator.pick_mold(well_id="0")
 manipulator.home_tamper()  # Valid - mold has no top piston
 
 # After tamping, V-axis is automatically re-homed
-manipulator.tamp()  # Automatically homes V-axis after completion
+manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)
 ```
 
 **Important**: Do not attempt to home the V-axis when:
+
 - The mold already has a top piston inserted
-- Not holding a mold (should home before picking up mold)
+- Not holding a mold (home before picking up a mold)
+
+!!! warning "Homing with a top piston risks collision"
+    V-axis homing uses the mold cavity as a mechanical reference (`v=2` to `v=-7`). A mold with a top piston blocks that travel and can damage the tamper or piston.
 
 ## Pick and Place Operations
 
 ### Pick Mold
 
 The `pick_mold()` operation:
-
-
 
 1. Validates current position (must be at mold slot)
 2. Moves V-axis down to mold height
@@ -186,23 +198,28 @@ The `tamp()` method compresses powder in a mold held by the manipulator. This is
 2. **Minimize airborne powder** - Compressing the powder reduces the amount that becomes airborne when the top piston is inserted
 
 ```python
-# After filling mold with powder
+from src.ConfigLoader import config
+from src.JubileeManager import JubileeManager
+
+tamp_depth, tamp_speed = config.get_tamp_defaults()
+
+# After filling mold with powder (mold picked up from scale at scale_ready)
 manipulator.pick_mold_from_scale()
 
 # Tamp the powder to compress it
-manipulator.tamp(tamp_depth=40.0, tamp_speed=2000)
+manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)
 
 # Now safe to insert top piston
 manager.move_to_dispenser()
-manipulator.place_top_piston(piston_dispenser)
+manager.get_piston_from_dispenser()
 ```
 
 **Parameters**:
 
-- `tamp_depth` (float): Target depth for tamping movement in mm (default: 40.0)
-  - Valid range configured in `system_config.json` (default: 10-60 mm)
-- `tamp_speed` (int): Speed for tamping movement in mm/min (default: 2000)
-  - Valid range configured in `system_config.json` (default: 500-5000 mm/min)
+- `tamp_depth` (float): Target depth for tamping movement in mm (required)
+- `tamp_speed` (int): Speed for tamping movement in mm/min (required)
+
+Valid ranges and defaults are defined in `system_config.json` under `manipulator` (loaded at startup by `ConfigLoader`). Use `config.get_tamp_defaults()` rather than hardcoding values.
 
 **Requirements**:
 
@@ -223,53 +240,72 @@ Since the mold does not have a top piston during tamping, the V-axis homing is s
 **Example with Error Handling**:
 
 ```python
+from src.ConfigLoader import config
+
+tamp_depth, tamp_speed = config.get_tamp_defaults()
+
 try:
-    # Pick mold after filling
     manipulator.pick_mold_from_scale()
-    
-    # Tamp the powder
-    manipulator.tamp(tamp_depth=40.0, tamp_speed=2000)
+    manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)
     print("Tamping successful")
-    
 except ToolStateError as e:
     print(f"Tamping failed: {e}")
-    # Handle error - maybe skip tamping and try inserting piston anyway
 ```
 
 **Common Errors**:
 
 ```python
+from src.ConfigLoader import config
+
+tamp_depth, tamp_speed = config.get_tamp_defaults()
+
 # Error: Trying to tamp when not holding a mold
-manipulator.tamp()  # ToolStateError: Must be carrying a mold
+manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)  # ToolStateError
 
 # Error: Trying to tamp after piston is already inserted
-manipulator.place_top_piston(piston_dispenser)
-manipulator.tamp()  # ToolStateError: Cannot tamp mold that has a top piston
+state_machine.validated_retrieve_piston(
+    manipulator_config=manipulator._get_config_dict()
+)  # sets has_top_piston on the carried mold
+manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)  # ToolStateError
 
-# Error: Tamp depth out of bounds (bounds from system_config.json)
-manipulator.tamp(tamp_depth=5.0)   # ToolStateError: Tamp depth out of bounds
-manipulator.tamp(tamp_depth=70.0)  # ToolStateError: Tamp depth out of bounds
-
-# Error: Tamp speed out of bounds (bounds from system_config.json)
-manipulator.tamp(tamp_speed=100)    # ToolStateError: Tamp speed out of bounds
-manipulator.tamp(tamp_speed=10000)  # ToolStateError: Tamp speed out of bounds
+# Error: Tamp depth or speed out of bounds (bounds from system_config.json)
+manipulator.tamp(tamp_depth=999.0, tamp_speed=tamp_speed)   # ToolStateError
+manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=99999)   # ToolStateError
 ```
 
-**Configuring Bounds**:
+### Configuring Bounds
 
-Tamping parameter bounds can be customized in `system_config.json`:
+=== "Config"
 
-```json
-{
-  "manipulator": {
-    "tamper_axis": "V",
-    "tamp_depth_min": 10.0,
-    "tamp_depth_max": 60.0,
-    "tamp_speed_min": 500,
-    "tamp_speed_max": 5000
-  }
-}
-```
+    Tamping bounds and defaults live in `jubilee_api_config/system_config.json`:
+
+    ```json
+    {
+      "manipulator": {
+        "tamper_axis": "V",
+        "tamp_depth_min": 0.0,
+        "tamp_depth_max": 9.0,
+        "tamp_speed_min": 500,
+        "tamp_speed_max": 5000,
+        "tamp_depth_default": 9.0,
+        "tamp_speed_default": 500
+      }
+    }
+    ```
+
+    Values shown are from the checked-in config; adjust bounds in JSON and restart the process after changes.
+
+=== "Python"
+
+    Read defaults and bounds through `ConfigLoader`:
+
+    ```python
+    from src.ConfigLoader import config
+
+    tamp_depth, tamp_speed = config.get_tamp_defaults()
+    depth_min = config.get_tamp_depth_min()
+    depth_max = config.get_tamp_depth_max()
+    ```
 
 ## State Management
 
@@ -300,48 +336,55 @@ print(manipulator.state_machine.context.payload_state)  # "empty"
 
 ## Configuration
 
-### Loading Configuration
+The manipulator reads tool registration and tamping limits from `system_config.json` via `ConfigLoader` at construction time. Mold heights, gripper offsets, and named motion positions are defined in `motion_platform_positions.json`, not on the `Manipulator` class.
 
-The Manipulator loads its configuration from `system_config.json`:
+=== "Config"
 
-```json
-{
-  "tools": {
-    "manipulator": {
-      "index": 0,
-      "park_position": {"x": 0, "y": 0, "z": 100},
-      "v_axis_offset": 50.0,
-      "gripper_config": {
-        "open_position": 5.0,
-        "close_position": 0.0,
-        "grip_force": 10.0
-      },
-      "mold_heights": {
-        "pickup_height": 15.0,
-        "clearance_height": 50.0
+    Tool index and name (under `tools`):
+
+    ```json
+    {
+      "tools": {
+        "manipulator": {
+          "index": 0,
+          "name": "manipulator"
+        }
       }
     }
-  }
-}
-```
+    ```
 
-### Configuration Parameters
+    Tamping axis and parameter bounds (top-level `manipulator`):
 
-- **`index`**: Tool index on Jubilee (usually 0)
-- **`park_position`**: Where tool parks when not in use
-- **`v_axis_offset`**: V-axis offset from machine zero
-- **`gripper_config`**: Gripper open/close positions and force
-- **`mold_heights`**: Heights for mold pickup and clearance
+    ```json
+    {
+      "manipulator": {
+        "tamper_axis": "V",
+        "tamp_depth_min": 0.0,
+        "tamp_depth_max": 9.0,
+        "tamp_speed_min": 500,
+        "tamp_speed_max": 5000,
+        "tamp_depth_default": 9.0,
+        "tamp_speed_default": 500
+      }
+    }
+    ```
 
-### Accessing Configuration
+=== "Python"
 
-```python
-# Get current configuration as dict
-config = manipulator._get_config_dict()
-print(config)
+    ```python
+    from src.ConfigLoader import config
 
-# Configuration is loaded automatically from ConfigLoader
-```
+    tool_index = config.system.tools.manipulator.index
+    tamper_axis = config.system.manipulator.tamper_axis
+    tamp_depth, tamp_speed = config.get_tamp_defaults()
+
+    # Passed to state machine validated actions
+    manipulator_config = manipulator._get_config_dict()
+    # {"tamper_axis": "V"}
+    ```
+
+!!! note "Motion positions are separate"
+    Pick/place heights and XY coordinates come from [Position Configuration](position-config.md). Edit `motion_platform_positions.json` for layout changes; edit `system_config.json` for tamp limits and tool index, and meta system configuration.
 
 ## Error Handling
 
@@ -371,27 +414,22 @@ manipulator.pick_mold("0")  # Error: not at mold slot
 
 ## Advanced Usage
 
-### Integration with State Machine
+???+ note "State machine integration"
+    The manipulator updates payload context on pick/place; the state machine validates whether the next move is allowed.
 
-The Manipulator is tightly integrated with the state machine:
+    ```python
+    manipulator = Manipulator(
+        index=0,
+        name="manipulator",
+        state_machine=state_machine,
+    )
 
-```python
-# Create manipulator with state machine reference
-manipulator = Manipulator(
-    index=0,
-    name="manipulator",
-    state_machine=state_machine
-)
+    manipulator.pick_mold("0")
 
-# Manipulator automatically updates state machine context
-manipulator.pick_mold("0")
-
-# State machine knows about the payload
-result = state_machine.validated_move_to_scale()
-if not result.valid:
-    print(f"Move failed: {result.reason}")
-    # Might fail if payload not allowed at scale
-```
+    result = state_machine.validated_move_to_scale()
+    if not result.valid:
+        print(f"Move failed: {result.reason}")
+    ```
 
 ## Best Practices
 
@@ -405,24 +443,22 @@ try:
     manipulator.place_mold_on_scale()
 except ToolStateError as e:
     print(f"Operation failed: {e}")
-    # Handle error appropriately
-    # Maybe release gripper, move to safe position, etc.
 ```
 
 ### Coordinate with State Machine
 
-Don't bypass state machine validation:
+!!! tip "Validate moves before manipulator actions"
+    ```python
+    result = state_machine.validated_move_to_mold_slot("0")
+    if result.valid:
+        manipulator.pick_mold("0")
+    ```
 
-```python
-# GOOD: Use state machine for movements
-result = state_machine.validated_move_to_mold_slot("0")
-if result.valid:
-    manipulator.pick_mold("0")
-
-# BAD: Direct machine control bypasses validation
-machine.move_to(x=100, y=100, z=50)  # Not validated!
-manipulator.pick_mold("0")          # May fail or cause collision
-```
+!!! warning "Direct machine moves bypass safety"
+    ```python
+    machine.move_to(x=100, y=100, z=50)  # Not validated
+    manipulator.pick_mold("0")             # May fail or collide
+    ```
 
 ## See Also
 

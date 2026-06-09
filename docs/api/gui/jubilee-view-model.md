@@ -21,208 +21,180 @@ The store is not a thin data cache. It also:
 - Normalises REST error responses into a consistent `{ ok, error? }` return shape
 - Keeps UI-specific derived state (e.g. `wsConnected`)
 
-## Usage
+!!! tip "Minimise re-renders"
+    Subscribe to individual slices with selectors (`useJubileeStore((s) => s.telemetry)`) rather than destructuring the whole store in every component.
+
+## Quick Start
 
 ```js
 import { useJubileeStore } from '../store/jubileeStore'
 
-// Read individual slices with selectors to minimise re-renders
 const telemetry = useJubileeStore((s) => s.telemetry)
 const submitJob = useJubileeStore((s) => s.submitJob)
 ```
 
 ---
 
-## State Shape
+=== "State Reference"
 
-### `telemetry`
+    ## State Shape
 
-Live snapshot received from the WebSocket at 4 Hz. Replaced wholesale on every
-frame so stale fields from a previous server restart are never retained.
+    ### `telemetry`
 
-```js
-{
-  weight:     null,          // float | null  — scale reading in grams
-  state:      null,          // MachineState string | null
-  connected:  false,         // true when state is idle, running, or homing
-  jubilee_ip: 'jubilee.local',
-  job:        null,          // JobProgress object | null
-  dispensers: [],            // DispenserStatus[]
-  clients:    null,          // number of connected browser tabs
-}
-```
+    Live snapshot received from the WebSocket at 4 Hz. Replaced wholesale on every
+    frame so stale fields from a previous server restart are never retained.
 
-### `hardwareStatus`
+    ```js
+    {
+      weight:     null,          // float | null  — scale reading in grams
+      state:      null,          // MachineState string | null
+      connected:  false,         // true when state is idle, running, or homing
+      jubilee_ip: 'jubilee.local',
+      job:        null,          // JobProgress object | null
+      dispensers: [],            // DispenserStatus[]
+      clients:    null,          // number of connected browser tabs
+    }
+    ```
 
-Last full machine snapshot from `GET /api/status`. `null` until the first successful
-fetch. Refreshed on mount and after hardware lifecycle actions.
+    ### `hardwareStatus`
 
-### `jobLog`
+    Last full machine snapshot from `GET /api/status`. `null` until the first successful
+    fetch. Refreshed on mount and after hardware lifecycle actions.
 
-Normalised most-recent job log from `GET /api/job/log`. Uses the same shape as
-`telemetry.job`. `null` when no job has run in the current server session and no
-log files exist.
+    ### `jobLog`
 
-`HomeScreen` uses `jobLog` to display the last completed job when no job is
-currently running.
+    Normalised most-recent job log from `GET /api/job/log`. Uses the same shape as
+    `telemetry.job`. `null` when no job has run in the current server session and no
+    log files exist.
 
-### `wsConnected`
+    `HomeScreen` uses `jobLog` to display the last completed job when no job is
+    currently running.
 
-`true` when the WebSocket connection to `/ws` is open. Becomes `false` briefly
-during reconnect.
+    ### `wsConnected`
 
-### `statusError` / `jobLogError`
+    `true` when the WebSocket connection to `/ws` is open. Becomes `false` briefly
+    during reconnect.
 
-Error message strings from the most recent failed `loadStatus()` or `fetchJobLog()`
-call respectively. `null` on success.
+    ### `statusError` / `jobLogError`
 
----
+    Error message strings from the most recent failed `loadStatus()` or `fetchJobLog()`
+    call respectively. `null` on success.
 
-## Actions
+=== "Actions Reference"
 
-All async actions return `{ ok: true }` on success or `{ ok: false, error: string }`
-on failure. Components are expected to check `ok` and surface `error` to the user.
+    ## Actions
 
-### WebSocket Lifecycle
+    All async actions return `{ ok: true }` on success or `{ ok: false, error: string }`
+    on failure. Components are expected to check `ok` and surface `error` to the user.
 
-#### `connectWs()`
+    ### WebSocket Lifecycle
 
-Opens a single WebSocket to `/ws`. No-op if a connection is already open or
-connecting. On close or error, schedules a reconnect after 1.5 s.
+    | Action | Description |
+    |--------|-------------|
+    | `connectWs()` | Opens `/ws`; reconnects after 1.5 s on close. Called once from `RootLayout`. |
+    | `disconnectWs()` | Closes the socket and cancels pending reconnect. Called on unmount. |
 
-Called once in the `RootLayout` mount effect so all screens share the same
-persistent connection.
+    ### Status
 
-#### `disconnectWs()`
+    #### `loadStatus()`
 
-Closes the WebSocket and cancels any pending reconnect timer. Called in the
-`RootLayout` unmount cleanup.
+    Fetches `GET /api/status` into `hardwareStatus`.
 
-### Status
+    ```js
+    await store.loadStatus()
+    ```
 
-#### `loadStatus()`
+    ### Hardware Lifecycle
 
-Fetches `GET /api/status` and stores the result in `hardwareStatus`.
+    #### `connectHardware(config)`
 
-```js
-await store.loadStatus()
-// store.hardwareStatus is now populated (or store.statusError is set)
-```
+    `POST /api/hardware/connect` — returns `{ ok, error? }`. Connection progress appears
+    in `telemetry.state`:
 
-### Hardware Lifecycle
+    ```
+    disconnected → homing → idle    (success)
+    disconnected → homing → error   (failure)
+    ```
 
-#### `connectHardware(config)`
+    ```js
+    const { ok, error } = await store.connectHardware({
+      num_dispensers:        2,
+      pistons_per_dispenser: 10,
+      machine_address:       'jubilee.local',  // null reads from system_config.json
+      scale_port:            '/dev/ttyUSB0',
+    })
+    ```
 
-`POST /api/hardware/connect` — returns `{ ok, error? }`.
+    #### `disconnectHardware()`
 
-The server responds with HTTP 202 immediately; actual connection progress is
-reflected in `telemetry.state`:
+    `POST /api/hardware/disconnect` — stops any running job and refreshes `hardwareStatus`.
 
-```
-disconnected → homing → idle    (success)
-disconnected → homing → error   (failure)
-```
+    ### Job Actions
 
-```js
-const { ok, error } = await store.connectHardware({
-  num_dispensers:        2,
-  pistons_per_dispenser: 10,
-  machine_address:       'jubilee.local',  // null to read from system_config.json
-  scale_port:            '/dev/ttyUSB0',
-})
-```
+    === "Dispensing"
+        ```js
+        const { ok } = await store.submitJob('dispensing', [
+          { well_id: '0', target_weight: 50.0 },
+          { well_id: '3', target_weight: 45.0 },
+        ])
+        ```
 
-#### `disconnectHardware()`
+    === "Hardness"
+        ```js
+        const { ok } = await store.submitJob('hardness', [
+          { tray_index: 0, sample_index: 0, mode: 'shore_a' },
+          { tray_index: 0, sample_index: 1, mode: 'shore_d' },
+        ])
+        ```
 
-`POST /api/hardware/disconnect` — returns `{ ok, error? }`. Also stops any
-running job server-side. Calls `loadStatus()` after a successful disconnect to
-refresh the REST snapshot.
+    Valid hardness modes: `shore_a`, `shore_a_d`, `shore_d`.
 
-### Job Actions
+    | Action | Endpoint | Behaviour |
+    |--------|----------|-----------|
+    | `stopJob()` | `POST /api/job/stop` | Finish current well/sample, return to `idle` |
+    | `cancelJob()` | `POST /api/job/cancel` | Same server semantics as stop; user-facing "cancel" |
+    | `abortJob()` | `POST /api/job/abort` | Emergency M112; machine enters `error` |
+    | `fetchJobLog()` | `GET /api/job/log` | Updates `jobLog` |
 
-#### `submitJob(jobType, items)`
-
-`POST /api/job/start` — returns `{ ok, error? }`.
-
-```js
-// Powder dispensing
-const { ok } = await store.submitJob('dispensing', [
-  { well_id: '0', target_weight: 50.0 },
-  { well_id: '3', target_weight: 45.0 },
-])
-
-// Hardness testing
-const { ok } = await store.submitJob('hardness', [
-  { sample_id: '0', mode: 'shore_a' },
-  { sample_id: '1', mode: 'shore_d' },
-])
-```
-
-The server validates the machine state (`idle`) and job constraints before
-accepting. HTTP 422 is returned for invalid payloads (Pydantic validation).
-
-#### `stopJob()`
-
-`POST /api/job/stop` — returns `{ ok, error? }`. The machine finishes the current
-well/sample then exits the job loop and returns to `idle`.
-
-#### `cancelJob()`
-
-`POST /api/job/cancel` — returns `{ ok, error? }`. Cancellation takes effect only
-after the current mold or sample completes. Functionally equivalent to `stopJob()`
-from the server's perspective; the distinction is user-facing (cancel implies
-intentional early termination).
-
-#### `abortJob()`
-
-`POST /api/job/abort` — returns `{ ok, error? }`. Emergency stop. Sends M112 to
-the Duet controller (real hardware) and immediately sets machine state to `error`.
-Hardware must be restarted and reconnected before starting a new job.
-
-#### `fetchJobLog()`
-
-`GET /api/job/log` — returns `{ ok, error? }`. Updates `jobLog` in the store.
+    The server validates machine state (`idle`) before accepting jobs. Invalid payloads
+    return HTTP 422 (Pydantic validation).
 
 ---
 
 ## Data Flow
 
-### WebSocket Path (high-frequency, 4 Hz)
+=== "WebSocket (4 Hz)"
+    ```
+    Server telemetry_loop()
+        → ws.send_json(frame)
+            → ws.onmessage in jubileeStore.connectWs()
+                → set({ telemetry: { weight, state, connected, ... } })
+                    → All subscribed components re-render
+    ```
 
-```
-Server telemetry_loop()
-    → ws.send_json(frame)
-        → ws.onmessage in jubileeStore.connectWs()
-            → set({ telemetry: { weight, state, connected, ... } })
-                → All subscribed components re-render
-```
+=== "REST (on demand)"
+    Every action follows the same pattern:
 
-### REST Path (on-demand)
+    ```js
+    async actionName(args) {
+      try {
+        const data = await apiFunction(args)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err.message }
+      }
+    }
+    ```
 
-Every action follows the same pattern:
+    Errors from the server's `detail` field are extracted by the `request()` helper
+    in `jubileeApi.js` and surfaced as `err.message`.
 
-```js
-async actionName(args) {
-  try {
-    const data = await apiFunction(args)
-    // optionally update store state
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err.message }
-  }
-}
-```
-
-Errors from the server's `detail` field are automatically extracted by the
-`request()` helper in `jubileeApi.js` and surfaced as the `err.message`.
-
-### WebSocket Reconnect
-
-```
-ws.onclose / ws.onerror
-    → set({ wsConnected: false })
-    → setTimeout(connectWs, 1500)
-```
+??? note "WebSocket reconnect"
+    ```
+    ws.onclose / ws.onerror
+        → set({ wsConnected: false })
+        → setTimeout(connectWs, 1500)
+    ```
 
 ---
 
@@ -233,25 +205,23 @@ on success and throw an `Error` with the server's `detail` string on non-2xx
 responses. The Vite dev-server proxy forwards `/api/*` to `http://localhost:8000`,
 so the same `BASE = '/api'` URL works identically in development and production.
 
-Key exported functions:
-
-| Function              | Method | Path                       |
-|-----------------------|--------|----------------------------|
-| `fetchStatus()`       | GET    | `/api/status`              |
-| `connectHardware(c)`  | POST   | `/api/hardware/connect`    |
-| `disconnectHardware()`| POST   | `/api/hardware/disconnect` |
-| `startJob(body)`      | POST   | `/api/job/start`           |
-| `stopJob()`           | POST   | `/api/job/stop`            |
-| `cancelJob()`         | POST   | `/api/job/cancel`          |
-| `abortJob()`          | POST   | `/api/job/abort`           |
-| `fetchJobLog()`       | GET    | `/api/job/log`             |
-| `fetchDispensers()`   | GET    | `/api/dispensers`          |
-| `updateDispenser(i,n)`| PUT    | `/api/dispensers/{index}`  |
+| Function               | Method | Path                       |
+|------------------------|--------|----------------------------|
+| `fetchStatus()`        | GET    | `/api/status`              |
+| `connectHardware(c)`   | POST   | `/api/hardware/connect`    |
+| `disconnectHardware()` | POST   | `/api/hardware/disconnect` |
+| `startJob(body)`       | POST   | `/api/job/start`           |
+| `stopJob()`            | POST   | `/api/job/stop`            |
+| `cancelJob()`          | POST   | `/api/job/cancel`          |
+| `abortJob()`           | POST   | `/api/job/abort`           |
+| `fetchJobLog()`        | GET    | `/api/job/log`             |
+| `fetchDispensers()`    | GET    | `/api/dispensers`          |
+| `updateDispenser(i,n)` | PUT    | `/api/dispensers/{index}`  |
 
 ---
 
 ## See Also
 
-- [Web Frontend Reference](jubilee-gui.md) — FastAPI server, REST API, and React screens
-- [Using the Automation UI](../../how-to/using-gui.md) — User guide
-- [Architecture](../../concepts/architecture.md) — System architecture overview
+- [Web Frontend Reference](jubilee-gui.md) - FastAPI server, REST API, and React screens
+- [Using the Automation UI](../../how-to/using-gui.md) - User guide
+- [Architecture](../../concepts/architecture.md) - System architecture overview

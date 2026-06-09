@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 
 import time
 from src.JubileeManager import JubileeManager
-from jubilee_api_config.constants import FeedRate
+from api_config.constants import FeedRate
 
 
 def display_splash_screen():

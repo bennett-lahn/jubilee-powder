@@ -4,14 +4,17 @@ This guide explains the two web interfaces available for the Jubilee system.
 
 ## Overview
 
-There are two web interfaces:
+=== "Jubilee Powder UI"
 
-1. **Jubilee Powder UI** — the custom React browser application for running automated
-   dispensing and hardness testing jobs. This is the primary interface for day-to-day
-   operation. See [Using the Automation UI](using-gui.md) for the full user guide.
+    The custom React browser application for running automated dispensing and hardness testing jobs. This is the primary interface for day-to-day operation.
 
-2. **Duet Web Control (DWC)** — the built-in Jubilee controller interface for low-level
-   manual control. Use this for troubleshooting, manual jogs, and G-code commands.
+    See [Using the Automation UI](using-gui.md) for the full user guide.
+
+=== "Duet Web Control (DWC)"
+
+    The built-in Jubilee controller interface for low-level manual control. Use this for troubleshooting, manual jogs, and G-code commands.
+
+    The Automation UI **Manual Control** screen safely disconnects before opening DWC. See [Manual Control](using-gui.md#manual-control).
 
 !!! warning "Manual control invalidates automation state"
     Any manual movements made through DWC move the machine outside the positions tracked
@@ -159,11 +162,12 @@ if manager.connect():
     pass
 ```
 
-## Next Steps
+## See Also
 
-- [Using the Automation UI](using-gui.md) — primary interface for dispensing and hardness jobs
-- [Configure your system](configuration.md) for custom operations
-- [Run automated operations](run-new-data.md) using Python scripts
-- [Interpret results](results.md) from dispense operations
-- Review [JubileeManager API](../api/jubilee-manager.md) for programmatic control
+- [Using the Automation UI](using-gui.md) - primary interface for dispensing and hardness jobs
+- [Configuration Guide](configuration.md) for custom operations
+- [Run Operations on New Data](run-new-data.md)
+- [Interpreting Results](results.md)
+- [Best Practices](../concepts/best-practices.md)
+- [JubileeManager API](../api/jubilee-manager.md) for programmatic control
 

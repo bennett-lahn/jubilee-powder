@@ -1,27 +1,25 @@
-"""
-JobLog — persistent per-job JSON record for the Jubilee automation system.
+"""Persistent per-job JSON record for the Jubilee automation system.
 
-One JobLog instance is created per job.  The constructor records metadata
-(date, job type, planned items) and keeps a reference to the JubileeManager
-so that all messy state extraction stays inside this class rather than
-polluting JubileeManager.
+One :class:`JobLog` instance is created per job. The constructor records
+metadata (date, job type, planned items) and optionally holds a
+:class:`~src.JubileeManager.JubileeManager` reference so weight and hardness
+results can be read from hardware state without polluting the manager.
 
-Lifecycle
----------
-1. Server creates a JobLog at the start of a job.
-2. At key milestones (well placed, sample tested) either:
-     a. JubileeManager calls job_log.update_well() / update_sample()  (real hw), or
-     b. The server calls them directly with simulated values (mock mode).
-3. Server calls job_log.finalize(outcome) when the job ends.
-   This writes the JSON file to frontend/api/files/.
+Example:
+    Server-side lifecycle::
 
-File naming
------------
-  {id:04d}_{YYYY-MM-DD}_{type}_{count}.json
+        from src.JobLog import JobLog
 
-  id    — sequential integer, derived from existing files at write time
-  type  — dispensing or hardness
-  count — number of planned items in the job
+        job_log = JobLog("dispensing", wells, manager=manager)
+        job_log.update_well("0", actual_weight=49.98)
+        path = job_log.finalize("successful")
+
+Note:
+    File names follow ``{id:04d}_{YYYY-MM-DD}_{type}_{count}.json`` where
+    ``id`` is a sequential integer derived from existing files at write time,
+    ``type`` is ``dispensing`` or ``hardness``, and ``count`` is the number of
+    planned items. Completed logs are written under the configured job files
+    directory (``paths.job_files_dir``).
 """
 
 from __future__ import annotations
@@ -41,8 +39,32 @@ _VALID_MEASUREMENT_MODES = frozenset({"shore_a", "shore_d"})
 
 
 class JobLog:
-    """
-    Accumulates per-item results for one job and persists them as a JSON file.
+    """Accumulate per-item results for one job and persist them as JSON.
+
+    One instance is created per job. The constructor records metadata (date,
+    job type, planned items) and optionally holds a
+    :class:`~src.JubileeManager.JubileeManager` reference so weight and
+    hardness results can be read from hardware state.
+
+    Attributes:
+        image_dir: Directory where hardness test images for this job are stored.
+
+    Example:
+        Hardness job with explicit pass values::
+
+            log = JobLog("hardness", samples)
+            log.update_sample(
+                0, 0,
+                result=42.5,
+                measurement_mode="shore_a",
+                image_path="/api/files/images/0001/0_0_shore_a.jpg",
+            )
+            log.finalize("successful")
+
+    Note:
+        At milestones the server or :class:`~src.JubileeManager.JubileeManager`
+        calls :meth:`update_well` or :meth:`update_sample`. In mock mode the
+        server may pass explicit values instead of reading from the manager.
     """
 
     def __init__(
@@ -51,6 +73,14 @@ class JobLog:
         items: list[dict],
         manager: "JubileeManager" | None = None,
     ) -> None:
+        """Create a new in-memory job log and assign the next sequential job ID.
+
+        Args:
+            job_type: ``"dispensing"`` or ``"hardness"``.
+            items: Planned wells or samples from the job request.
+            manager: Optional manager used to pull ``last_dispense_weight`` or
+                hardness results when update methods omit explicit values.
+        """
         self._job_type = job_type
         self._items = (
             [_normalize_hardness_item(i) for i in items]
@@ -72,7 +102,19 @@ class JobLog:
         well_id: str,
         actual_weight: float | None = None,
     ) -> None:
-        """Record the outcome of one powder-dispensing well."""
+        """Record the outcome of one powder-dispensing well.
+
+        Args:
+            well_id: Well identifier matching the planned item.
+            actual_weight: Measured weight in grams. When ``None`` and a manager
+                was supplied at construction, uses ``manager.last_dispense_weight``.
+
+        Example:
+            ```python
+            job_log.update_well("7")  # reads manager.last_dispense_weight
+            job_log.update_well("7", actual_weight=0.52)  # mock / explicit
+            ```
+        """
         if actual_weight is None and self._manager is not None:
             actual_weight = self._manager.last_dispense_weight
 
@@ -99,9 +141,34 @@ class JobLog:
     ) -> None:
         """Record the outcome of one hardness pass for a sample.
 
-        ``measurement_mode`` must be ``shore_a`` or ``shore_d`` (the pass being
-        recorded). Job configuration mode (``shore_a``, ``shore_d``, ``shore_a_d``)
-        comes from the planned items list.
+        Args:
+            sample_index: Zero-based sample index within the tray.
+            tray_index: Zero-based tray index.
+            result: Shore hardness reading for this pass, if available.
+            sample_error: Error message when the pass failed.
+            status: Explicit per-sample status override.
+            measurement_mode: Pass being recorded: ``"shore_a"`` or ``"shore_d"``.
+                Job configuration mode (``shore_a``, ``shore_d``, ``shore_a_d``)
+                comes from the planned items list.
+            image_path: URL or relative path to the saved test image.
+
+        Raises:
+            ValueError: If ``measurement_mode`` is not ``shore_a`` or ``shore_d``.
+
+        Note:
+            For ``shore_a_d`` jobs, call this method once per pass with the
+            appropriate ``measurement_mode``. Per-pass status fields are merged
+            into a single sample record.
+
+        Example:
+            ```python
+            job_log.update_sample(
+                sample_index=0,
+                tray_index=0,
+                result=61.2,
+                measurement_mode="shore_d",
+            )
+            ```
         """
         if result is None and self._manager is not None:
             result = getattr(self._manager, "last_hardness_result", None)
@@ -176,11 +243,27 @@ class JobLog:
         )
 
     def finalize(self, outcome: str) -> Path:
-        """Write the completed log to disk and return the path."""
+        """Write the completed log to disk.
+
+        Args:
+            outcome: Job result label written to metadata, e.g.
+                ``"successful"``, ``"cancelled"``, or ``"aborted"``.
+
+        Returns:
+            Path: Absolute path to the written JSON file under the configured
+            job files directory.
+
+        Example:
+            ```python
+            path = job_log.finalize("cancelled")
+            print(path.name)  # e.g. 0012_2026-06-07_dispensing_6.json
+            ```
+        """
         self._outcome = outcome
         return self._write()
 
     def _find_item(self, sample_index: int, tray_index: int) -> dict | None:
+        """Return the planned hardness item for a tray/sample pair, or ``None``."""
         for item in self._items:
             if (
                 JobLog._item_sample_index(item) == sample_index
@@ -191,10 +274,12 @@ class JobLog:
 
     @staticmethod
     def _item_sample_index(item: dict) -> int:
+        """Return the zero-based sample index from a planned item dict."""
         return int(item["sample_index"])
 
     @staticmethod
     def _default_sample_record(item: dict) -> dict:
+        """Build an incomplete hardness record for a planned sample item."""
         mode = item["mode"]
         tray_index = int(item["tray_index"])
         record = {
@@ -234,6 +319,7 @@ class JobLog:
         status_shore_d: str | None,
         override: str | None,
     ) -> str:
+        """Derive the aggregate sample status from per-pass statuses and mode."""
         if override:
             return override
         if sample_error:
@@ -300,13 +386,16 @@ class JobLog:
         return {"samples": samples}
 
     def _sample_record_key(self, tray_index: int, sample_index: int) -> str:
+        """Return the internal dict key for a tray/sample record."""
         return f"{tray_index}:{sample_index}"
 
     def _completed_sample_count(self) -> int:
+        """Count hardness samples whose aggregate status is ``complete``."""
         state = self._build_state()
         return sum(1 for s in state.get("samples", []) if s.get("status") == "complete")
 
     def _write(self) -> Path:
+        """Serialize metadata and state to the job JSON file on disk."""
         job_id = self._id
         date_str = self._start_time.strftime("%Y-%m-%d")
         count = len(self._items)
@@ -342,7 +431,18 @@ _VALID_JOB_MODES = frozenset({"shore_a", "shore_d", "shore_a_d"})
 
 
 def _normalize_hardness_item(item: dict) -> dict:
-    """Ensure planned hardness items use integer tray_index, sample_index, and mode."""
+    """Ensure planned hardness items use integer indices and a valid mode.
+
+    Args:
+        item: Raw hardness item from a job request payload.
+
+    Returns:
+        dict: Copy of ``item`` with normalized ``tray_index``, ``sample_index``,
+        and ``mode``.
+
+    Raises:
+        ValueError: If ``mode`` is not ``shore_a``, ``shore_d``, or ``shore_a_d``.
+    """
     normalized = dict(item)
     normalized["tray_index"] = int(item["tray_index"])
     normalized["sample_index"] = int(item["sample_index"])

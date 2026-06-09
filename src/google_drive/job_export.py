@@ -1,5 +1,21 @@
-"""
-Build local file artifacts for Google Drive backup from a JobLog JSON file.
+"""Build local file artifacts for Google Drive backup from a JobLog JSON file.
+
+Transforms a completed :class:`~src.JobLog.JobLog` JSON file into a staged
+folder tree: the original JSON, one or more ``results.csv`` files, and
+hardness images organized by measurement pass.
+
+Example:
+    Stage artifacts before upload::
+
+        from pathlib import Path
+        from src.google_drive.job_export import build_artifacts, stage_artifacts
+
+        artifacts = build_artifacts(json_path, files_root=files_root)
+        stage_artifacts(artifacts, staging_root=Path("/tmp/drive_export"))
+
+Note:
+    Dispensing jobs emit a single ``results.csv``. Hardness jobs emit one CSV
+    (and optional images) per pass subdirectory (``shore_a/``, ``shore_d/``).
 """
 
 from __future__ import annotations
@@ -24,7 +40,18 @@ _HARDNESS_CSV_COLUMNS = ["tray_index", "sample_index", "target", "actual", "stat
 
 @dataclass
 class LocalFile:
-    """One file to place under the job folder staging root."""
+    """One file to place under the job folder staging root.
+
+    Attributes:
+        relative_path: Destination path relative to the staging root
+            (e.g. ``"0012_2026-04-12_dispensing_3/results.csv"``).
+        source_path: Existing file to copy, or ``None`` when ``content`` is set.
+        content: Inline text content, or ``None`` when ``source_path`` is set.
+
+    Note:
+        Exactly one of ``source_path`` or ``content`` must be set. Staging
+        raises :class:`ValueError` when both are missing.
+    """
 
     relative_path: str
     source_path: Path | None = None
@@ -33,17 +60,38 @@ class LocalFile:
 
 @dataclass
 class JobArtifacts:
-    """Staged files for one job, rooted at ``stem/``."""
+    """Staged files for one job, rooted at ``stem/``.
+
+    Attributes:
+        stem: Job folder name (JSON filename without extension).
+        files: Ordered list of :class:`LocalFile` entries to upload.
+    """
 
     stem: str
     files: list[LocalFile] = field(default_factory=list)
 
 
 def job_folder_stem(json_path: Path) -> str:
+    """Return the Drive folder name for a job log file.
+
+    Args:
+        json_path: Path to a JobLog JSON file.
+
+    Returns:
+        str: Filename stem used as the per-job folder name.
+    """
     return json_path.stem
 
 
 def load_job_payload(json_path: Path) -> dict:
+    """Load and parse a JobLog JSON file.
+
+    Args:
+        json_path: Path to the on-disk job log.
+
+    Returns:
+        dict: Parsed JSON payload with ``metadata`` and ``state`` sections.
+    """
     return json.loads(json_path.read_text(encoding="utf-8"))
 
 
@@ -76,7 +124,18 @@ def _require_state(payload: dict, job_type: str) -> dict:
 
 
 def build_artifacts(json_path: Path, files_root: Path) -> JobArtifacts:
-    """Return all files to upload for one completed job log."""
+    """Build all local files to upload for one completed job log.
+
+    Args:
+        json_path: Path to the finished JobLog JSON file.
+        files_root: Root directory for job files and images (``paths.job_files_dir``).
+
+    Returns:
+        JobArtifacts: Staged file list including JSON, CSV, and hardness images.
+
+    Raises:
+        ValueError: If required metadata or state sections are missing or invalid.
+    """
     root = files_root
     payload = load_job_payload(json_path)
     meta = _require_metadata(payload)
@@ -105,7 +164,28 @@ def format_csv(
     rows: list[dict[str, Any]],
     columns: list[str],
 ) -> str:
-    """Metadata row (alternating key/value), header row, then data."""
+    """Format job results as a CSV string.
+
+    The first row encodes metadata as alternating key/value pairs. The second
+    row is the column header; remaining rows are data.
+
+    Args:
+        metadata: Job metadata dict (id, date, job_type, outcome, etc.).
+        rows: One dict per result row with keys matching ``columns``.
+        columns: Ordered column names for the data section.
+
+    Returns:
+        str: CSV text with Unix line endings.
+
+    Example:
+        ```python
+        csv_text = format_csv(
+            {"id": 12, "job_type": "dispensing"},
+            [{"well": "0", "target": 50.0, "actual": 49.9, "status": "complete"}],
+            ["well", "target", "actual", "status"],
+        )
+        ```
+    """
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
 
@@ -128,7 +208,19 @@ def resolve_image_path(
     sample_index: int,
     pass_mode: str,
 ) -> Path | None:
-    """Resolve a local image path from a JSON URL or predictable filename."""
+    """Resolve a local hardness image path from a URL or predictable filename.
+
+    Args:
+        job_id: Numeric job ID from log metadata, or ``None``.
+        image_ref: Image URL or path stored in the job log, if any.
+        files_root: Root directory for job files and images.
+        tray_index: Tray index for the sample.
+        sample_index: Sample index within the tray.
+        pass_mode: Measurement pass: ``"shore_a"`` or ``"shore_d"``.
+
+    Returns:
+        Path | None: Resolved image file path, or ``None`` if not found on disk.
+    """
     if image_ref:
         m = re.search(r"/api/files/images/(\d+)/([^/]+)$", str(image_ref))
         if m:
@@ -275,7 +367,19 @@ def _add_hardness_tree(
 
 
 def stage_artifacts(artifacts: JobArtifacts, staging_root: Path) -> Path:
-    """Write all artifact files under ``staging_root / stem``."""
+    """Write all artifact files under ``staging_root / stem``.
+
+    Args:
+        artifacts: File list produced by :func:`build_artifacts`.
+        staging_root: Temporary directory used before Drive upload.
+
+    Returns:
+        Path: Created job directory (``staging_root / artifacts.stem``).
+
+    Raises:
+        ValueError: If a :class:`LocalFile` has neither ``content`` nor
+            ``source_path``.
+    """
     job_dir = staging_root / artifacts.stem
     job_dir.mkdir(parents=True, exist_ok=True)
 

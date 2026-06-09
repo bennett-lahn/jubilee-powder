@@ -1,6 +1,6 @@
 /**
  * Hardness sample tray layout (matches motion platform metadata).
- * Keep in sync with jubilee_api_config/constants.py.
+ * Keep in sync with api_config/constants.py.
  */
 
 export const HARDNESS_ROWS = 5

@@ -10,14 +10,14 @@ The Jubilee uses a Duet3D board (typically Duet 3 Mini or Duet 3 MB6HC) running 
 
 ### Critical Rules
 
-**Never connect or disconnect stepper motor cables while the Duet3D is powered.**
-Doing so can permanently damage the stepper drivers on the board. Always power off the Duet3D completely before swapping or re-seating motor connectors.
+!!! danger "Never hot-plug stepper motor cables"
+    Connecting or disconnecting stepper motor cables while the Duet3D is powered can permanently damage the stepper drivers. Always power off the Duet3D completely before swapping or re-seating motor connectors.
 
-**Never connect or disconnect endstop cables while the Duet3D is powered.**
-Hot-plugging endstops can damage the input pins. Power off before making any endstop wiring changes
+!!! danger "Never hot-plug endstop cables"
+    Hot-plugging endstops can damage the input pins. Power off before making any endstop wiring changes.
 
-**Wait for the board to fully boot before sending commands.**
-After powering on, wait for the Duet3D's status LED to stabilize and for the web interface to become responsive before connecting or issuing G-code.
+!!! warning "Wait for full boot before sending commands"
+    After powering on, wait for the Duet3D status LED to stabilize and for the web interface to become responsive before connecting or issuing G-code.
 
 ### Web Interface
 
@@ -55,9 +55,10 @@ The Jubilee must be homed after every power cycle. The software calls `homeall` 
 
 ### Deck Layout
 
-!!! warning
+!!! warning "Deck layout must match configuration"
     The deck configuration (`jubilee_api_config/motion_platform_positions.json`) defines exact positions for wells, scale, dispensers, and the tool dock. **If you move any labware, you MUST update the configuration to match.** Otherwise, the machine will not detect the change.
-- Position calibration is required maintenance. Re-verify positions after any significant physical disturbance to the machine (e.g. machine was diassembled and reassembled, new deck/labware, collisions).
+
+    Position calibration is required maintenance. Re-verify positions after any significant physical disturbance to the machine (for example, disassembly and reassembly, new deck or labware, or collisions).
 
 ---
 
@@ -84,7 +85,8 @@ There are several ways to stop the machine mid-run:
 2. Press the red stop button on the user interface home screen.
 3. Turn off the Jubilee power switch.
 
-After an emergency stop, the machine is in an unknown position. **You must manually park the tool, cycle power to the Jubilee, and re-home all axes before resuming operation.**
+!!! danger "After an emergency stop..."
+    ...the machine is in an unknown position. You must manually park the tool, cycle power to the Jubilee, and re-home all axes before resuming operation.
 
 ### Long Runs and Unattended Operation
 

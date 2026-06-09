@@ -114,7 +114,8 @@ See [Web Frontend Reference](../api/gui/jubilee-gui.md) and
 - Serve REST endpoints for discrete commands (connect, start/stop/abort job, etc.)
 - Push a continuous 4 Hz telemetry frame to all connected browsers via WebSocket
 - Translate between the async FastAPI event loop and the synchronous `JubileeManager` API
-- Manage job lifecycle (start, progress tracking, log file writing)
+- Manage job lifecycle (start, progress tracking, `JobLog` persistence)
+- Optionally upload completed logs to Google Drive when `google_drive.enabled` is true
 
 **Key Design**:
 
@@ -124,6 +125,9 @@ See [Web Frontend Reference](../api/gui/jubilee-gui.md) and
   state updates at 4 Hz without issuing repeated REST calls
 - Job progress is tracked in a shared `JobProgress` object threaded through server
   endpoints and the hardware manager
+- Completed jobs are written as JSON by `JobLog` (`metadata` + `state.molds` or
+  `state.samples`). When Drive backup is enabled, `JobDriveBackup` exports CSV
+  and image artifacts before upload
 
 ### 3. Coordination Layer
 
@@ -204,7 +208,7 @@ The state machine tracks:
 
 - **Jubilee Machine**: CNC motion platform (via science-jubilee library)
 - **Scale Hardware**: Precision balance (via serial connection)
-- **Deck/Labware**: Physical deck layout and labware definitions
+- **Deck/Labware**: Physical deck layout and labware definitions (`Mold`, `MoldSet` in `trickler_labware`)
 
 **Responsibilities**:
 
@@ -303,7 +307,7 @@ sequenceDiagram
     
     JM->>M: pick_mold_from_scale()
     JM->>SM: validated_move_to_dispenser()
-    JM->>SM: validated_retrieve_piston(...)
+    JM->>JM: get_piston_from_dispenser()
     JM->>SM: validated_move_to_mold_slot("0")
     JM->>M: place_mold("0")
     
@@ -313,6 +317,9 @@ sequenceDiagram
 ## Key Design Principles
 
 ### Safety Through Validation
+
+!!! warning "All movements pass through the state machine"
+    Direct G-code or science-jubilee moves that bypass the state machine will desynchronize internal position tracking. Use validated paths for all automated operation.
 
 All movements must pass through the state machine validator. This prevents:
 
@@ -345,9 +352,12 @@ When operations fail:
 - Clear error messages explain what went wrong
 - System state remains consistent
 - No silent failures
-- Failed operations return False/ValidationResult
+- Failed operations return ``False`` or an invalid ``MoveValidationResult``
 
 ### Configuration-Driven
+
+!!! note "Config is the source of truth"
+    Machine behavior comes from checked-in JSON under `jubilee_api_config/`, loaded via `ConfigLoader` and `PositionRegistry`. See the [Configuration Guide](../how-to/configuration.md).
 
 Physical parameters are in configuration files, not code:
 
@@ -366,11 +376,12 @@ To add new operations, hardware, or positions, follow the same layered pattern:
 
 See [JubileeManager](../api/jubilee-manager.md) and [MotionPlatformStateMachine](../api/motion-platform.md) for implementation specifics.
 
-## Next Steps
+## See Also
 
-- Review the [Glossary](glossary.md) for terminology
-- Explore [JubileeManager API](../api/jubilee-manager.md)
-- Understand [State Machine Details](../api/motion-platform.md)
-- Explore the [Web Frontend Reference](../api/gui/jubilee-gui.md) for the REST API and React application
-- Explore the [Jubilee Store Reference](../api/gui/jubilee-view-model.md) for the ViewModel layer
+- [Glossary](glossary.md) for terminology
+- [JubileeManager API](../api/jubilee-manager.md)
+- [State Machine Details](../api/motion-platform.md)
+- [Web Frontend Reference](../api/gui/jubilee-gui.md) for the REST API and React application
+- [Jubilee Store Reference](../api/gui/jubilee-view-model.md) for the ViewModel layer
+- [Best Practices](best-practices.md) for safe operation
 

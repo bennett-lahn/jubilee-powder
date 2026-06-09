@@ -3,7 +3,7 @@ Scale and trickler test script.
 
 Connects to the SIR scale and optionally the Jubilee machine for trickler
 experiments. Mode 6 runs the production trickler loop using trickler settings
-from ``jubilee_api_config/system_config.json``, with unstable weight reads in
+from ``api_config/system_config.json``, with unstable weight reads in
 coarse phase and stable reads in fine phase (no SIR streaming).
 """
 
@@ -1105,11 +1105,7 @@ def execute_fill_powder_mode(
         machine.connect()
         print("Jubilee connected!")
 
-        executor = MovementExecutor(
-            machine,
-            scale,
-            feedrate=config.get_default_feedrate(),
-        )
+        executor = MovementExecutor(machine, scale)
 
         for trial_num in range(1, num_trials + 1):
             print("\n" + "=" * 60)

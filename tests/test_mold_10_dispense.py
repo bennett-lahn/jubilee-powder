@@ -34,7 +34,7 @@ from science_jubilee.Machine import Machine
 from src.Scale import Scale
 from src.MotionPlatformStateMachine import MotionPlatformStateMachine
 from src.Manipulator import Manipulator
-from jubilee_api_config.constants import FeedRate
+from api_config.constants import FeedRate
 from src.ConfigLoader import config
 from tests.hardware_helpers import (
     TestError,
@@ -65,7 +65,7 @@ def main():
     # Resolve config path relative to project root
     project_root = Path(__file__).parent.parent
     STATE_MACHINE_CONFIG = str(
-        project_root / "jubilee_api_config" / "motion_platform_positions.json"
+        project_root / "api_config" / "motion_platform_positions.json"
     )
     TARGET_WEIGHT = 0.25  # grams
     MOLD_ID = "10"  # Mold number to work with
@@ -122,7 +122,7 @@ def main():
 
         # Initialize deck (required for well operations)
         print("Initializing deck...")
-        deck_config_path = str(project_root / "jubilee_api_config")
+        deck_config_path = str(project_root / "api_config")
         state_machine.initialize_deck(config_path=deck_config_path)
         print_success("Deck initialized")
 

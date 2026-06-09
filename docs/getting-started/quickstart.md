@@ -4,12 +4,14 @@ This guide will walk you through creating your first Jubilee powder dispensing s
 
 ## Prerequisites
 
-Before starting, ensure you have:
+!!! info "Before you start"
+    Confirm each item below before running your first script:
 
-- [ ] Jubilee Powder installed (see [Overview](overview.md))
-- [ ] Jubilee machine powered on and network-accessible
-- [ ] Scale connected via USB
-- [ ] Configuration files set up in `jubilee_api_config/`
+    - [ ] Jubilee Powder installed (see [Overview](overview.md))
+    - [ ] Jubilee machine powered on and network-accessible
+    - [ ] Scale connected via USB
+    - [ ] Configuration files set up in `jubilee_api_config/`
+    - [ ] Deck clear of obstructions (homing runs during `connect()`)
 
 ## Your First Script
 
@@ -195,29 +197,24 @@ If `dispense_to_well()` returns `False`:
 
 ## Advanced Features
 
-### Using Tamping
+### Tamping
 
-For more control over powder compression, you can enable tamping before piston insertion:
+`dispense_to_well()` always tamps powder before piston insertion, using
+`tamp_depth_default` and `tamp_speed_default` from the `manipulator` section of
+`jubilee_api_config/system_config.json`. Adjust those values in config rather than
+passing extra arguments to `dispense_to_well()` (it accepts only `well_id` and
+`target_weight`).
 
-```python
-# Enable tamping in dispense operation
-success = manager.dispense_to_well(
-    well_id="0",
-    target_weight=50.0,
-    use_tamping=True  # Compresses powder before inserting piston
-)
-```
+See the [Manipulator API](../api/manipulator.md#tamping-operations) for manual tamp
+control outside the full dispense workflow.
 
-See the [Manipulator API](../api/manipulator.md#tamping-operations) for more details on tamping.
+## See Also
 
-## Next Steps
-
-Now that you have a working script:
-
-- Learn about [system architecture](../concepts/architecture.md)
-- Explore [how-to guides](../how-to/run-new-data.md) for specific tasks
-- Review the [JubileeManager API](../api/jubilee-manager.md) reference
-- Understand the [state machine](../api/motion-platform.md) for advanced control
+- [System architecture](../concepts/architecture.md)
+- [How-to guides](../how-to/run-new-data.md) for specific tasks
+- [JubileeManager API](../api/jubilee-manager.md) reference
+- [State machine](../api/motion-platform.md) for advanced control
+- [Best Practices](../concepts/best-practices.md) for safe operation
 
 ## Tips
 

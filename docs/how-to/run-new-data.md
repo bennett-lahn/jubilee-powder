@@ -1,29 +1,38 @@
 # Run Operations on New Data
 
-Use this workflow when you want to run jobs against a new recipe set or a different mold/sample selection.
+Use this workflow when you want to run jobs against a new recipe set or a different mold or sample selection.
 
-## Recommended path
+## Overview
 
-For daily operation, use the web UI:
+=== "Web UI (recommended)"
 
-- [Using the Jubilee Powder UI](using-gui.md)
-- [Building and Running the Web UI](running.md)
+    For daily operation, use the browser interface:
 
-For scripted runs, use `JubileeManager` with config-driven setup.
+    1. [Building and Running the Web UI](running.md) - start the server
+    2. [Using the Jubilee Powder UI](using-gui.md) - configure, connect, and submit jobs
+    3. [Interpreting Results](results.md) - review job logs on the Data screen
 
-## 1) Verify configuration
+=== "Python scripts"
 
-Before running, confirm:
+    For scripted runs, use `JubileeManager` with config-driven setup. See [Quick Start Guide](../getting-started/quickstart.md).
 
-- `system_config.json` has correct machine IP, scale port, dispenser counts, and tamp/trickler settings.
-- `motion_platform_positions.json` contains the positions used by your workflow.
+## Prerequisites
 
-See:
+!!! info "Before your first run on new data"
+    - [ ] `system_config.json` has correct machine IP, scale port, dispenser counts, and tamp or trickler settings
+    - [ ] `motion_platform_positions.json` contains the positions used by your workflow
+    - [ ] Deck is clear and labware matches configuration
+    - [ ] Machine is idle and connected (or ready to connect)
 
-- [Configuration Guide](configuration.md)
-- [Position Config API](../api/position-config.md)
+See [Configuration Guide](configuration.md) and [Position Config API](../api/position-config.md).
 
-## 2) Prepare input payload
+## Steps
+
+### 1. Verify configuration
+
+Confirm `jubilee_api_config/` matches your physical setup. If you moved labware, update position config first.
+
+### 2. Prepare input payload
 
 Dispensing job payload shape:
 
@@ -49,24 +58,35 @@ Hardness job payload shape:
 }
 ```
 
-## 3) Run and monitor
+### 3. Run and monitor
 
-- Start from idle state.
-- Submit one small test job first.
-- Monitor progress on Home screen (`running`, `completed`, `current_item`, `error`).
+1. Start from idle state.
+2. Submit one small test job first (single well or sample).
+3. Monitor progress on the Home screen (`running`, `completed`, `current_item`, `error`).
 
-## 4) Review output
+!!! warning "Supervise the first run"
+    Sit at the machine with access to the emergency stop for the first execution on new data. See [Best Practices](../concepts/best-practices.md).
+
+### 4. Review output
 
 Results are written as job log files in `frontend/api/files/`.
 Use the Data screen or `/api/files` endpoints to inspect them.
 
-See:
+See [Interpreting Results](results.md).
 
-- [Interpreting Results](results.md)
-- [Web Frontend Reference](../api/gui/jubilee-gui.md)
+### 5. Scale up
 
-## 5) Safety notes
+After a successful validation batch, run the full recipe set.
+
+## Safety Notes
 
 - Do not bypass configured motion transitions.
-- If machine enters `error`, reconnect before starting a new job.
+- If the machine enters `error`, reconnect before starting a new job.
 - Prefer small validation batches before full production runs.
+
+## See Also
+
+- [Using the Jubilee Powder UI](using-gui.md)
+- [Interpreting Results](results.md)
+- [Web Frontend Reference](../api/gui/jubilee-gui.md)
+- [Best Practices](../concepts/best-practices.md)

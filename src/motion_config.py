@@ -1,5 +1,13 @@
-"""
-Pydantic models for jubilee_api_config/motion_platform_positions.json.
+"""Pydantic models for ``api_config/motion_platform_positions.json``.
+
+Validated JSON is converted into runtime descriptors by
+:class:`~src.MotionPlatformStateMachine.PositionRegistry`. Tool names referenced
+in position requirements come from :mod:`src.ConfigLoader`, not a second copy of
+``system_config.json``.
+
+Note:
+    The state machine reads this file once at ``connect()``. Restart or
+    reconnect after editing the JSON on disk.
 """
 
 from __future__ import annotations
@@ -15,16 +23,22 @@ _SAFETY_CRITICAL_ACTIONS = frozenset({"retrieve_piston", "tamp_mold"})
 
 
 class ZHeightEntry(BaseModel):
+    """Named Z level from the ``z_heights`` map."""
+
     description: str = ""
     z_coordinate: float
 
 
 class ZHeightPolicyConfig(BaseModel):
+    """Allowed and required z-height ids for a position."""
+
     allowed: list[str] = Field(default_factory=list)
     required: str | None = None
 
 
 class CoordinatesConfig(BaseModel):
+    """Axis coordinates for a position entry."""
+
     x: float | None = None
     y: float | None = None
     z: float | str | None = None
@@ -32,11 +46,27 @@ class CoordinatesConfig(BaseModel):
 
 
 class EngagementConfig(BaseModel):
+    """Tool engagement requirements and permitted actions at a position."""
+
     requirements: dict[str, Any] = Field(default_factory=dict)
     allowed_actions: list[str] = Field(default_factory=list)
 
 
 class MotionPositionConfig(BaseModel):
+    """Single entry from the ``positions`` array.
+
+    Attributes:
+        id: Lowercase position identifier (for example ``scale_ready``).
+        type: UPPER_CASE type name used for transition expansion.
+        allowed_origins: Positions or types permitted as move sources.
+        allowed_destinations: Positions or types permitted as move targets.
+        requirements: Context fields that must match before arrival.
+        z_height_policy: Allowed and required z-height ids at this position.
+        coordinates: Optional axis coordinates; ``z`` may be
+            ``USE_Z_HEIGHT_POLICY``.
+        engagement: Optional tool-engagement requirements and allowed actions.
+    """
+
     id: str
     type: str
     allowed_origins: list[str]
@@ -52,6 +82,7 @@ class MotionPositionConfig(BaseModel):
 
     @model_validator(mode="after")
     def z_policy_when_use_z_height_policy(self) -> "MotionPositionConfig":
+        """Require z-height policy when ``coordinates.z`` is ``USE_Z_HEIGHT_POLICY``."""
         if (
             self.coordinates is not None
             and self.coordinates.z == "USE_Z_HEIGHT_POLICY"
@@ -66,6 +97,18 @@ class MotionPositionConfig(BaseModel):
 
 
 class MotionActionConfig(BaseModel):
+    """Single entry from the ``actions`` array.
+
+    Attributes:
+        id: Action identifier referenced from validated FSM methods.
+        position_scope: Position ids or types where the action may run.
+        requirements: Context fields that must match before execution.
+        excludes: Inverse of ``requirements``; matching values block the action.
+        required_tool_id: Tool name that must be active, if any.
+        requires_tool_engaged: Whether the tool must be in the engaged state.
+        blocked_when_engaged: Whether engagement blocks this action.
+    """
+
     id: str
     position_scope: list[str] = Field(default_factory=list)
     requirements: dict[str, Any]
@@ -77,6 +120,7 @@ class MotionActionConfig(BaseModel):
 
     @model_validator(mode="after")
     def safety_critical_action_fields(self) -> "MotionActionConfig":
+        """Enforce scope and requirements on safety-critical actions."""
         if self.id not in _SAFETY_CRITICAL_ACTIONS:
             return self
         if not self.position_scope:
@@ -87,6 +131,8 @@ class MotionActionConfig(BaseModel):
 
 
 class MotionPlatformConfig(BaseModel):
+    """Root model for ``motion_platform_positions.json``."""
+
     z_heights: dict[str, ZHeightEntry]
     positions: list[MotionPositionConfig] = Field(min_length=1)
     actions: list[MotionActionConfig]
@@ -94,6 +140,7 @@ class MotionPlatformConfig(BaseModel):
 
     @model_validator(mode="after")
     def required_z_height_ids(self) -> "MotionPlatformConfig":
+        """Ensure required z-height ids are present."""
         missing = _REQUIRED_Z_HEIGHT_IDS - set(self.z_heights.keys())
         if missing:
             raise ValueError(
@@ -105,7 +152,17 @@ class MotionPlatformConfig(BaseModel):
 
 
 def load_motion_platform_config(payload: dict[str, Any]) -> MotionPlatformConfig:
-    """Parse and validate motion platform JSON payload."""
+    """Parse and validate a motion platform JSON payload.
+
+    Args:
+        payload: Decoded contents of ``motion_platform_positions.json``.
+
+    Returns:
+        Validated :class:`MotionPlatformConfig`.
+
+    Raises:
+        ConfigError: If validation fails.
+    """
     try:
         return MotionPlatformConfig.model_validate(payload)
     except Exception as exc:
@@ -113,7 +170,14 @@ def load_motion_platform_config(payload: dict[str, Any]) -> MotionPlatformConfig
 
 
 def supported_tool_ids_from_system_config() -> frozenset[str]:
-    """Collect tool names from the validated ConfigLoader singleton."""
+    """Collect registered tool names from the :mod:`src.ConfigLoader` singleton.
+
+    Includes manipulator and hardness tester tool names from
+    ``system_config.json``.
+
+    Returns:
+        Frozen set of tool name strings.
+    """
     from src.ConfigLoader import config as cfg
 
     tool_ids: set[str] = set()

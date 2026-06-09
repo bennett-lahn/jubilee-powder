@@ -1,417 +1,218 @@
-# PistonDispenser API Reference
+# PistonDispenser
 
-The `PistonDispenser` class manages containers that hold and dispense cylindrical pistons. It tracks the number of available pistons and their positions.
+The `PistonDispenser` class tracks piston inventory for one side-mounted dispenser station. Physical retrieval is executed by the motion platform and manipulator; this class decrements the count after each successful retrieval.
 
-## Overview
+=== "Operator Guide"
 
-PistonDispensers:
+    !!! warning "Prefer JubileeManager"
+        Production workflows should call `JubileeManager.move_to_dispenser()` and `get_piston_from_dispenser()` rather than manipulating dispenser state directly.
 
-- Hold multiple pistons in a vertical stack
-- Dispense pistons one at a time from the top
-- Track remaining piston count
-- Integrate with the state machine for validated retrieval
+    ## Overview
 
-## Class Reference
+    Each `PistonDispenser` instance:
 
-::: src.PistonDispenser.PistonDispenser
-    options:
-      members: true
-      show_root_heading: true
-      show_source: false
-      filters:
-        - "!^_[^_]"  # Hide private methods (except __init__)
+    - Tracks remaining piston count for one dispenser index
+    - Exposes the motion platform ready position name (`dispenser_ready_N`)
+    - Decrements count via `remove_piston()` after validated retrieval
 
-## Usage Examples
+    ## Usage Examples
 
-### Creating a Dispenser
+    ### Creating a Dispenser
 
-```python
-from src.PistonDispenser import PistonDispenser
+    ```python
+    from src.PistonDispenser import PistonDispenser
 
-# Create dispenser with state machine reference
-dispenser = PistonDispenser(
-    index=0,                      # Dispenser index (0, 1, etc.)
-    num_pistons=10,              # Initial piston count
-    state_machine=state_machine   # Reference to state machine
-)
-```
+    dispenser = PistonDispenser(
+        index=0,
+        num_pistons=10,
+    )
+    print(dispenser.ready_pos)  # "dispenser_ready_0"
+    ```
 
-### Basic Operations
+    ### Basic Operations
 
-```python
-# Check piston count
-print(f"Pistons available: {dispenser.num_pistons}")
+    ```python
+    print(f"Pistons available: {dispenser.num_pistons}")
 
-# Dispense a piston (decrements count)
-dispenser.dispense_piston()
-print(f"Pistons remaining: {dispenser.num_pistons}")
+    dispenser.remove_piston()
+    print(f"Pistons remaining: {dispenser.num_pistons}")
 
-# Check if empty
-if dispenser.num_pistons == 0:
-    print("Dispenser is empty!")
-```
+    if dispenser.num_pistons == 0:
+        print("Dispenser is empty!")
+    ```
 
-### Integration with JubileeManager
+    `remove_piston()` raises `ValueError` when the dispenser is already empty.
 
-Typically used through JubileeManager:
+    ### Integration with JubileeManager
 
-```python
-from src.JubileeManager import JubileeManager
+    ```python
+    from src.JubileeManager import JubileeManager
 
-manager = JubileeManager(
-    num_piston_dispensers=2,
-    num_pistons_per_dispenser=10
-)
+    manager = JubileeManager(
+        num_piston_dispensers=2,
+        num_pistons_per_dispenser=10,
+    )
+    manager.connect()
 
-manager.connect()
+    manager.move_to_dispenser()
+    manager.get_piston_from_dispenser()
 
-# Move to next available dispenser and retrieve a piston
-manager.move_to_dispenser()
-manager.get_piston_from_dispenser()
+    for dispenser in manager.piston_dispensers:
+        print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
+    ```
 
-# Check remaining pistons
-for dispenser in manager.piston_dispensers:
-    print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
-```
+    ## Piston Tracking
 
-## Piston Tracking
+    The count decrements only after the state machine completes a validated retrieval:
 
-### Automatic Count Management
+    ```python
+    dispenser = PistonDispenser(index=0, num_pistons=5)
+    print(dispenser.num_pistons)  # 5
+    dispenser.remove_piston()
+    print(dispenser.num_pistons)  # 4
+    ```
 
-The dispenser automatically decrements the piston count:
+    Before attempting retrieval, check availability:
 
-```python
-dispenser = PistonDispenser(index=0, num_pistons=5, state_machine=sm)
+    ```python
+    if dispenser.num_pistons > 0:
+        dispenser.remove_piston()
+    else:
+        print("Dispenser empty - needs refilling")
+    ```
 
-print(dispenser.num_pistons)  # 5
-dispenser.dispense_piston()
-print(dispenser.num_pistons)  # 4
-dispenser.dispense_piston()
-print(dispenser.num_pistons)  # 3
-```
+    ## Position Configuration
 
-### Checking Availability
+    Dispenser ready positions live in `motion_platform_positions.json`. Each entry uses the `DISPENSER_READY` type and requires the manipulator tool with a mold that has no top piston:
 
-Before attempting to retrieve a piston:
-
-```python
-if dispenser.num_pistons > 0:
-    dispenser.dispense_piston()
-    print("Piston retrieved")
-else:
-    print("Dispenser empty - needs refilling")
-```
-
-## Position Configuration
-
-Dispenser positions are configured in `mold_labware.json`:
-
-```json
-{
-  "deck": {
-    "labware": {
-      "piston_dispenser_0": {
-        "type": "piston_dispenser",
-        "name": "Dispenser 0",
-        "position": {"x": 200, "y": 50, "z": 20},
-        "ready_pos": "dispenser_0_ready",
-        "capacity": 20,
-        "piston_height": 50.0,
-        "piston_diameter": 10.0,
-        "stack_spacing": 2.0
+    ```json
+    {
+      "id": "dispenser_ready_0",
+      "type": "DISPENSER_READY",
+      "description": "Ready position for dispenser station 0.",
+      "coordinates": {
+        "x": 298.0,
+        "y": 140.0,
+        "z": 95.0,
+        "v": 34.0
+      },
+      "requirements": {
+        "active_tool_id": "manipulator",
+        "payload_state": "mold_without_top_piston"
       }
     }
-  }
-}
-```
+    ```
 
-Corresponding state machine position in `motion_platform_positions.json`:
+    Initial dispenser counts are set at connection time via `system_config.json`:
 
-```json
-{
-  "positions": {
-    "dispenser_0_ready": {
-      "coordinates": {"x": 200, "y": 50, "z": 100, "safe_z": 150},
-      "description": "Ready position for piston dispenser 0",
-      "requires_tool": "manipulator",
-      "allowed_payloads": ["mold_without_top_piston"]
+    ```json
+    {
+      "machine": {
+        "num_dispensers": 2,
+        "pistons_per_dispenser": 10
+      }
     }
-  }
-}
-```
+    ```
 
-## Height Calculations
+    See [Position Configuration](position-config.md) for adding new dispenser stations.
 
-### Stack Height
+    ## Retrieval Workflow
 
-The dispenser calculates the height of the top piston based on:
+    When `JubileeManager.get_piston_from_dispenser()` runs:
 
-- Base position
-- Number of remaining pistons
-- Piston height
-- Stack spacing
+    1. Validates the machine is at `dispenser_ready_N` for the target dispenser
+    2. Confirms manipulator tool is active and payload is `mold_without_top_piston`
+    3. Executes the `retrieve_piston` motion action
+    4. Decrements `num_pistons` on success
 
-```python
-# Internal calculation (simplified)
-top_piston_z = base_z + (num_pistons * piston_height) + ((num_pistons - 1) * stack_spacing)
-```
+    ## Multiple Dispensers
 
-### Retrieval Position
+    ```python
+    manager = JubileeManager(
+        num_piston_dispensers=3,
+        num_pistons_per_dispenser=10,
+    )
+    manager.connect()
 
-When retrieving a piston:
-
-1. Calculate current top piston height
-2. Move V-axis to approach height (slightly above piston)
-3. Descend to grip height
-4. Close gripper
-5. Ascend with piston
-6. Decrement count
-
-## Multiple Dispensers
-
-### Working with Multiple Dispensers
-
-```python
-# Initialize multiple dispensers via JubileeManager
-manager = JubileeManager(
-    num_piston_dispensers=3,
-    num_pistons_per_dispenser=10
-)
-
-manager.connect()
-
-# Access all dispensers
-for dispenser in manager.piston_dispensers:
-    print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
-
-# Move to next available dispenser and retrieve a piston
-manager.move_to_dispenser()
-manager.get_piston_from_dispenser()
-
-# Check which dispenser has pistons
-for dispenser in manager.piston_dispensers:
-    if dispenser.num_pistons > 0:
-        print(f"Dispenser {dispenser.index} has pistons available")
-        break
-```
-
-### Load Balancing
-
-Distribute piston usage across dispensers:
-
-```python
-def get_piston_from_any_dispenser(manager):
-    """Get piston from first available dispenser."""
     for dispenser in manager.piston_dispensers:
         if dispenser.num_pistons > 0:
             manager.move_to_dispenser()
             manager.get_piston_from_dispenser()
-            return dispenser.index
-    
-    raise RuntimeError("No dispensers have pistons available")
-```
-
-## State Machine Integration
-
-### Validated Retrieval
-
-Piston retrieval goes through state machine validation:
-
-```python
-from src.MotionPlatformStateMachine import MotionPlatformStateMachine
-
-# Retrieve piston with validation
-result = state_machine.validated_retrieve_piston(
-    manipulator_config=manipulator._get_config_dict()
-)
-
-if result.valid:
-    print("Piston retrieved successfully")
-else:
-    print(f"Retrieval failed: {result.reason}")
-```
-
-### Requirements for Retrieval
-
-- Must be at dispenser ready position
-- Manipulator tool must be active
-- Payload must be `"mold_without_top_piston"` (retrieving into a mold)
-- Dispenser must have pistons available
-
-## Error Handling
-
-### Empty Dispenser
-
-```python
-try:
-    if dispenser.num_pistons == 0:
-        raise RuntimeError("Dispenser is empty")
-    
-    dispenser.dispense_piston()
-    
-except RuntimeError as e:
-    print(f"Cannot dispense: {e}")
-    # Handle refill or switch dispenser
-```
-
-### Failed Retrieval
-
-```python
-result = state_machine.validated_retrieve_piston(
-    manipulator_config=config
-)
-
-if not result.valid:
-    print(f"Retrieval failed: {result.reason}")
-    
-    # Common reasons:
-    # - "Dispenser has no pistons"
-    # - "Not at dispenser position"
-    # - "Wrong payload state"
-    # - "Wrong tool active"
-```
-
-## Refilling Dispensers
-
-### Manual Refill
-
-```python
-def refill_dispenser(dispenser, num_pistons):
-    """Manually refill a dispenser."""
-    dispenser.num_pistons = num_pistons
-    print(f"Dispenser {dispenser.index} refilled with {num_pistons} pistons")
-
-# Refill when empty
-for dispenser in manager.piston_dispensers:
-    if dispenser.num_pistons == 0:
-        refill_dispenser(dispenser, 10)
-```
-
-!!! note "Physical Refill Required"
-    The software doesn't physically refill the dispenser. You must manually add pistons to the physical dispenser, then update the count in software.
-
-### Tracking Usage
-
-```python
-def track_dispenser_usage(manager, operation_count):
-    """Track piston usage statistics."""
-    initial_counts = {d.index: d.num_pistons for d in manager.piston_dispensers}
-    
-    # Perform operations...
-    
-    final_counts = {d.index: d.num_pistons for d in manager.piston_dispensers}
-    
-    print("Piston Usage:")
-    for index in initial_counts:
-        used = initial_counts[index] - final_counts[index]
-        print(f"  Dispenser {index}: {used} pistons used")
-```
-
-## Best Practices
-
-### Check Before Dispensing
-
-Always verify pistons are available:
-
-```python
-# GOOD
-if dispenser.num_pistons > 0:
-    dispenser.dispense_piston()
-else:
-    print("Need to refill")
-
-# BAD
-dispenser.dispense_piston()  # Might go negative!
-```
-
-### Monitor Levels
-
-Track dispenser levels during operations:
-
-```python
-def dispense_with_monitoring(manager, well_list):
-    """Dispense to wells with dispenser monitoring."""
-    for well_id in well_list:
-        # Check dispenser levels
-        available = sum(d.num_pistons for d in manager.piston_dispensers)
-        
-        if available == 0:
-            print("All dispensers empty - stopping")
             break
-        
-        if available < 5:
-            print(f"Warning: Only {available} pistons remaining")
-        
-        # Perform dispense
-        manager.dispense_to_well(well_id, target_weight=50.0)
-```
+    ```
 
-### Coordinate Multiple Dispensers
+    ## State Machine Integration
 
-Use all dispensers efficiently:
+    Advanced callers can invoke validation directly after moving to a dispenser ready position:
 
-```python
-def select_dispenser(manager):
-    """Select dispenser with most pistons."""
-    return max(manager.piston_dispensers, key=lambda d: d.num_pistons)
+    ```python
+    result = state_machine.validated_retrieve_piston(
+        manipulator_config=manipulator._get_config_dict()
+    )
 
-# Use the fullest dispenser
-dispenser = select_dispenser(manager)
-if dispenser.num_pistons > 0:
-    manager.move_to_dispenser()
-    manager.get_piston_from_dispenser()
-```
+    if result.valid:
+        print("Piston retrieved successfully")
+    else:
+        print(f"Retrieval failed: {result.reason}")
+    ```
 
-## Configuration Examples
+    Requirements:
 
-### Single Dispenser Setup
+    - Current position must be `dispenser_ready_N`
+    - Manipulator tool must be active
+    - Payload must be `mold_without_top_piston`
+    - Dispenser must have pistons available
 
-```json
-{
-  "deck": {
-    "labware": {
-      "main_dispenser": {
-        "type": "piston_dispenser",
-        "name": "Main Piston Dispenser",
-        "position": {"x": 200, "y": 50, "z": 20},
-        "ready_pos": "dispenser_0_ready",
-        "capacity": 30,
-        "piston_height": 45.0,
-        "piston_diameter": 8.0,
-        "stack_spacing": 1.5
-      }
-    }
-  }
-}
-```
+    ## Error Handling
 
-### Multiple Dispenser Setup
+    ```python
+    try:
+        dispenser.remove_piston()
+    except ValueError as e:
+        print(f"Cannot dispense: {e}")
+    ```
 
-```json
-{
-  "deck": {
-    "labware": {
-      "dispenser_0": {
-        "type": "piston_dispenser",
-        "position": {"x": 200, "y": 50, "z": 20},
-        "ready_pos": "dispenser_0_ready",
-        "capacity": 20
-      },
-      "dispenser_1": {
-        "type": "piston_dispenser",
-        "position": {"x": 250, "y": 50, "z": 20},
-        "ready_pos": "dispenser_1_ready",
-        "capacity": 20
-      }
-    }
-  }
-}
-```
+    Common `validated_retrieve_piston` failure reasons:
+
+    - Dispenser has no pistons
+    - Not at a `dispenser_ready` position
+    - Wrong payload state or tool active
+
+    ## Refilling Dispensers
+
+    ```python
+    def refill_dispenser(dispenser, num_pistons):
+        dispenser.num_pistons = num_pistons
+        print(f"Dispenser {dispenser.index} refilled with {num_pistons} pistons")
+    ```
+
+    !!! note "Physical refill required"
+        Software only tracks inventory. Load pistons into the physical dispenser, then update `num_pistons` via the refill helper or the web UI `PUT /api/dispensers/{index}` endpoint.
+
+    ## Best Practices
+
+    - Check `num_pistons > 0` before retrieval; never call `remove_piston()` on an empty dispenser.
+    - Monitor levels during batch jobs; stop when all dispensers are empty.
+    - Prefer the fullest dispenser when multiple stations are available.
+
+=== "API Reference"
+
+    ## Class Reference
+
+    ::: src.PistonDispenser.PistonDispenser
+        options:
+          members: true
+          show_root_heading: true
+          show_source: false
+          filters:
+            - "!^_[^_]"
+
+---
 
 ## See Also
 
 - [JubileeManager](jubilee-manager.md) - High-level dispenser operations
 - [MotionPlatformStateMachine](motion-platform.md) - Validated piston retrieval
 - [Manipulator](manipulator.md) - Gripper operations
-- [Configuration Guide](../how-to/configuration.md) - Setting up dispensers
-
+- [Position Configuration](position-config.md) - Adding dispenser ready positions
+- [Configuration Guide](../how-to/configuration.md) - Machine setup

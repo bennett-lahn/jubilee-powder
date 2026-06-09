@@ -67,9 +67,14 @@ The Jubilee uses a tool-changing system where:
 
 The system tracks what the manipulator is holding:
 
-- `empty`: No mold held
-- `mold_without_top_piston`: Holding a mold without top piston
-- `mold_with_top_piston`: Holding a mold with top piston
+`empty`
+: No mold held
+
+`mold_without_top_piston`
+: Holding a mold without top piston
+
+`mold_with_top_piston`
+: Holding a mold with top piston
 
 This enables safe movement validation based on current load.
 
@@ -97,30 +102,31 @@ This enables safe movement validation based on current load.
 
 ## Usage Options
 
-### Automation UI
+=== "Automation UI"
 
-For interactive machine operation with visual feedback, use the web interface documented in [Using the Automation UI](../how-to/using-gui.md).
+    For interactive machine operation with visual feedback, use the web interface documented in [Using the Automation UI](../how-to/using-gui.md).
 
-**Features:**
-- Visual mold and sample selection
-- Real-time weight and job monitoring
-- Hardware configuration and connection lifecycle
-- Safety checks and emergency controls
+    **Features:**
 
-### Python API (Automation)
+    - Visual mold and sample selection
+    - Real-time weight and job monitoring
+    - Hardware configuration and connection lifecycle
+    - Safety checks and emergency controls
 
-For scripted tasks and custom workflows:
+=== "Python API"
 
-```python
-from src.JubileeManager import JubileeManager
+    For scripted tasks and custom workflows:
 
-manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
-manager.connect()
-manager.dispense_to_well("0", 50.0)
-manager.disconnect()
-```
+    ```python
+    from src.JubileeManager import JubileeManager
 
-See [Quick Start Guide](quickstart.md) for details.
+    manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
+    manager.connect()
+    manager.dispense_to_well("0", 50.0)
+    manager.disconnect()
+    ```
+
+    See [Quick Start Guide](quickstart.md) for details.
 
 ## System Requirements
 
@@ -141,36 +147,40 @@ See [Quick Start Guide](quickstart.md) for details.
 ## Installation
 
 1. Clone the repository:
-```bash
-git clone https://github.com/bennett-lahn/jubilee-powder.git
-cd jubilee-powder
-```
+
+    ```bash
+    git clone https://github.com/bennett-lahn/jubilee-powder.git
+    cd jubilee-powder
+    ```
 
 2. Create a virtual environment:
-```bash
-python -m venv jubilee-env
-source jubilee-env/bin/activate  # On Linux/Mac
-# or
-jubilee-env\Scripts\activate  # On Windows
-```
+
+    ```bash
+    python -m venv jubilee-env
+    source jubilee-env/bin/activate  # On Linux/Mac
+    # or
+    jubilee-env\Scripts\activate  # On Windows
+    ```
 
 3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 4. Configure your system:
-   - Edit configuration files in `jubilee_api_config/`. You may need to edit all homing files, tool pickup/place, and config files to match your unique setup. 
-   - Set Jubilee IP address
-   - Configure deck layout
-   - Set up tool positions
 
-## Next Steps
+    !!! warning "Configuration must match your physical setup"
+        Edit files in `jubilee_api_config/`. You may need to update homing files, tool pickup/place macros, and position config to match your unique setup. Set the Jubilee IP address, deck layout, and tool positions before connecting.
 
-- **To launch the web UI:** See [Building and Running](../how-to/running.md) for dev mode, production mode, and Raspberry Pi kiosk setup
-- **For GUI users:** Follow the [GUI User Guide](../how-to/using-gui.md)
-- **For programmers:** Follow the [Quick Start Guide](quickstart.md)
-- **Before your first run:** Read [Best Practices](../concepts/best-practices.md) for hardware safety rules
-- Learn about key concepts in the [Architecture Guide](../concepts/architecture.md)
-- Explore [How-To Guides](../how-to/run-new-data.md) for common tasks
+    - [Configuration Guide](../how-to/configuration.md)
+    - [Position Config API](../api/position-config.md)
 
+## See Also
+
+- **To launch the web UI:** [Building and Running](../how-to/running.md) for dev mode, production mode, and Raspberry Pi kiosk setup
+- **For GUI users:** [GUI User Guide](../how-to/using-gui.md)
+- **For programmers:** [Quick Start Guide](quickstart.md)
+- **Before your first run:** [Best Practices](../concepts/best-practices.md) for hardware safety rules
+- **System design:** [Architecture Guide](../concepts/architecture.md)
+- **Common tasks:** [How-To Guides](../how-to/run-new-data.md)

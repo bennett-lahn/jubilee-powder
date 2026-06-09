@@ -8,27 +8,27 @@ Jubilee Powder is a Python-based system that enables programmatic control of the
 
 ## Quick Navigation
 
-### For Operators
+=== "Operators"
 
-If you're looking to **use** the Jubilee system for your laboratory work:
+    If you are looking to **use** the Jubilee system for laboratory work:
 
-- **Start here:** [Quick Start Guide](getting-started/quickstart.md)
-- **Safety and best practices:** [Best Practices](concepts/best-practices.md)
-- **Learn concepts:** [Architecture Overview](concepts/architecture.md)
-- **Follow recipes:** [How-To Guides](how-to/run-new-data.md)
-- **Use the Automation UI:** [Automation UI Guide](how-to/using-gui.md)
-- **Use the Web UI:** [Web Interface Guide](how-to/web-ui.md)
-- **Read LCD displays:** [LCD Display Reading Guide](how-to/reading-lcd-displays.md)
+    - **Start here:** [Quick Start Guide](getting-started/quickstart.md)
+    - **Safety and best practices:** [Best Practices](concepts/best-practices.md)
+    - **Learn concepts:** [Architecture Overview](concepts/architecture.md)
+    - **Follow recipes:** [How-To Guides](how-to/run-new-data.md)
+    - **Use the Automation UI:** [Automation UI Guide](how-to/using-gui.md)
+    - **Use the Web UI:** [Web Interface Guide](how-to/web-ui.md)
+    - **Read LCD displays:** [LCD Display Reading Guide](how-to/reading-lcd-displays.md)
 
-### For Developers
+=== "Developers"
 
-If you're looking to **extend** or **modify** the system:
+    If you are looking to **extend** or **modify** the system:
 
-- **Core API:** [JubileeManager Reference](api/jubilee-manager.md)
-- **State Machine:** [MotionPlatformStateMachine Reference](api/motion-platform.md)
-- **Frontend Store:** [Jubilee Store Reference](api/gui/jubilee-view-model.md)
-- **LCD Reader:** [HardnessTester Reference](api/hardness-tester.md)
-- **All APIs:** [Complete API Reference](api/jubilee-manager.md)
+    - **Core API:** [JubileeManager Reference](api/jubilee-manager.md)
+    - **State Machine:** [MotionPlatformStateMachine Reference](api/motion-platform.md)
+    - **Frontend Store:** [Jubilee Store Reference](api/gui/jubilee-view-model.md)
+    - **LCD Reader:** [HardnessTester Reference](api/hardness-tester.md)
+    - **All APIs:** [Complete API Reference](api/jubilee-manager.md)
 
 ## What's Important?
 
@@ -42,7 +42,8 @@ The [Automation UI](how-to/using-gui.md) provides a touchscreen-friendly browser
 - Built-in safety checklist
 - Live weight display
 
-**Best choice for interactive operation and monitoring.**
+!!! tip "Best choice for interactive operation"
+    Use the Automation UI for day-to-day dispensing and hardness jobs, monitoring, and hardware setup without writing scripts.
 
 ### Python API: JubileeManager
 
@@ -53,7 +54,8 @@ The [`JubileeManager`](api/jubilee-manager.md) class is your main programming en
 - Connection management for all hardware components
 - Error handling and safety checks
 
-**Use this for scripted automation and custom workflows.**
+!!! tip "Use for scripted automation"
+    Choose JubileeManager when you need custom workflows, batch scripts, or integration with external tools.
 
 ### Frontend Store: Jubilee Store
 
@@ -64,26 +66,25 @@ The [`Jubilee Store`](api/gui/jubilee-view-model.md) coordinates browser state w
 - Job execution management
 - Thread-safe operations
 
-**Use this if customizing or extending the web frontend.**
+!!! note "Frontend extension point"
+    Use the Jubilee Store when customizing or extending the web frontend.
 
 ### Advanced Control: MotionPlatformStateMachine
 
 The [`MotionPlatformStateMachine`](api/motion-platform.md) provides granular control when needed:
 
-> **Advanced Use Only:** Direct state machine access for complex sequences, lower-level movement primitives, and custom validation logic.
-
-**Only use this if JubileeManager doesn't provide what you need.**
+!!! warning "Advanced use only"
+    Direct state machine access is for complex sequences, lower-level movement primitives, and custom validation logic. Only use this if JubileeManager does not provide what you need.
 
 ### LCD Display Reading: HardnessTester
 
 The [`HardnessTester`](api/hardness-tester.md) reads 7-segment LCD displays using segment detection:
 
 - Segment-based recognition (no OCR required)
+- Grayscale, sharpening, CLAHE, and threshold preprocessing pipeline
 - Works with low-contrast displays
 - Calibration system for accurate reading
 - Fast and lightweight (no ML dependencies)
-
-**Use this for reading LCD displays on scales, meters, or other equipment.**
 
 ## Simple Examples
 
@@ -126,22 +127,20 @@ Here's a minimal example of reading a 7-segment LCD display:
 
 ```python
 from src.HardnessTester import HardnessTester
+from src.ConfigLoader import config
 
-# Initialize LCD reader for 4-digit display
-reader = HardnessTester(num_digits=4)
+# Build from system_config.json (lcd_calibration_path per tester mode)
+reader = HardnessTester.from_system_config(
+    tester_mode="shore_a",
+    cfg=config.system.hardness_testers.shore_a,
+)
 
-# Load calibration (one-time setup required)
-reader.load_calibration('lcd_calibration.json')
-
-# Read the display
-result = reader.read_display()
-
-if result and '?' not in result:
-    print(f"LCD shows: {result}")
-    # Convert to number if needed
-    value = int(result)
-else:
-    print("Reading failed or unclear")
+if reader.load_assigned_calibration():
+    result = reader.read_display()
+    if result and "?" not in result:
+        print(f"LCD shows: {result}")
+    else:
+        print("Reading failed or unclear")
 ```
 
 ## Key Features
@@ -152,6 +151,7 @@ else:
 - **LCD Display Reading**: Segment-based recognition for 7-segment displays
 - **Safety Validation**: All movements validated through state machine
 - **Flexible Configuration**: JSON-based configuration system
+- **Job Logging**: Per-job JSON records with optional Google Drive backup (CSV and images)
 - **MVVM Architecture**: Clean separation between React views, store, and backend model
 - **Type Safety**: Full type hints throughout the codebase
 
@@ -183,12 +183,13 @@ The system uses a layered architecture where:
 5. **MotionPlatformStateMachine** validates and executes movements
 6. **Hardware Components** (Jubilee, Scale, Dispensers, Camera) perform physical actions
 
-## Next Steps
+## See Also
 
-- **New to the system?** Start with the [Quick Start Guide](getting-started/quickstart.md)
-- **Ready to use it?** Check out the [How-To Guides](how-to/run-new-data.md)
-- **Need API details?** Browse the [API Reference](api/jubilee-manager.md)
-- **Want to understand the design?** Read the [Architecture Guide](concepts/architecture.md)
+- **New to the system?** [Quick Start Guide](getting-started/quickstart.md)
+- **Ready to use it?** [How-To Guides](how-to/run-new-data.md)
+- **Need API details?** [API Reference](api/jubilee-manager.md)
+- **Want to understand the design?** [Architecture Guide](concepts/architecture.md)
+- **Terminology questions?** [Glossary](concepts/glossary.md)
 
 ## Getting Help
 

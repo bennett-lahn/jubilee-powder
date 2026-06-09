@@ -2,19 +2,22 @@
 
 This glossary defines key terms used throughout the Jubilee Powder system.
 
+!!! tip "How to use this page"
+    Terms are grouped by topic. Payload enums and naming conventions at the end are especially important when reading API docs or job logs.
+
 ## General Terms
 
-### Jubilee
-A tool-changing CNC motion platform developed by the Machine Agency. The base hardware for this automation system.
+Jubilee
+: Tool-changing CNC motion platform developed by the Machine Agency. The base hardware for this automation system.
 
-### Motion Platform
-The physical CNC (Computer Numerical Control) system that provides X, Y, Z positioning and tool changing capabilities.
+Motion Platform
+: Physical CNC (Computer Numerical Control) system that provides X, Y, Z positioning and tool changing capabilities.
 
-### Deck
-The working surface of the Jubilee where labware (molds, dispensers, scale, etc.) is positioned. The deck layout is defined in configuration files.
+Deck
+: Working surface of the Jubilee where labware (molds, dispensers, scale, etc.) is positioned. The deck layout is defined in configuration files.
 
-### Labware
-Physical items placed on the deck, such as well plates, dispensers, scales, and other equipment.
+Labware
+: Physical items placed on the deck, such as well plates, dispensers, scales, and other equipment.
 
 ## Core Components
 
@@ -44,12 +47,24 @@ A container that holds and dispenses cylindrical pistons. Tracks the number of a
 - Dispenses from the top of the stack
 - Tracks available piston count
 
+### Mold (`trickler_labware`)
+Weight-based labware type extending `science_jubilee` `Well`. Tracks powder weight in grams, exposes `well_id` for job logging, and links to a state-machine ready position (e.g. `mold_ready_0`).
+
 ### Trickler
 The powder filling mechanism used to add powder to a mold while it is on the scale.
 
 **Terminology policy**:
 - Use **fill** or **add powder** when referring to powder transfer into a mold
 - Reserve **dispense** for piston-dispenser operations
+
+### JobLog
+Persistent per-job JSON record written when a dispensing or hardness job ends. Tracks planned items, per-well or per-sample results, and job outcome (`successful`, `cancelled`, `aborted`).
+
+**Key features**:
+
+- Sequential job IDs and standardized filenames (`{id:04d}_{date}_{type}_{count}.json`)
+- Dispensing state in `state.molds`; hardness state in `state.samples`
+- Optional Google Drive export of JSON, CSV, and hardness images
 
 ### Scale
 A precision balance for weighing objects. Connected via USB serial connection.
@@ -105,18 +120,14 @@ The state machine's internal representation of the current system state. Include
 
 ## Payload States
 
-### Empty
-The manipulator is not holding any object. This is the default state after homing or after placing an object.
+`empty`
+: Manipulator is not holding any object. Default state after homing or after placing an object.
 
-### Mold Without Top Piston
-The manipulator is holding a mold that does not contain a top piston.
+`mold_without_top_piston`
+: Manipulator is holding a mold that does not contain a top piston.
 
-**Canonical payload enum**: `mold_without_top_piston`
-
-### Mold With Top Piston
-The manipulator is holding a mold that contains a top piston.
-
-**Canonical payload enum**: `mold_with_top_piston`
+`mold_with_top_piston`
+: Manipulator is holding a mold that contains a top piston.
 
 ## Tool Concepts
 
@@ -157,6 +168,13 @@ The speed at which the motion platform moves. Can be set to different values for
 ### Safe Zone
 An area of the deck where movement is known to be safe. The state machine uses safe zones to prevent collisions.
 
+## Backup and Export
+
+### JobDriveBackup
+Google Drive uploader that turns a completed `JobLog` JSON file into a per-job Drive folder (JSON, derived CSV, hardness images). Used when `google_drive.enabled` is true in `system_config.json`.
+
+**When to use**: Automatic background backup after job completion; status is surfaced on the Settings screen.
+
 ## Configuration Terms
 
 ### Configuration File
@@ -195,9 +213,6 @@ The process of compressing powder in a mold held by the manipulator before inser
 2. **Airborne particulate reduction**: Reduces the amount of powder that becomes airborne when the piston is inserted
 
 After tamping, the V axis is automatically re-homed to ensure axis accuracy. Typically performed at the `scale_ready` position after filling the mold.
-
-### Trickler
-A powder dispensing mechanism used to add material to a mold on the scale. Controlled to achieve precise target weights.
 
 ### Well ID
 A unique identifier for a mold position using numerical indexing (e.g., "0", "1", "2"). Used to reference specific locations in the deck layout.
@@ -259,7 +274,10 @@ A 7-bit tuple representing which segments are active in a digit. Example: `(1, 1
 A dictionary mapping segment patterns to digit strings. Used to recognize digits after segment detection.
 
 ### Grayscale Conversion
-The primary image preprocessing step used in the LCD reading pipeline. The BGR camera frame is converted to grayscale before CLAHE and thresholding are applied.
+The first image preprocessing step in the LCD reading pipeline. The BGR camera frame is converted to grayscale before unsharp masking (sharpening, on by default), CLAHE, and thresholding are applied.
+
+### Sharpening (Unsharp Masking)
+Edge recovery applied by default after grayscale conversion and before CLAHE. Uses Gaussian blur and weighted subtraction to sharpen segment boundaries. Controlled by ``sharpen_strength`` (default 31) and ``sharpen_blur_radius`` on ``HardnessTester``; set ``sharpen_strength`` to ``0.0`` to skip.
 
 ### CLAHE (Contrast Limited Adaptive Histogram Equalization)
 An image enhancement algorithm that improves local contrast by dividing the image into small tiles and applying histogram equalization to each.

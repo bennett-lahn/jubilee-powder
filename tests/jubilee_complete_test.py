@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 
 import time
 from src.JubileeManager import JubileeManager
-from jubilee_api_config.constants import FeedRate
+from api_config.constants import FeedRate
 from src.Manipulator import ToolStateError
 from src.trickler_labware import Mold
 
@@ -368,7 +368,7 @@ def main():
             print("  1. Set scale coordinates in JubileeManager.__init__()")
             # Resolve config path relative to project root for display
             project_root = Path(__file__).parent.parent
-            config_dir = project_root / "jubilee_api_config"
+            config_dir = project_root / "api_config"
             print(f"  2. Ensure deck configuration files are in {config_dir}/")
             print("  3. Verify weight_well_labware.json is properly formatted")
             return

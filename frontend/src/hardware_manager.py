@@ -1,22 +1,18 @@
-"""
-Hardware managers for the Jubilee Automation server.
+"""Hardware managers for the Jubilee Automation server.
 
-Both classes below expose an identical public API. Switch between them by
-setting ``MOCK_HARDWARE`` in ``server.py``; no other code needs to change.
+Both classes below expose an identical public API. Switch between them via
+``server._mock_hardware_enabled()`` (config or ``JUBILEE_MOCK_HARDWARE`` env).
 
-MockHardwareManager:
-    Standalone simulation of the Jubilee hardware for UI development. No
-    physical hardware required. Scale readings use a slow sine drift plus
-    Gaussian noise to mimic the real A&D FX-120i serial scale output. Job
-    execution advances ``JobProgress`` in-place via ``asyncio.sleep()`` to
-    produce realistic per-well timing visible through the telemetry WebSocket.
+Note:
+    ``MockHardwareManager`` simulates scale drift and per-well timing with
+    ``asyncio.sleep()``. ``HardwareManager`` wraps real ``JubileeManager`` and
+    offloads blocking I/O through ``asyncio.to_thread()``.
 
-HardwareManager:
-    Production wrapper around the real ``JubileeManager``. All blocking serial
-    or network calls are offloaded to ``asyncio.to_thread()`` so the uvicorn
-    event loop is never stalled. ``JubileeManager`` is imported lazily inside
-    ``connect()`` so the server starts cleanly on developer machines that lack
-    the ``science_jubilee`` package.
+Example:
+    Connect from a background task after HTTP 202::
+
+        await hw.connect(config)
+        weight = await hw.get_weight_stable()
 """
 
 import asyncio
@@ -26,6 +22,10 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.JobLog import JobLog
 
 # Ensure project root is on sys.path for the lazy src.JubileeManager import.
 _project_root = Path(__file__).parent.parent.parent
@@ -168,9 +168,13 @@ class MockHardwareManager:
     """Simulated hardware manager for UI development without physical hardware.
 
     Scale readings use a sine-wave drift plus Gaussian noise to approximate
-    the output of the A&D FX-120i scale. Job loops advance ``JobProgress``
+    the output of the A&D FX-120i scale. Job loops advance :class:`~models.JobProgress`
     via ``asyncio.sleep()`` with per-well delays that match real hardware
     timing, so the WebSocket telemetry looks realistic during development.
+
+    Note:
+        Selected by ``server._mock_hardware_enabled()`` when
+        ``server.mock_hardware`` is true or ``JUBILEE_MOCK_HARDWARE=1``.
     """
 
     def __init__(self) -> None:
@@ -184,10 +188,12 @@ class MockHardwareManager:
 
     @property
     def connected(self) -> bool:
+        """Return whether mock hardware is past the disconnected state."""
         return self.state != MachineState.DISCONNECTED
 
     @property
     def jubilee_ip(self) -> str | None:
+        """Return the configured machine address, or ``None`` when disconnected."""
         if not self.connected or self._config is None:
             return None
         return self._config.machine_address
@@ -274,7 +280,10 @@ class MockHardwareManager:
     # ── Job execution ─────────────────────────────────────────────────────────
 
     async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress, job_log=None
+        self,
+        wells: list[dict],
+        progress: JobProgress,
+        job_log: "JobLog | None" = None,
     ) -> None:
         """Simulate a powder dispensing job.
 
@@ -315,7 +324,10 @@ class MockHardwareManager:
                 self.state = MachineState.IDLE
 
     async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress, job_log=None
+        self,
+        samples: list[dict],
+        progress: JobProgress,
+        job_log: "JobLog | None" = None,
     ) -> None:
         """Simulate a hardness testing job.
 
@@ -384,8 +396,12 @@ class HardwareManager:
 
     All blocking serial or network calls are offloaded via ``asyncio.to_thread()``
     so the uvicorn event loop is never stalled. ``JubileeManager`` is imported
-    lazily inside ``connect()`` so the server starts cleanly on machines that
+    lazily inside :meth:`connect` so the server starts cleanly on machines that
     lack the ``science_jubilee`` package.
+
+    Note:
+        Scale telemetry uses :meth:`~src.Scale.Scale.get_weight_for_telemetry` so
+        the 4 Hz WebSocket loop yields to dispensing commands.
     """
 
     def __init__(self) -> None:
@@ -397,11 +413,12 @@ class HardwareManager:
 
     @property
     def connected(self) -> bool:
-        # Only connected when state is not disconnected and there is a valid _manager object
+        """Return whether a live ``JubileeManager`` session is active."""
         return self.state != MachineState.DISCONNECTED and self._manager is not None
 
     @property
     def jubilee_ip(self) -> str | None:
+        """Return the configured Duet machine address, or ``None`` when disconnected."""
         if not self.connected or self._config is None:
             return None
         return self._config.machine_address
@@ -409,12 +426,20 @@ class HardwareManager:
     # ── Connection lifecycle ───────────────────────────────────────────────────
 
     async def connect(self, config: HardwareConfig) -> None:
-        """
-        Initiate hardware connection.  Called from a background asyncio.Task
-        so the HTTP 202 response returns immediately.
+        """Initiate hardware connection from a background ``asyncio.Task``.
 
-        State transitions:  DISCONNECTED → HOMING → IDLE  (success)
-                            DISCONNECTED → HOMING → ERROR (failure)
+        Called after ``POST /api/hardware/connect`` returns HTTP 202 so the
+        response is not blocked by homing. State transitions::
+
+            DISCONNECTED → HOMING → IDLE   (success)
+            DISCONNECTED → HOMING → ERROR  (failure)
+
+        Args:
+            config: Hardware configuration (dispensers, pistons, IP, serial port).
+
+        Raises:
+            RuntimeError: If ``JubileeManager.connect()`` returns ``False``.
+            Exception: Any other connection failure; state is set to ``ERROR``.
         """
         self._config = config
         self.state = MachineState.HOMING
@@ -523,7 +548,10 @@ class HardwareManager:
     # ── Job execution ─────────────────────────────────────────────────────────
 
     async def run_dispensing_job(
-        self, wells: list[dict], progress: JobProgress, job_log=None
+        self,
+        wells: list[dict],
+        progress: JobProgress,
+        job_log: "JobLog | None" = None,
     ) -> None:
         """Execute a real powder dispensing job via ``JubileeManager``.
 
@@ -594,7 +622,10 @@ class HardwareManager:
                 self.state = MachineState.IDLE
 
     async def run_hardness_job(
-        self, samples: list[dict], progress: JobProgress, job_log=None
+        self,
+        samples: list[dict],
+        progress: JobProgress,
+        job_log: "JobLog | None" = None,
     ) -> None:
         """Execute a hardness testing job via ``JubileeManager``.
 
@@ -679,13 +710,11 @@ class HardwareManager:
                 self.state = MachineState.IDLE
 
     async def abort(self) -> None:
-        """
-        Send M112 to the Duet controller and transition to ERROR state.
+        """Send M112 to the Duet controller and transition to ERROR state.
 
-        Delegates to JubileeManager.abort(), which bypasses the
-        MotionPlatformStateMachine intentionally — see that method's docstring
-        for more information about invariant preservation.  The state is set to ERROR
-        here so the job finally-block cannot silently reset it back to IDLE.
+        Delegates to ``JubileeManager.abort()``, which bypasses the motion
+        state machine intentionally. State is set to ``ERROR`` here so the job
+        ``finally`` block cannot silently reset it back to ``IDLE``.
         """
         if self._manager is not None:
             await asyncio.to_thread(self._manager.abort)  # Bypass state machine

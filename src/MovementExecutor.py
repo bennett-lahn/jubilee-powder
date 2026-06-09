@@ -1,12 +1,19 @@
-"""
-MotionPlatformExecutor - Low-level movement execution for validated state machine moves.
+"""Low-level movement execution for validated state machine moves.
 
-This module contains all the physical movement execution logic for the Jubilee
-motion platform. All methods assume validation has already occurred in the
-MotionPlatformStateMachine.
+:class:`MovementExecutor` contains the physical G-code and hardware sequences for
+the Jubilee motion platform. All ``execute_*`` methods assume validation has
+already occurred in
+:class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`.
 
-The executor is owned by the state machine and is not accessed directly by other
-components, so all movements go through validation.
+Warning:
+    Do not instantiate or call this class from application code. Use
+    ``validated_*`` methods on
+    :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine` so
+    transition rules and coordinate checks stay enforced.
+
+See Also:
+    :doc:`motion-platform API reference </api/motion-platform>` for the public
+    validated interface.
 """
 
 import logging
@@ -25,11 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 class MovementExecutor:
-    """
-    Executes physical movements on the machine after state machine validation.
+    """Executes physical machine moves after state machine validation.
 
-    This class should not be instantiated directly by user code. Instead, it is
-    owned by MotionPlatformStateMachine and accessed through validated methods.
+    Owned internally by :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`.
+    Each ``execute_*`` method maps to one validated action or position transition.
+
+    Warning:
+        Calling executor methods directly bypasses FSM checks and can move the
+        machine from an unsafe pose.
+
+    Attributes:
+        last_fill_weight: Final stable grams from the most recent successful fill.
+        last_hardness_result: Parsed durometer reading from the last test, if any.
+        last_hardness_error: OCR or hardware error string from the last test.
+        last_hardness_image_path: Debug image path from the last test, if saved.
     """
 
     def __init__(
@@ -64,9 +80,11 @@ class MovementExecutor:
 
     @property
     def machine(self) -> Machine:
-        """
-        Read-only access to machine for state queries only.
-        Queries should not modify platform state.
+        """Read-only Jubilee machine access for position and status queries.
+
+        Warning:
+            Do not issue moves through this property. Use state machine
+            ``validated_*`` methods on the state machine instead.
         """
         return self._machine
 
@@ -317,20 +335,23 @@ class MovementExecutor:
         ready_z: float = None,
         ready_v: float = None,
     ) -> bool:
-        """
-        # TODO: DO NOT RUN THIS WITH MORE THAN ONE DISPENSER AS IT CURRENTLY USES ABSOLUTE COORDINATES, NOT RELATIVE
-        Execute movements to place top piston on current mold.
+        """Execute movements to place a top piston on the carried mold.
 
         Args:
-            piston_dispenser: The PistonDispenser with position and piston info
-            tamper_axis: Axis letter for tamper (default 'V')
-            ready_x: X coordinate of dispenser ready position (required)
-            ready_y: Y coordinate of dispenser ready position (required)
-            ready_z: Z coordinate of dispenser ready position (required)
-            ready_v: V coordinate of dispenser ready position (required)
+            piston_dispenser: :class:`~src.PistonDispenser.PistonDispenser` index
+                and inventory metadata.
+            tamper_axis: Tamper axis letter (for example ``"V"``).
+            ready_x: Resolved dispenser ready X coordinate (mm).
+            ready_y: Resolved dispenser ready Y coordinate (mm).
+            ready_z: Resolved dispenser ready Z coordinate (mm).
+            ready_v: Resolved dispenser ready V coordinate (mm).
 
         Returns:
-            True if successful, False otherwise.
+            ``True`` if successful, ``False`` on hardware error.
+
+        Warning:
+            Currently uses absolute Y coordinates and is validated for a single
+            dispenser layout. Confirm machine config before multi-dispenser use.
         """
         try:
             logger.info("Placing top piston from dispenser %s", piston_dispenser.index)
@@ -453,8 +474,16 @@ class MovementExecutor:
         """
         Move the hardness tester to a sample tray ready coordinate.
 
-        The state machine resolves tray and validates tool/position
+        The state machine resolves tray coordinates and validates tool/position
         requirements before this executor is called.
+
+        Args:
+            x: Resolved X machine coordinate.
+            y: Resolved Y machine coordinate.
+            z: Resolved Z machine coordinate.
+
+        Returns:
+            True if successful, False otherwise.
         """
         try:
             feedrate = self._feedrate
@@ -476,6 +505,14 @@ class MovementExecutor:
 
         The state machine resolves the per-slot coordinates and validates
         the slot before this executor is called.
+
+        Args:
+            x: Resolved X machine coordinate.
+            y: Resolved Y machine coordinate.
+            z: Resolved Z machine coordinate.
+
+        Returns:
+            True if successful, False otherwise.
         """
         try:
             feedrate = self._feedrate
@@ -507,6 +544,22 @@ class MovementExecutor:
              until probing hardware is wired up.
           2. Drive the durometer down for contact pressure and read the LCD
              via the HardnessTester.
+
+        Args:
+            tray_index: Zero-based tray index for logging and debug artifacts.
+            sample_id: Sample identifier within the tray.
+            mode: Optional Shore mode string (``"shore_a"`` or ``"shore_d"``).
+            hardness_tester: ``HardnessTester`` instance used for LCD capture.
+            image_save_path: Optional path to persist a debug camera frame.
+
+        Returns:
+            True when the executor finishes (including OCR stub paths). OCR
+            failures are recorded on ``last_hardness_error`` rather than
+            returning False.
+
+        Note:
+            Results are stored on ``last_hardness_result``,
+            ``last_hardness_error``, and ``last_hardness_image_path``.
         """
         self.last_hardness_result = None
         self.last_hardness_error = None
@@ -553,7 +606,18 @@ class MovementExecutor:
         press_angle: int = None,
         release_angle: int = None,
     ) -> bool:
-        """Press and release the power button on the specified Shore tester."""
+        """
+        Press and release the power button on the specified Shore tester.
+
+        Args:
+            mode: Tester mode string (for logging only).
+            servo_channel: Duet servo channel number.
+            press_angle: Servo angle in degrees to press the button.
+            release_angle: Servo angle in degrees to release the button.
+
+        Returns:
+            True if successful, False otherwise.
+        """
         return self._actuate_servo(
             mode, servo_channel, press_angle, release_angle, "turn_on"
         )
@@ -565,7 +629,18 @@ class MovementExecutor:
         press_angle: int = None,
         release_angle: int = None,
     ) -> bool:
-        """Press and release the power button on the specified Shore tester (to turn off)."""
+        """
+        Press and release the power button on the specified Shore tester to turn off.
+
+        Args:
+            mode: Tester mode string (for logging only).
+            servo_channel: Duet servo channel number.
+            press_angle: Servo angle in degrees to press the button.
+            release_angle: Servo angle in degrees to release the button.
+
+        Returns:
+            True if successful, False otherwise.
+        """
         return self._actuate_servo(
             mode, servo_channel, press_angle, release_angle, "turn_off"
         )
@@ -577,7 +652,18 @@ class MovementExecutor:
         press_angle: int = None,
         release_angle: int = None,
     ) -> bool:
-        """Press and release the zero button on the specified Shore tester."""
+        """
+        Press and release the zero button on the specified Shore tester.
+
+        Args:
+            mode: Tester mode string (for logging only).
+            servo_channel: Duet servo channel number.
+            press_angle: Servo angle in degrees to press the button.
+            release_angle: Servo angle in degrees to release the button.
+
+        Returns:
+            True if successful, False otherwise.
+        """
         return self._actuate_servo(
             mode, servo_channel, press_angle, release_angle, "zero"
         )
@@ -828,7 +914,11 @@ class MovementExecutor:
             return False
 
     def get_machine_position(self) -> dict:
-        """Get current machine position.
+        """
+        Get current machine position from the Duet controller.
+
+        Returns:
+            Position mapping with axis keys (for example ``X``, ``Y``, ``Z``, ``V``).
 
         Raises:
             RuntimeError: If the Duet does not respond or returns an unusable
@@ -855,7 +945,12 @@ class MovementExecutor:
         return pos
 
     def get_machine_axes_homed(self) -> list:
-        """Get list of which axes are homed."""
+        """
+        Get homing status for each machine axis.
+
+        Returns:
+            Boolean list indexed by axis (typically X, Y, Z, U, V).
+        """
         return getattr(self._machine, "axes_homed", [False, False, False, False])
 
     def wait_for_moves_to_finish(self) -> None:
@@ -872,23 +967,20 @@ class MovementExecutor:
     def execute_move_to_scale_location(
         self, ready_x: float, ready_y: float, ready_z: float, ready_v: float
     ) -> bool:
-        """
-        Move to the scale ready location.
-
-        Moved from JubileeManager._move_to_scale()
+        """Move to the scale ready location.
 
         Args:
-            ready_x: X coordinate of scale ready position (required)
-            ready_y: Y coordinate of scale ready position (required)
-            ready_z: Z coordinate of scale ready position (required)
-            ready_v: V coordinate of scale ready position (required)
+            ready_x: Resolved scale ready X coordinate (mm).
+            ready_y: Resolved scale ready Y coordinate (mm).
+            ready_z: Resolved scale ready Z coordinate (mm).
+            ready_v: Resolved scale ready V coordinate (mm).
 
         Returns:
-            True if successful, False otherwise
+            ``True`` if successful, ``False`` on hardware error.
 
         Note:
-            Z-height safety is enforced by state machine's z_height_policy validation.
-            SCALE_READY position requires z_height_policy (typically mold_transfer_safe)
+            Z-height policy is enforced by the state machine before this runs
+            (``scale_ready`` typically requires ``mold_transfer_safe``).
         """
         try:
             feedrate = self._feedrate
@@ -973,22 +1065,24 @@ class MovementExecutor:
     # ===== POWDER FILL =====
 
     def execute_fill_powder(self, target_weight: float) -> bool:
-        """
-        Fill mold with powder using the trickler.
+        """Fill the mold on the scale using the trickler.
 
         Uses stable weight reads in the fine phase and unstable reads in the
-        coarse phase (no SIR streaming).  Two per-step EMAs (flow and yield,
-        both in g/mm) drive adaptive step sizing and jam detection.  The first
-        jam in each fill attempt is handled automatically by raising vibration
-        and waiting; subsequent jams in the same fill pause and wait for the
-        operator to clear the blockage via the REST API.
+        coarse phase. Per-step EMAs (flow and yield, g/mm) drive adaptive step
+        sizing and jam detection. The first jam in each fill attempt auto-recovers
+        via increased vibration; later jams block until
+        :meth:`clear_jam` is called.
 
         Args:
-            target_weight: Target weight of powder to fill, in grams.
+            target_weight: Target powder mass in grams.
 
         Returns:
-            True if the target was reached, False if an unrecoverable error
-            occurred.
+            ``True`` when the finish threshold is reached; ``False`` on error.
+
+        Note:
+            Trickler tuning parameters load from ``system_config.json``
+            (``trickler`` section). Final weight is stored on
+            :attr:`last_fill_weight`.
         """
         trickler = _system_config.system.trickler
 
@@ -1202,23 +1296,24 @@ class MovementExecutor:
         self,
         tamper_axis: str,
     ) -> bool:
-        """
-        Perform homing for the tamper axis (V-axis).
+        """Home the tamper (V) axis using the mold cavity as reference.
 
-        This homing process can be performed while holding a mold without a top piston.
-        The homing uses the mold itself as a reference:
-        - Start position: v=2 (tamper inserted into mold)
-        - End position: v=-7 (tamper touching bottom of mold)
+        Safe while holding a mold **without** a top piston:
 
-        This establishes accurate positioning by using the mold bottom as a reference point.
-
-        Moved from Manipulator.home_tamper()
+        - Start: ``v=2`` (tamper inserted into mold)
+        - End: ``v=-7`` (tamper at mold bottom)
 
         Args:
-            tamper_axis: Axis letter for tamper (default 'V')
+            tamper_axis: Tamper axis letter (for example ``"V"``).
+
+        Returns:
+            ``True`` when homing completes.
 
         Raises:
-            RuntimeError: If axes are not properly homed before attempting tamper homing
+            RuntimeError: If X, Y, Z, or U are not homed before tamper homing.
+
+        Warning:
+            Do not run when the mold has a top piston inserted.
         """
         # Check if axes are homed
         axes_homed = getattr(self._machine, "axes_homed", [False, False, False, False])

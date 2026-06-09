@@ -1,30 +1,20 @@
-"""
-JubileeManager - Centralized management of Jubilee machine and related components.
+"""Primary entry point for Jubilee powder dispensing automation.
 
-This module provides the JubileeManager class for coordinating complex powder dispensing
-tasks that require interacting with the Jubilee machine, scale, dispensers, and manipulator
-toolhead. It provides high-level abstractions for common operations.
-
-The JubileeManager uses a MotionPlatformStateMachine to validate and execute all
-movements, ensuring that operations cannot bypass safety checks.
+Coordinates the Duet controller, scale, dispensers, and manipulator through an
+internal :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`
+so movements cannot bypass validation.
 
 Example:
-    Basic usage of JubileeManager for powder dispensing::
+    Connect and dispense::
 
         from src.JubileeManager import JubileeManager
 
-        # Create manager
         manager = JubileeManager(
             num_piston_dispensers=2,
-            num_pistons_per_dispenser=10
+            num_pistons_per_dispenser=10,
         )
-
-        # Connect to hardware
-        if manager.connect(machine_address="192.168.1.100"):
-            # Dispense powder to well 0
-            success = manager.dispense_to_well("0", target_weight=50.0)
-
-            # Clean up
+        if manager.connect():
+            manager.dispense_to_well("0", target_weight=50.0)
             manager.disconnect()
 """
 
@@ -53,43 +43,46 @@ logger = logging.getLogger(__name__)
 
 
 class ScaleResidualObjectError(RuntimeError):
-    """Raised when scale weight does not return to baseline after mold pickup."""
+    """Raised when scale weight does not return to baseline after mold pickup.
+
+    Indicates a possible object left on the scale after the manipulator removed
+    the mold. The residual exceeds ``safety.weight_tolerance`` from config.
+    """
 
 
 class JubileeManager:
-    """
-    High-level manager for Jubilee powder dispensing operations.
+    """High-level manager for Jubilee powder dispensing operations.
 
-    JubileeManager provides a simplified interface for controlling the Jubilee for powder dispensing tasks.
-    It coordinates multiple hardware components (machine, scale, dispensers, manipulator) and ensures all operations
-    are safe through state machine validation.
-
-    All movements are validated through the MotionPlatformStateMachine, which is owned
-    by this manager and cannot be bypassed. This ensures safety and prevents invalid
-    state transitions.
+    Owns a :class:`~src.MotionPlatformStateMachine.MotionPlatformStateMachine`
+    that validates every movement. Application code should call methods on this
+    class rather than issuing moves through :attr:`machine_read_only`.
 
     Attributes:
-        scale: Connected scale instance for weight measurements, or None if not connected.
-        manipulator: Manipulator tool instance for mold handling, or None if not initialized.
-        state_machine: Internal state machine for movement validation, or None before connection.
-        connected: Boolean indicating whether hardware is connected and ready.
+        scale: Connected :class:`~src.Scale.Scale`, or ``None`` before connect.
+        manipulator: :class:`~src.Manipulator.Manipulator` instance, or ``None``.
+        state_machine: Internal FSM, or ``None`` before connect.
+        connected: Whether hardware initialization completed successfully.
 
     Example:
-        Basic usage pattern::
+        Typical connect / operate / disconnect flow::
 
-            manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
-
+            manager = JubileeManager(
+                num_piston_dispensers=2,
+                num_pistons_per_dispenser=10,
+            )
             try:
                 if manager.connect():
-                    weight = manager.get_weight_stable()
                     manager.dispense_to_well("0", 50.0)
             finally:
                 manager.disconnect()
 
     Note:
-        - Always call `disconnect()` when done to properly release hardware resources
-        - Check `connected` property before performing operations
-        - Use `machine_read_only` only for queries, never for movements
+        Always call :meth:`disconnect` when finished. Check :attr:`connected`
+        before operations.
+
+    Warning:
+        Do not move axes through :attr:`machine_read_only`; that bypasses FSM
+        validation and desynchronizes tracked state.
     """
 
     # TODO: Improve soft fail for scale tare, add functionality for if a communication failure occurs when mold is on scale it is automatically returned
@@ -98,31 +91,18 @@ class JubileeManager:
         num_piston_dispensers: int = 0,
         num_pistons_per_dispenser: int = 0,
     ) -> None:
-        """
-        Initialize the JubileeManager.
+        """Initialize the JubileeManager.
 
-        Creates a new manager instance with specified dispenser configuration.
-        Does not connect to hardware - call `connect()` to establish connections.
+        Creates a manager with dispenser capacity metadata. Does not connect to
+        hardware; call :meth:`connect` to establish connections.
 
         Args:
-            num_piston_dispensers: Number of piston dispenser units to initialize.
-                Each dispenser can hold multiple pistons. Default is 0.
-            num_pistons_per_dispenser: Initial number of pistons in each dispenser.
-                Used to track available pistons. Default is 0.
-
-        Example:
-            ```python
-            # Create manager with 2 dispensers, 10 pistons each
-            manager = JubileeManager(
-                num_piston_dispensers=2,
-                num_pistons_per_dispenser=10
-            )
-            ```
+            num_piston_dispensers: Number of piston dispenser units to track.
+            num_pistons_per_dispenser: Initial piston count per dispenser.
 
         Note:
-            - No hardware connection is established during initialization
-            - Dispenser counts can be zero if pistons are not needed
-            - Movement speed comes from machine.default_feedrate in system_config.json
+            Feedrate and network addresses come from
+            ``api_config/system_config.json`` at connect time.
         """
         self.scale: Scale | None = None
         self.manipulator: Manipulator | None = None
@@ -142,41 +122,21 @@ class JubileeManager:
 
     @property
     def machine_read_only(self) -> Machine | None:
-        """
-        Read-only access to the underlying Jubilee Machine instance.
-
-        Provides access to the Machine object for read operations only (queries,
-        status checks, position reads). While it's technically possible to perform
-        write operations through this property, doing so bypasses the state machine
-        safety guarantee and should be avoided.
+        """Read-only access to the underlying Jubilee ``Machine``.
 
         Returns:
-            The Machine instance if connected, None otherwise.
+            The connected ``Machine`` instance, or ``None`` when disconnected.
 
         Warning:
-            This property is named "read_only" as a strong hint that it should ONLY
-            be used for read operations. Performing movements or state changes through
-            this property bypasses the state machine safety guarantee and can lead to:
-
-            - Collisions with labware
-            - Invalid state transitions
-            - Unsafe operations
-            - Loss of state tracking
+            Named ``read_only`` intentionally. Querying position or status is
+            fine; issuing moves here bypasses FSM validation and can cause
+            collisions or lost state tracking.
 
         Example:
-            ```python
-            # GOOD: Query current position
-            if manager.machine_read_only:
-                pos = manager.machine_read_only.get_position()
-                print(f"Current position: {pos}")
+            Safe read-only query::
 
-            # BAD: Perform movements (bypasses validation!)
-            manager.machine_read_only.move_to(x=100, y=100)  # Don't do this!
-            ```
-
-        Note:
-            Always use JubileeManager's high-level methods or the state machine's
-            validated methods for any operations that change machine state.
+                if manager.machine_read_only:
+                    pos = manager.machine_read_only.get_position()
         """
         if self.state_machine:
             return self.state_machine.machine
@@ -184,21 +144,21 @@ class JubileeManager:
 
     @property
     def deck(self) -> Deck | None:
-        """
-        Access to the deck configuration and labware layout.
-
-        Provides access to the Deck object which contains information about
-        labware positions, well plates, and deck layout.
+        """Access to the deck configuration and labware layout.
 
         Returns:
-            The Deck instance if state machine is initialized, None otherwise.
+            The ``Deck`` instance when the state machine is initialized,
+            otherwise ``None``.
 
         Example:
-            ```python
-            if manager.deck:
-                labware = manager.deck.get_labware()
-                print(f"Available labware: {list(labware.keys())}")
-            ```
+            List slots that have labware loaded::
+
+                if manager.deck:
+                    loaded = [
+                        slot_key
+                        for slot_key, slot in manager.deck.slots.items()
+                        if slot.has_labware
+                    ]
         """
         if self.state_machine:
             return self.state_machine.context.deck
@@ -206,28 +166,17 @@ class JubileeManager:
 
     @property
     def piston_dispensers(self) -> list[PistonDispenser]:
-        """
-        Access to all configured piston dispensers.
-
-        Provides access to the list of PistonDispenser instances managed by
-        the state machine. Each dispenser tracks its piston count and position.
+        """Access to all configured piston dispensers.
 
         Returns:
-            List of PistonDispenser instances. Empty list if none configured
-            or state machine not initialized.
+            List of :class:`~src.PistonDispenser.PistonDispenser` instances.
+            Empty when the state machine is not initialized.
 
         Example:
-            ```python
-            # Check available pistons across all dispensers
-            for dispenser in manager.piston_dispensers:
-                print(f"Dispenser {dispenser.index}: {dispenser.num_pistons} pistons")
+            Inspect remaining pistons::
 
-            # Find first dispenser with available pistons
-            available = next(
-                (d for d in manager.piston_dispensers if d.num_pistons > 0),
-                None
-            )
-            ```
+                for dispenser in manager.piston_dispensers:
+                    print(dispenser.index, dispenser.num_pistons)
         """
         if self.state_machine:
             return self.state_machine.context.piston_dispensers
@@ -237,7 +186,11 @@ class JubileeManager:
 
     @property
     def jam_detected(self) -> bool:
-        """True while the dispensing loop is blocked waiting for jam clearance."""
+        """Whether the dispensing loop is blocked waiting for jam clearance.
+
+        Returns:
+            True while a powder jam requires operator intervention.
+        """
         if self.state_machine and self.state_machine._executor:
             return self.state_machine._executor.jam_detected
         return False
@@ -245,16 +198,22 @@ class JubileeManager:
     def set_jam_callback(self, callback: Callable | None) -> None:
         """Register a callback invoked when a powder jam requires operator clearance.
 
-        The callback is called from the dispensing thread immediately before
-        it blocks.  It is not invoked for the first auto-recovered jam in each
-        fill iteration.  It should be lightweight (e.g. set a flag in JobProgress).
+        The callback runs on the dispensing thread immediately before the loop
+        blocks. It is not invoked for the first auto-recovered jam in each fill
+        iteration. Keep it lightweight (for example set a flag in job progress).
+
+        Args:
+            callback: Callable to invoke on jam, or ``None`` to clear.
         """
         self._on_jam_callback = callback
         if self.state_machine and self.state_machine._executor:
             self.state_machine._executor._on_jam_detected = callback
 
     def clear_jam(self) -> None:
-        """Resume dispensing after the operator has cleared the blockage."""
+        """Resume dispensing after the operator has cleared the blockage.
+
+        No-op when no active fill executor is running.
+        """
         if self.state_machine and self.state_machine._executor:
             self.state_machine._executor.clear_jam()
 
@@ -264,69 +223,36 @@ class JubileeManager:
         scale_port: str | None = None,
         state_machine_config: str | None = None,
     ) -> bool:
-        """
-        Connect to all hardware and initialize the system.
+        """Connect to hardware and initialize the system.
 
-        Establishes connections to the Jubilee machine controller and scale,
-        initializes the state machine with configuration, sets up dispensers,
-        and performs homing operations to establish a known state.
-
-        This method performs the following sequence:
-
-        1. Connect to Jubilee machine (Duet controller)
-        2. Connect to precision scale
-        3. Initialize state machine with configuration
-        4. Initialize deck layout and piston dispensers
-        5. Create and configure manipulator tool
-        6. Home all machine axes (X, Y, Z, U)
-        7. Leave tools parked; pick up occurs on-demand per operation
+        Connects the Duet controller and scale, loads
+        ``motion_platform_positions.json``, initializes deck and dispensers,
+        homes axes, and registers tools. See the API page for the full sequence.
 
         Args:
-            machine_address: IP address of the Jubilee's Duet controller. If None,
-                uses the IP address from system configuration file. Examples:
-                "192.168.1.100", "10.0.0.50".
-            scale_port: Serial port path for scale connection. Common values:
-                Linux: "/dev/ttyUSB0", "/dev/ttyACM0"
-                Windows: "COM3", "COM4"
-                macOS: "/dev/tty.usbserial-*"
-            state_machine_config: Path to JSON file defining state machine positions
-                and transitions. Relative or absolute path accepted.
+            machine_address: Duet IP address. Defaults to
+                ``machine.duet_ip`` from config when omitted.
+            scale_port: Serial device path for the scale. Defaults to
+                ``machine.scale_port`` from config when omitted.
+            state_machine_config: Override path to
+                ``motion_platform_positions.json``. Relative paths resolve
+                against the project root.
 
         Returns:
-            True if all connections and initializations succeeded, False if any
-            step failed. Check the `connected` property after calling.
+            ``True`` when initialization succeeds; ``False`` on any failure.
+            Check :attr:`connected` after calling.
 
         Raises:
-            FileNotFoundError: If state_machine_config file does not exist.
-            RuntimeError: If homing fails.
-            ConnectionError: If unable to connect to machine or scale.
-
-        Example:
-            ```python
-            manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
-
-            # Connect with explicit IP
-            if manager.connect(machine_address="192.168.1.100", scale_port="/dev/ttyUSB0"):
-                print("Connected successfully!")
-            else:
-                print("Connection failed - check hardware and configuration")
-
-            # Connect using config file IP
-            if manager.connect():  # Uses IP from system_config.json
-                print("Connected using configured IP")
-            ```
+            FileNotFoundError: When ``state_machine_config`` does not exist.
+            RuntimeError: When homing fails.
+            ConnectionError: When machine or scale connection fails.
 
         Note:
-            - This operation can take 30-60 seconds due to homing
-            - All axes must be clear of obstacles before homing
-            - Ensure no tool is already picked up before calling
-            - Connection state is stored in `self.connected` property
-            - On failure, partial connections are not cleaned up automatically
+            Homing can take 30-60 seconds. Ensure axes are clear before calling.
 
         Warning:
-            If connection fails partway through (e.g., after machine connects but
-            before homing completes), you may need to manually reset the hardware
-            before attempting to connect again.
+            A partial failure may leave hardware in an unknown state. Reset
+            before retrying connect.
         """
         try:
             _t0 = time.monotonic()
@@ -371,7 +297,7 @@ class JubileeManager:
             )
 
             # Initialize deck and dispensers in state machine
-            deck_config_path = config.get_jubilee_api_config_dir()
+            deck_config_path = config.get_api_config_dir()
             if self._num_piston_dispensers < 1:
                 raise ValueError(
                     "num_piston_dispensers must be set from system_config before connect"
@@ -445,30 +371,20 @@ class JubileeManager:
             return False
 
     def disconnect(self) -> None:
-        """
-        Disconnect from all hardware components and release resources.
+        """Disconnect from hardware and release resources.
 
-        Cleanly disconnects from the Jubilee machine and scale, releasing
-        any held resources. This should always be called when done using
-        the manager.
+        Safe to call when not connected or after a partial connect failure.
+        Parks the active tool and powers off a mounted hardness tester first.
 
         Example:
-            ```python
-            manager = JubileeManager()
-            try:
-                manager.connect()
-                # ... perform operations ...
-            finally:
-                manager.disconnect()  # Always disconnect
-            ```
+            Always disconnect in ``finally``::
 
-        Note:
-            - Safe to call multiple times
-            - Safe to call even if not fully connected
-            - Does not raise exceptions on disconnection errors
-            - Parks the active tool before releasing the machine connection
-            - Turns off a mounted hardness tester before parking it
-            - Sets `connected` property to False
+                manager = JubileeManager()
+                try:
+                    manager.connect()
+                    ...
+                finally:
+                    manager.disconnect()
         """
         self._disconnect_cleanup()
         if self.machine_read_only:
@@ -478,73 +394,28 @@ class JubileeManager:
         self.connected = False
 
     def get_weight_stable(self) -> float | None:
-        """
-        Get current weight from scale, waiting for stability.
-
-        Reads the scale weight, waiting for the reading to stabilize before
-        returning. This is the recommended method for measurements that will
-        be recorded or used for decisions.
+        """Return scale weight after the reading stabilizes.
 
         Returns:
-            Weight in grams, or ``None`` if the scale is not connected.
-            Scale communication errors propagate to the caller.
-
-        Example:
-            ```python
-            # Get stable reading for recording
-            weight = manager.get_weight_stable()
-            print(f"Stable weight: {weight:.3f}g")
-
-            # Use in conditional
-            if manager.get_weight_stable() > 50.0:
-                print("Target weight exceeded")
-            ```
+            Weight in grams, or ``None`` when no scale is connected.
 
         Note:
-            - Waits for scale to report stable reading (may take 1-3 seconds)
-            - More accurate than `get_weight_unstable()`
-            - Returns ``None`` when no scale is connected (distinct from zero weight)
-
-        See Also:
-            get_weight_unstable: For real-time weight monitoring without waiting
+            Waits for stability (typically 1-3 seconds). Prefer
+            :meth:`get_weight_unstable` only for live monitoring during fill.
         """
         if self.scale and self.scale.is_connected:
             return self.scale.get_weight(stable=True)
         return None
 
     def get_weight_unstable(self) -> float | None:
-        """
-        Get instantaneous weight from scale without waiting for stability.
-
-        Reads the current scale weight immediately, without waiting for the
-        reading to stabilize. Useful for real-time monitoring but not recommended
-        for recorded measurements.
+        """Return the current scale weight without waiting for stability.
 
         Returns:
-            Current weight in grams, or ``None`` if the scale is not connected.
-            Scale communication errors propagate to the caller.
-
-        Example:
-            ```python
-            # Monitor weight in real-time during filling
-            while filling:
-                current = manager.get_weight_unstable()
-                print(f"Current: {current:.2f}g", end='\r')
-                time.sleep(0.1)
-
-            # Get final stable reading
-            final = manager.get_weight_stable()
-            ```
+            Instantaneous weight in grams, or ``None`` when no scale is connected.
 
         Note:
-            - Returns immediately without waiting
-            - Reading may still be changing (unstable)
-            - Not suitable for decisions or permanent records
-            - Use `get_weight_stable()` for measurements you'll record
-            - Returns ``None`` when no scale is connected (distinct from zero weight)
-
-        See Also:
-            get_weight_stable: For accurate measurements after stabilization
+            Suitable for live fill monitoring only. Record measurements with
+            :meth:`get_weight_stable`.
         """
         if self.scale and self.scale.is_connected:
             return self.scale.get_weight(stable=False)
@@ -627,7 +498,17 @@ class JubileeManager:
             print(f"Disconnect cleanup: park tool failed: {e}")
 
     def park_active_tool(self) -> bool:
-        """Park the currently mounted tool if one is active."""
+        """Park the currently mounted tool if one is active.
+
+        Moves to ``global_ready`` first when needed, then delegates to the state
+        machine.
+
+        Returns:
+            True when no tool was active or parking succeeded.
+
+        Raises:
+            RuntimeError: If the state machine is missing or parking fails.
+        """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
 
@@ -643,7 +524,20 @@ class JubileeManager:
         return True
 
     def pickup_tool(self, tool) -> bool:
-        """Pick up the requested tool without assuming current tool state."""
+        """Pick up the requested tool without assuming current tool state.
+
+        Moves to ``global_ready`` first when needed.
+
+        Args:
+            tool: Tool instance to mount (for example :class:`~src.Manipulator.Manipulator`).
+
+        Returns:
+            True on success.
+
+        Raises:
+            RuntimeError: If the state machine is missing or pickup fails.
+            ToolStateError: If ``tool`` is not configured.
+        """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
         if not tool:
@@ -661,11 +555,20 @@ class JubileeManager:
         return True
 
     def ensure_tool_active(self, required_tool) -> bool:
-        """
-        Ensure the required tool is mounted.
+        """Ensure the required tool is mounted.
 
-        If another tool is currently active, it is parked first. If no tool is
-        active, the required tool is picked up directly.
+        Parks any other active tool first, then picks up ``required_tool`` when
+        nothing is mounted.
+
+        Args:
+            required_tool: Tool that must be active after this call.
+
+        Returns:
+            True when ``required_tool`` is already active or was mounted.
+
+        Raises:
+            RuntimeError: If the state machine is missing or tool swap fails.
+            ToolStateError: If ``required_tool`` is not configured.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -701,70 +604,28 @@ class JubileeManager:
         return self.hardness_tester_shore_a
 
     def dispense_to_well(self, well_id: str, target_weight: float) -> bool:
-        """
-        Perform complete powder dispense operation to a well.
+        """Run the full dispense workflow for one mold slot.
 
-        This is the primary high-level operation for dispensing powder. It performs
-        a complete workflow including picking up the mold, filling with powder to
-        target weight, retrieving a piston, and returning the mold to its slot.
-
-        The operation sequence is:
-
-        1. Move to mold slot position
-        2. Pick up empty mold from slot
-        3. Move to scale
-        4. Place mold on scale
-        5. Fill with powder to target weight
-        6. Pick up filled mold from scale
-        7. Move to piston dispenser
-        8. Retrieve piston from dispenser
-        9. Move back to mold slot
-        10. Place mold (now with powder and piston) back in slot
+        Picks up the mold, fills on the scale, retrieves a piston, tamps, and
+        returns the mold to its slot. Each step is validated by the FSM.
 
         Args:
-            well_id: Identifier for the target well/mold slot using numerical indexing.
-                Must match an entry in the deck configuration (e.g., "0", "1", "2").
-            target_weight: Target weight of powder to dispense, in grams. The system
-                will fill until this weight is reached (within tolerance).
+            well_id: Deck well index as a string (for example ``"0"``).
+            target_weight: Target powder mass in grams.
 
         Returns:
-            True if the entire operation completed successfully, False if any step
-            failed or if not connected.
+            ``True`` when every step succeeds; ``False`` when not connected or
+            a handled error occurs.
 
         Raises:
-            ToolStateError: If manipulator or scale is not available.
-            RuntimeError: If state machine is not configured.
-            ValueError: If well_id is not found in deck configuration.
-
-        Example:
-            ```python
-            manager = JubileeManager(num_piston_dispensers=2, num_pistons_per_dispenser=10)
-
-            if manager.connect():
-                # Dispense 50g of powder to mold 0
-                success = manager.dispense_to_well("0", target_weight=50.0)
-
-                if success:
-                    print("Dispense completed successfully!")
-                    weight = manager.get_weight_stable()
-                    print(f"Final weight: {weight}g")
-                else:
-                    print("Dispense failed - check logs for details")
-
-                manager.disconnect()
-            ```
-
-        Note:
-            - Requires at least one dispenser with available pistons
-            - All movements are validated through state machine
-            - Operation can take 2-5 minutes depending on target weight
-            - If operation fails partway through, system may be in intermediate state
-            - Check return value before assuming success
+            ToolStateError: When manipulator or scale is unavailable.
+            RuntimeError: When the state machine is missing.
+            ValueError: When ``well_id`` is unknown or ``target_weight`` exceeds
+                ``safety.max_weight_per_well``.
 
         Warning:
-            If the operation fails after picking up the mold but before returning it,
-            the mold may be left at an intermediate position. Manual intervention
-            may be required to return to a safe state.
+            A mid-workflow failure may leave the mold at an intermediate
+            position. Manual recovery may be required.
         """
         if not self.connected:
             return False
@@ -825,12 +686,24 @@ class JubileeManager:
         tray_index: int,
         sample_index: int,
         mode: str,
-        image_save_path=None,
+        image_save_path: str | Path | None = None,
     ) -> bool:
-        """
-        Select a Shore tester and delegate sample testing to it.
+        """Run a hardness measurement on one tray sample.
 
-        ``mode`` must be ``shore_a`` or ``shore_d`` (the pass being measured).
+        Selects the Shore-A or Shore-D tester from ``mode``, ensures it is
+        mounted, and delegates to :meth:`~src.HardnessTester.HardnessTester.test_sample`.
+        Results are stored on ``last_hardness_result``, ``last_hardness_error``,
+        and ``last_hardness_image_path``.
+
+        Args:
+            tray_index: Zero-based hardness tray index.
+            sample_index: Sample position within the tray.
+            mode: Measurement pass: ``shore_a`` or ``shore_d``.
+            image_save_path: Optional directory for debug capture images.
+
+        Returns:
+            True when the workflow completed without exception, False when not
+            connected or an error was caught.
         """
         if not self.connected:
             return False
@@ -877,7 +750,15 @@ class JubileeManager:
             return False
 
     def hardness_turn_on(self, mode: str | None = None) -> bool:
-        """Select a Shore tester and delegate power-on to it."""
+        """Power on a Shore hardness tester via its servo button.
+
+        Args:
+            mode: ``shore_a`` or ``shore_d``. Required (``None`` raises
+                :class:`ValueError`).
+
+        Returns:
+            True on success, False when not connected or an error was caught.
+        """
         if not self.connected:
             return False
         try:
@@ -892,7 +773,15 @@ class JubileeManager:
             return False
 
     def hardness_turn_off(self, mode: str | None = None) -> bool:
-        """Select a Shore tester and delegate power-off to it."""
+        """Power off a Shore hardness tester via its servo button.
+
+        Args:
+            mode: ``shore_a`` or ``shore_d``. Required (``None`` raises
+                :class:`ValueError`).
+
+        Returns:
+            True on success, False when not connected or an error was caught.
+        """
         if not self.connected:
             return False
         try:
@@ -907,7 +796,15 @@ class JubileeManager:
             return False
 
     def hardness_zero(self, mode: str | None = None) -> bool:
-        """Select a Shore tester and delegate zeroing to it."""
+        """Zero a Shore hardness tester via its servo button.
+
+        Args:
+            mode: ``shore_a`` or ``shore_d``. Required (``None`` raises
+                :class:`ValueError`).
+
+        Returns:
+            True on success, False when not connected or an error was caught.
+        """
         if not self.connected:
             return False
         try:
@@ -922,22 +819,13 @@ class JubileeManager:
             return False
 
     def move_to_dispenser(self) -> bool:
-        """
-        Move to the ready position of the next available piston dispenser.
-
-        The state machine selects the first dispenser that still has pistons and
-        moves to its ready position. All dispenser tracking and selection is
-        handled by the state machine.
+        """Move to the next available piston dispenser ready position.
 
         Returns:
-            True if movement succeeded, False if not connected or movement failed.
+            ``True`` on success; ``False`` when not connected.
 
         Raises:
-            RuntimeError: If state machine is not configured or movement validation fails.
-
-        Note:
-            - Typically called by `dispense_to_well()`
-            - Does not retrieve the piston, only positions for retrieval
+            RuntimeError: When the state machine is missing or validation fails.
         """
         if not self.connected:
             return False
@@ -959,36 +847,17 @@ class JubileeManager:
             return False
 
     def get_piston_from_dispenser(self) -> bool:
-        """
-        Retrieve a piston from the current dispenser position.
-
-        The state machine derives which dispenser to use from the current position
-        and executes the retrieval. All dispenser tracking and validation is
-        handled by the state machine.
+        """Retrieve a piston at the current dispenser ready position.
 
         Returns:
-            True if piston was successfully retrieved, False if not connected
-            or retrieval failed.
+            ``True`` on success; ``False`` when not connected.
 
         Raises:
-            RuntimeError: If state machine is not configured or retrieval fails.
-
-        Example:
-            ```python
-            # Manually retrieve piston (typically done by dispense_to_well)
-            if manager.move_to_dispenser():
-                if manager.get_piston_from_dispenser():
-                    print("Piston retrieved successfully")
-            ```
-
-        Note:
-            - Must already be at a dispenser_ready position (call `move_to_dispenser()` first)
-            - Requires mold to be held by manipulator
-            - State machine decrements piston count on success
+            RuntimeError: When the state machine is missing or validation fails.
 
         Warning:
-            Calling this method without first moving to the dispenser position
-            will fail validation. Always call `move_to_dispenser()` first.
+            Call :meth:`move_to_dispenser` first. The FSM rejects retrieval from
+            the wrong position.
         """
         if not self.connected:
             return False
@@ -1010,31 +879,17 @@ class JubileeManager:
             return False
 
     def move_to_mold_slot(self, well_id: str) -> bool:
-        """
-        Move to a specific mold slot position.
-
-        Moves to the position where the manipulator can pick up or place a mold
-        in the specified well. The target position is determined by the well's
-        configuration in the deck layout.
+        """Move to a mold slot ready position.
 
         Args:
-            well_id: Identifier for the target well using numerical indexing (e.g., "0", "1", "2").
-                Must exist in the deck configuration's labware definition.
+            well_id: Deck well index as a string (for example ``"0"``).
 
         Returns:
-            True if movement succeeded.
+            ``True`` when the validated move succeeds.
 
         Raises:
-            RuntimeError: If state machine is not configured or movement validation
-                fails. Validation failure reasons include wrong position, wrong tool,
-                or invalid payload state.
-            KeyError: If well_id is not found in deck configuration.
-
-        Note:
-            - Typically called by `dispense_to_well()`
-            - Uses the well's `ready_pos` field from deck configuration
-            - Movement is validated through state machine
-            - Does not pick up or place the mold, only positions for access
+            RuntimeError: When validation fails.
+            KeyError: When ``well_id`` is not in the deck layout.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -1045,6 +900,14 @@ class JubileeManager:
         return True
 
     def move_to_global_ready(self) -> bool:
+        """Move to the global ready transit position.
+
+        Returns:
+            True when the validated move succeeds.
+
+        Raises:
+            RuntimeError: If the state machine is missing or validation fails.
+        """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
 
@@ -1054,25 +917,13 @@ class JubileeManager:
         return True
 
     def move_to_scale(self) -> bool:
-        """
-        Move to the scale ready position.
-
-        Moves the manipulator to the position where it can place or pick up molds
-        on the scale. Movement is validated through the state machine.
+        """Move to the scale ready position.
 
         Returns:
-            True if movement succeeded, False if scale is not configured.
+            ``True`` on success; ``False`` when no scale is configured.
 
         Raises:
-            RuntimeError: If state machine is not configured or movement validation
-                fails. Common failure reasons include wrong tool active, invalid
-                payload state, or unable to transition from current position.
-
-        Note:
-            - Typically called by `dispense_to_well()`
-            - Moves to scale_ready position defined in state machine config
-            - Does not place or pick up mold, only positions for access
-            - Movement is validated against current state
+            RuntimeError: When validation fails.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")
@@ -1088,25 +939,15 @@ class JubileeManager:
         return True
 
     def set_dispenser_pistons(self, index: int, num_pistons: int) -> bool:
-        """
-        Set the piston count for a specific dispenser.
-
-        Allows reloading a dispenser while the machine remains connected
-        and idle. Delegates to the state machine, which owns all dispenser state.
+        """Set the piston count for one dispenser while connected.
 
         Args:
             index: Zero-based dispenser index.
-            num_pistons: New piston count (must be >= 0).
+            num_pistons: Replacement count (must be >= 0).
 
         Returns:
-            True on success, False if the state machine is not initialized or
+            ``True`` on success; ``False`` when the state machine is missing or
             the index is out of range.
-
-        Example:
-            ```python
-            # Reload dispenser 0 with 10 pistons
-            manager.set_dispenser_pistons(0, 10)
-            ```
         """
         if not self.state_machine:
             return False
@@ -1119,24 +960,14 @@ class JubileeManager:
         self.state_machine.reset_mold_metadata()
 
     def abort(self) -> None:
-        """
-        Send an emergency-stop (M112) to the Jubilee controller.
+        """Send firmware emergency stop (M112) to the Duet controller.
 
-        This is the only method in JubileeManager that intentionally bypasses
-        the MotionPlatformStateMachine.  This bypass is safe because:
+        Intentionally bypasses the state machine. After M112 the controller
+        requires a manual reset before motion resumes, so tracked FSM state is
+        no longer reliable.
 
-        - M112 is a firmware-level emergency stop that immediately halts all
-          motion regardless of software state.  There is no higher-priority
-          fail-safe mechanism that the state machine could add on top of it.
-
-        - After M112 the Duet firmware requires a full reset before accepting
-          any new motion commands.  The machine is therefore
-          inoperable until the operator intervenes, so the invariants of
-          MotionPlatformStateMachine (consistent position tracking, validated
-          state transitions) become irrelevant.
-
-        The method is a best-effort call: if no machine connection is available
-        (e.g. abort is called before connect() succeeds) it is silently ignored.
+        Note:
+            Best-effort only. Silently ignored when no machine connection exists.
         """
         machine = self.machine_read_only
         if machine is not None:
@@ -1149,34 +980,20 @@ class JubileeManager:
         self.connected = False
 
     def fill_powder(self, target_weight: float) -> bool:
-        """
-        Fill mold with powder to target weight.
-
-        Dispenses powder into a mold using the trickler mechanism, monitoring
-        the scale until the target weight is reached. The mold must already be
-        placed on the scale.
+        """Fill the mold on the scale to ``target_weight`` via the trickler.
 
         Args:
-            target_weight: Target weight of powder to dispense, in grams.
+            target_weight: Target powder mass in grams.
 
         Returns:
-            True if filling succeeded, False if scale is not configured.
+            ``True`` on success; ``False`` when no scale is configured.
 
         Raises:
-            RuntimeError: If state machine is not configured or fill operation
-                validation fails. Validation ensures mold is on scale and system
-                is in correct state for powder dispensing.
-
-        Note:
-            - Typically called by `dispense_to_well()`
-            - Mold must already be on the scale before calling
-            - Operation continues until target weight is reached (within tolerance)
-            - Duration depends on target weight and trickler speed (typically 1-3 min)
-            - Continuously monitors scale during filling
+            RuntimeError: When validation fails.
 
         Warning:
-            Calling this method without a mold on the scale will result in powder
-            being dispensed directly onto the scale, which is incorrect operation.
+            The mold must already be on the scale. Dispensing without a mold
+            deposits powder directly on the load cell.
         """
         if not self.state_machine:
             raise RuntimeError("State machine not configured")

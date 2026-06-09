@@ -1,6 +1,23 @@
 # Building and Running the Web UI
 
-The web UI has two operating modes: **development** (Vite dev server + uvicorn, two processes) and **production** (uvicorn alone, serving both the API and the built React app). Use dev mode when actively changing frontend code; use production mode for normal lab operation and for the Raspberry Pi kiosk.
+The web UI has two operating modes. Use dev mode when actively changing frontend code; use production mode for normal lab operation and for the Raspberry Pi kiosk.
+
+=== "Development"
+
+    Vite dev server + uvicorn (two processes). Hot reload for frontend changes.
+
+    **Open:** `http://localhost:5173` (Vite proxies `/api` and `/ws` to port 8000)
+
+=== "Production"
+
+    Single uvicorn process serves both the REST/WebSocket API and the built React app.
+
+    **Open:** `http://localhost:8000`
+
+!!! info "Prerequisites"
+    - Python virtual environment with `requirements.txt` installed
+    - Node.js 20.19+ or 22.12+ for frontend builds and dev server
+    - `jubilee_api_config/` configured for your machine
 
 ---
 
@@ -241,3 +258,9 @@ No backend restart is needed - uvicorn picks up the new `dist/` on the next requ
 | Rebuild UI on Pi | `cd frontend && npm run build` |
 | View backend logs (Pi) | `journalctl -u jubilee-backend@pi -f` |
 | Restart backend (Pi) | `sudo systemctl restart jubilee-backend@pi` |
+
+## See Also
+
+- [Using the Jubilee Powder UI](using-gui.md)
+- [Configuration Guide](configuration.md)
+- [Best Practices](../concepts/best-practices.md)

@@ -20,7 +20,11 @@ Both roles are combined in one class because the tester's LCD display is its pri
     ```python
     from src.HardnessTester import HardnessTester
 
-    tester = HardnessTester(num_digits=4, use_camera=True)
+    tester = HardnessTester(
+        calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+        num_digits=4,
+        use_camera=True,
+    )
     frame = tester.capture_image(save=True, output_path='calibration_reference.jpg')
     print("Image saved - open it to identify digit pixel coordinates.")
     ```
@@ -69,10 +73,14 @@ Both roles are combined in one class because the tester's LCD display is its pri
 
     ```python
     # Turn on the tester, zero it, then test a sample
-    manager.hardness_turn_on()       # actuate power button
-    manager.hardness_zero()          # actuate zero button
+    manager.hardness_turn_on(mode="shore_a")  # actuate power button
+    manager.hardness_zero(mode="shore_a")     # actuate zero button
 
-    success = manager.test_sample(tray_index=0, sample_id="3")
+    success = manager.test_sample(
+        tray_index=0,
+        sample_index=3,
+        mode="shore_a",
+    )
     if success:
         print(f"Result: {manager.last_hardness_result}")  # e.g. 42.5
         print(f"Error: {manager.last_hardness_error}")    # None if clean read
@@ -86,13 +94,11 @@ Both roles are combined in one class because the tester's LCD display is its pri
 
     ```python
     from src.HardnessTester import HardnessTester
-    from jubilee_api_config.config_loader import ConfigLoader
+    from src.ConfigLoader import config
 
-    config = ConfigLoader()
     tester = HardnessTester.from_system_config(
         tester_mode="shore_a",
-        config_payload=config.get_system_config(),
-        use_camera=True,
+        cfg=config.system.hardness_testers.shore_a,
     )
 
     if tester.load_assigned_calibration():
@@ -103,8 +109,12 @@ Both roles are combined in one class because the tester's LCD display is its pri
     Or construct directly for testing purposes:
 
     ```python
-    tester = HardnessTester(num_digits=4, use_camera=True)
-    tester.load_calibration('jubilee_api_config/hardness/shore_a_lcd.json')
+    tester = HardnessTester(
+        calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+        num_digits=4,
+        use_camera=True,
+    )
+    tester.load_calibration("jubilee_api_config/lcd_calibration_shore_a.json")
     result = tester.read_display()
     ```
 
@@ -115,7 +125,10 @@ Both roles are combined in one class because the tester's LCD display is its pri
     ```python
     from src.HardnessTester import test_with_image
 
-    result = test_with_image('lcd_photo.jpg', 'shore_a_lcd.json')
+    result = test_with_image(
+        "lcd_photo.jpg",
+        "jubilee_api_config/lcd_calibration_shore_a.json",
+    )
     print(f"Result: {result}")
     ```
 
@@ -238,16 +251,21 @@ Both roles are combined in one class because the tester's LCD display is its pri
     {
       "hardness_testers": {
         "shore_a": {
+          "use_camera": true,
           "tool": {
             "index": 1,
             "name": "shore_a_hardness_tester"
           },
-          "lcd_calibration_path": "jubilee_api_config/hardness/shore_a_lcd.json",
-          "tip_length_mm": 42.0,
+          "lcd_calibration_path": "jubilee_api_config/lcd_calibration_shore_a.json",
+          "tip_length_mm": 2.0,
           "button_servos": {
-            "power": "S1",
-            "zero": "S2"
-          }
+            "servo": "S1",
+            "power_press_angle": 90,
+            "power_release_angle": 0,
+            "zero_press_angle": 90,
+            "zero_release_angle": 0
+          },
+          "cam_usb_path": "/dev/shore_a_cam"
         }
       }
     }
@@ -304,7 +322,11 @@ Both roles are combined in one class because the tester's LCD display is its pri
     After calibration, inspect segment detection per digit using the updated API:
 
     ```python
-    tester = HardnessTester(num_digits=4, use_camera=True)
+    tester = HardnessTester(
+        calibration_path="jubilee_api_config/lcd_calibration_shore_a.json",
+        num_digits=4,
+        use_camera=True,
+    )
     tester.load_assigned_calibration()
 
     frame = tester.capture_image()
@@ -325,41 +347,40 @@ Both roles are combined in one class because the tester's LCD display is its pri
 
 ## Design Notes
 
-### Why Not OCR?
+???+ note "Why not OCR?"
+    Traditional OCR (Tesseract, EasyOCR) struggles with 7-segment LCD displays because:
 
-Traditional OCR (Tesseract, EasyOCR) struggles with 7-segment LCD displays because:
+    - Low contrast between segments and background
+    - Font variations across display manufacturers
+    - Hollow or partially lit segments
+    - Sensitivity to lighting changes
+    - Sensitivity to camera distortion
 
-- Low contrast between segments and background
-- Font variations across display manufacturers
-- Hollow or partially lit segments
-- Sensitivity to lighting changes
+    Segment-based detection avoids these problems:
 
-Segment-based detection avoids these problems:
+    - Specifically designed for 7-segment geometry
+    - Reliable with low-contrast or dim displays
+    - No training data required
+    - Fast and lightweight
+    - Easy to debug: each segment decision is independently inspectable
 
-- Specifically designed for 7-segment geometry
-- Reliable with low-contrast or dim displays
-- No training data required
-- Fast and lightweight (pure OpenCV, no ML models)
-- Easy to debug: each segment decision is independently inspectable
+???+ info "Preprocessing pipeline"
+    The preprocessing and sharpening pipeline is optimized for LCD displays:
 
-### Preprocessing Strategy
+    1. **Grayscale conversion** - converts the BGR camera frame to grayscale as the primary preprocessing path.
+    2. **Unsharp masking (sharpening)** - applied by default after grayscale to recover blurred segment edges before CLAHE. Default ``sharpen_strength`` is 31; set to ``0.0`` to disable.
+    3. **CLAHE** (Contrast Limited Adaptive Histogram Equalization) - enhances contrast in local 8x8 tiles rather than globally, handling shadows and glare that would fool global thresholding.
+    4. **Otsu thresholding** - automatically finds the optimal binary threshold value for the local image content.
+    5. **Morphological cleaning** - removes small noise pixels that survive thresholding.
 
-The preprocessing pipeline is optimized for LCD displays:
+???+ info "Segment detection"
+    Each segment is detected by:
 
-1. **Grayscale conversion** - converts the BGR camera frame to grayscale as the primary preprocessing path.
-2. **CLAHE** (Contrast Limited Adaptive Histogram Equalization) - enhances contrast in local 8x8 tiles rather than globally, handling shadows and glare that would fool global thresholding.
-3. **Otsu thresholding** - automatically finds the optimal binary threshold value for the local image content.
-4. **Morphological cleaning** - removes small noise pixels that survive thresholding.
+    1. Applying the calibrated polygon mask for that segment to the binary image
+    2. Counting dark (active) pixels inside the mask with `cv2.countNonZero`
+    3. Comparing the ratio against `segment_threshold` (default 0.5)
 
-### Segment Detection
-
-Each segment is detected by:
-
-1. Applying the calibrated polygon mask for that segment to the binary image
-2. Counting dark (active) pixels inside the mask with `cv2.countNonZero`
-3. Comparing the ratio against `segment_threshold` (default 0.5)
-
-Segment polygons are stored as absolute pixel coordinates in `segment_points`, populated from the calibration file. The polygon approach handles trapezoidal LCD segment shapes more accurately than rectangular ROI proportions.
+    Segment polygons are stored as absolute pixel coordinates in `segment_points`, populated from the calibration file. The polygon approach handles trapezoidal LCD segment shapes more accurately than rectangular ROI proportions.
 
 ---
 

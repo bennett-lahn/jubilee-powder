@@ -1,3 +1,36 @@
+"""Motion platform state machine for validated Jubilee movements.
+
+``MotionPlatformStateMachine`` tracks logical position, tool engagement, payload
+state, and z-height policy. Public ``validated_*`` methods combine FSM checks with
+:class:`~src.MovementExecutor.MovementExecutor`
+hardware sequences. Position and action definitions load from
+``api_config/motion_platform_positions.json`` via
+:class:`PositionRegistry`.
+
+Example:
+    Create from configuration and move to the scale::
+
+        from src.MotionPlatformStateMachine import MotionPlatformStateMachine
+
+        sm = MotionPlatformStateMachine.from_config_file(
+            "api_config/motion_platform_positions.json",
+            machine=machine,
+            scale=scale,
+        )
+        result = sm.validated_move_to_scale()
+        if not result.valid:
+            print(result.reason)
+
+Warning:
+    Prefer :class:`~src.JubileeManager.JubileeManager` for routine automation.
+    Use the state machine directly only when you need operations not exposed
+    on the manager.
+
+See Also:
+    :doc:`motion-platform API reference </api/motion-platform>` for FSM diagrams
+    and common operation recipes.
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +44,7 @@ from science_jubilee.Machine import Machine
 from science_jubilee.decks.Deck import Deck
 from src.PistonDispenser import PistonDispenser
 from src.Scale import Scale
+from src.HardnessTester import HardnessTester
 from src.motion_config import (
     load_motion_platform_config,
     supported_tool_ids_from_system_config,
@@ -35,7 +69,14 @@ class ZHeightPolicy:
     required: str | None = None
 
     def validate(self, z_height_id: str | None) -> str | None:
-        """Return a human readable error message if the policy is not satisfied."""
+        """Check whether ``z_height_id`` satisfies this policy.
+
+        Args:
+            z_height_id: Active z-height name from motion context.
+
+        Returns:
+            ``None`` when the policy passes, otherwise a human-readable error.
+        """
         if not self.required and not self.allowed:
             return "No z-height is permitted for this position."
 
@@ -66,12 +107,22 @@ class MachineCoordinates:
 
 @dataclass(frozen=True)
 class PositionDescriptor:
-    """
-    Describes a logical position that the motion platform can occupy.
+    """Runtime descriptor for one named motion platform position.
 
-    Positions extend beyond XYZ coordinates and capture the holistic machine
-    pose, including manipulator states, payload status, or ancillary actuator
-    configurations.
+    Attributes:
+        identifier: Lowercase position id from config.
+        type: High-level :class:`PositionType` group.
+        allowed_origins: Expanded set of valid source position ids.
+        allowed_destinations: Expanded set of valid target position ids.
+        coordinates: Stored X/Y/Z/V pose, if defined.
+        requirements: Context pre-conditions checked before arrival.
+        z_height_policy: Z-height constraints for this position.
+        allows_tool_engagement: Whether the tool may engage here.
+        engagement_requirements: Requirements checked during engagement only.
+        engagement_actions: Action ids permitted while engaged.
+        resource_id: Optional linked resource identifier.
+        description: Human-readable summary from JSON.
+        metadata: Extra key-value data from config.
     """
 
     identifier: str
@@ -115,7 +166,25 @@ class ToolStatus:
 
 @dataclass
 class MotionContext:
-    """Captures the mutable state of the motion platform."""
+    """Captures the mutable state of the motion platform.
+
+    Attributes:
+        position_id: Current named position identifier.
+        z_height_id: Active z-height policy id, if any.
+        active_tool_id: Name of the picked-up tool, or None.
+        payload_state: Manipulator payload (``empty``, ``mold_without_top_piston``,
+            ``mold_with_top_piston``).
+        tool_states: Per-tool engagement metadata.
+        pending_move: In-flight ``MoveRequest`` while the FSM is in ``Moving``.
+        engaged_ready_position_id: Ready position held during tool engagement.
+        engaged_tool_id: Tool id engaged at the ready point.
+        metadata: Arbitrary runtime metadata.
+        deck: Loaded ``Deck`` with mold labware, if initialized.
+        scale: Connected ``Scale`` instance, if any.
+        current_well: ``Mold`` object carried by the manipulator, if any.
+        mold_on_scale: Whether the mold is physically on the scale.
+        piston_dispensers: Configured ``PistonDispenser`` instances.
+    """
 
     position_id: str
     z_height_id: str | None = None
@@ -140,7 +209,13 @@ class MotionContext:
 
 @dataclass
 class MoveRequest:
-    """Represents a requested transition for the motion platform."""
+    """Represents a requested transition for the motion platform.
+
+    Attributes:
+        target_position_id: Destination position id.
+        action: Optional action id when validating an action-only request.
+        metadata: Extra fields passed through validation hooks.
+    """
 
     target_position_id: str
     action: str | None = None
@@ -149,7 +224,23 @@ class MoveRequest:
 
 @dataclass
 class MoveValidationResult:
-    """Encapsulates the outcome of a move validation."""
+    """Outcome of a validated move or action.
+
+    All :meth:`~MotionPlatformStateMachine.validated_*` methods return this
+    type. Rule violations set ``valid=False`` with a ``reason`` string rather
+    than raising.
+
+    Attributes:
+        valid: Whether the operation is permitted and completed successfully.
+        reason: Human-readable explanation when ``valid`` is False.
+
+    Example:
+        Check before retrying::
+
+            result = state_machine.validated_move_to_scale()
+            if not result.valid:
+                print(f"Move blocked: {result.reason}")
+    """
 
     valid: bool
     reason: str | None = None
@@ -164,9 +255,23 @@ class _ResolvedPositionResult:
 
 
 class PositionRegistry:
-    """Utility container for known platform positions."""
+    """In-memory index of validated motion platform positions and actions.
+
+    Built from ``motion_platform_positions.json`` via
+    :meth:`from_config_file`. The state machine uses this registry for
+    transition rules, coordinate checks, and action lookup.
+
+    Note:
+        Reload requires constructing a new registry (typically by reconnecting).
+        Edits to the JSON file are not picked up from an existing instance.
+    """
 
     def __init__(self, positions: Iterable[PositionDescriptor]) -> None:
+        """Register an initial set of position descriptors.
+
+        Args:
+            positions: Iterable of :class:`PositionDescriptor` instances to index.
+        """
         self._positions: dict[str, PositionDescriptor] = {}
         self._actions: dict[str, ActionDescriptor] = {}
         self._z_heights: dict[str, object] = {}
@@ -183,6 +288,29 @@ class PositionRegistry:
         *,
         system_config_path: str | Path | None = None,
     ) -> "PositionRegistry":
+        """Load and validate a motion platform config file.
+
+        Expands type references (for example ``MOLD_READY``) to concrete position
+        ids and attaches actions, z-heights, and coordinate tolerance from the
+        JSON file. Tool ids are taken from :mod:`src.ConfigLoader`, not
+        ``system_config_path``.
+
+        Args:
+            path: Path to ``motion_platform_positions.json``.
+            system_config_path: Deprecated; ignored. Retained for call-site
+                compatibility.
+
+        Returns:
+            Populated registry ready for the state machine.
+
+        Raises:
+            ConfigError: If JSON validation fails.
+            KeyError: If a position ``type`` is unknown.
+
+        Warning:
+            ``system_config_path`` is ignored. Tool names always come from the
+            :mod:`src.ConfigLoader` singleton loaded at import time.
+        """
         del system_config_path  # tool ids come from ConfigLoader.system
         config_path = Path(path)
         with config_path.open("r", encoding="utf-8") as handle:
@@ -305,28 +433,54 @@ class PositionRegistry:
         return registry
 
     def add_position(self, position: PositionDescriptor) -> None:
+        """Register a position descriptor.
+
+        Args:
+            position: Descriptor to add.
+
+        Raises:
+            ValueError: If ``position.identifier`` is already registered.
+        """
         if position.identifier in self._positions:
             raise ValueError(f"Duplicate position identifier '{position.identifier}'")
         self._positions[position.identifier] = position
 
     def get(self, identifier: str) -> PositionDescriptor:
+        """Return the descriptor for a position id.
+
+        Args:
+            identifier: Lowercase position id (for example ``global_ready``).
+
+        Raises:
+            KeyError: If the id is unknown.
+        """
         try:
             return self._positions[identifier]
         except KeyError as exc:
             raise KeyError(f"Unknown position identifier '{identifier}'") from exc
 
     def has(self, identifier: str) -> bool:
+        """Return whether ``identifier`` is a known position id."""
         return identifier in self._positions
 
     def find_first_of_type(
         self, position_type: PositionType
     ) -> PositionDescriptor | None:
+        """Return the first descriptor matching ``position_type``, if any."""
         for descriptor in self._positions.values():
             if descriptor.type == position_type:
                 return descriptor
         return None
 
     def get_action(self, identifier: str) -> ActionDescriptor:
+        """Return the descriptor for an action id.
+
+        Args:
+            identifier: Action id from the ``actions`` array.
+
+        Raises:
+            KeyError: If the action is unknown.
+        """
         try:
             return self._actions[identifier]
         except KeyError as exc:
@@ -334,18 +488,22 @@ class PositionRegistry:
 
     @property
     def actions(self) -> dict[str, ActionDescriptor]:
+        """Shallow copy of registered action descriptors keyed by id."""
         return dict(self._actions)
 
     @property
     def z_heights(self) -> dict[str, object]:
+        """Shallow copy of z-height entries from config."""
         return dict(self._z_heights)
 
     @property
     def coordinate_tolerance(self) -> dict[str, float]:
+        """Per-axis coordinate tolerance in millimeters."""
         return dict(self._coordinate_tolerance)
 
     @property
     def supported_tool_ids(self) -> frozenset[str]:
+        """Tool names allowed by validated ``system_config.json``."""
         return self._supported_tool_ids
 
     def validate_machine_position(
@@ -357,10 +515,24 @@ class PositionRegistry:
         machine_v: float,
         current_z_height_id: str | None = None,
     ) -> str | None:
-        """
-        Validate that the machine is actually at the expected coordinates for a position.
+        """Check reported machine coordinates against a position definition.
 
-        Returns None if validation passes, or an error message if coordinates don't match.
+        Args:
+            position_id: Position whose stored coordinates are the expected pose.
+            machine_x: Reported X coordinate (mm).
+            machine_y: Reported Y coordinate (mm).
+            machine_z: Reported Z coordinate (mm).
+            machine_v: Reported V coordinate (mm).
+            current_z_height_id: Active z-height when expected Z uses
+                ``USE_Z_HEIGHT_POLICY``.
+
+        Returns:
+            ``None`` when coordinates match within tolerance, otherwise an
+            error message string.
+
+        Note:
+            When ``coordinates.z`` is ``USE_Z_HEIGHT_POLICY``, expected Z is
+            resolved from :attr:`z_heights` using ``current_z_height_id``.
         """
         position = self.get(position_id)
         if not position.coordinates:
@@ -426,12 +598,31 @@ class PositionRegistry:
 
 
 class MotionPlatformStateMachine(StateMachine):
-    """
-    Finite state machine responsible for validating and sequencing platform moves.
+    """Validates and sequences Jubilee motion platform moves.
 
-    The machine relies on python-statemachine to model the control flow. It
-    maintains awareness of both high-level state (idle, moving, tool engaged)
-    and the current logical position descriptor.
+    Uses ``python-statemachine`` for the control FSM (``idle``, ``moving``,
+    ``tool_engaged``) and :class:`PositionRegistry` for transition rules from
+    ``motion_platform_positions.json``. Public callers should use
+    :meth:`validated_*` methods, which delegate hardware motion to an internal
+    :class:`~src.MovementExecutor.MovementExecutor`.
+
+    Attributes:
+        context: Mutable :class:`MotionContext` (position, tools, payload, deck).
+        idle: Initial FSM state when no motion is in progress.
+        moving: Transient FSM state while a move executes.
+        tool_engaged: FSM state while a mold rests on the scale with tool engaged.
+
+    Warning:
+        Not thread-safe. Do not call methods from multiple threads without
+        external locking.
+
+    Note:
+        Validated methods return :class:`MoveValidationResult`; always inspect
+        ``result.valid`` and surface ``result.reason`` before retrying.
+
+    See Also:
+        :class:`~src.JubileeManager.JubileeManager` for the recommended
+        high-level entry point.
     """
 
     idle = State("Idle", initial=True)
@@ -453,6 +644,21 @@ class MotionPlatformStateMachine(StateMachine):
         context: MotionContext | None = None,
         scale: Scale | None = None,
     ) -> None:
+        """Construct a state machine bound to a position registry and machine.
+
+        Prefer :meth:`from_config_file` for production setup.
+
+        Args:
+            registry: Loaded :class:`PositionRegistry` with positions and actions.
+            machine: Connected Jubilee :class:`~science_jubilee.Machine.Machine`.
+            context: Optional initial :class:`MotionContext`. Defaults to the
+                first ``GLOBAL_READY`` position.
+            scale: Optional :class:`~src.Scale.Scale` stored on the context.
+
+        Raises:
+            ValueError: If no ``GLOBAL_READY`` position exists when ``context``
+                is omitted, or if a provided context references an unknown position.
+        """
         # Import MovementExecutor locally to avoid circular import
         from src.MovementExecutor import MovementExecutor
 
@@ -495,6 +701,39 @@ class MotionPlatformStateMachine(StateMachine):
         scale: Scale | None = None,
         system_config_path: str | Path | None = None,
     ) -> "MotionPlatformStateMachine":
+        """Create a state machine from ``motion_platform_positions.json``.
+
+        Args:
+            path: Path to ``motion_platform_positions.json``.
+            machine: Connected Jubilee :class:`~science_jubilee.Machine.Machine`.
+            context_overrides: Optional fields merged into the initial
+                :class:`MotionContext` (for example ``payload_state``).
+            scale: Optional :class:`~src.Scale.Scale` stored on the context.
+            system_config_path: Deprecated; passed to
+                :meth:`PositionRegistry.from_config_file` for compatibility.
+
+        Returns:
+            Configured state machine with ``context.position_id`` at
+            ``GLOBAL_READY``.
+
+        Raises:
+            ValueError: If the configuration lacks a ``GLOBAL_READY`` position.
+
+        Example:
+            Wire up deck and dispensers after construction::
+
+                sm = MotionPlatformStateMachine.from_config_file(
+                    "api_config/motion_platform_positions.json",
+                    machine=machine,
+                    scale=scale,
+                )
+                sm.initialize_deck()
+                sm.initialize_dispensers(num_piston_dispensers=2, num_pistons_per_dispenser=10)
+
+        Note:
+            Position ids, transitions, and z-height policies come from JSON
+            only. See :doc:`position configuration </api/position-config>`.
+        """
         registry = PositionRegistry.from_config_file(
             path, system_config_path=system_config_path
         )
@@ -528,12 +767,18 @@ class MotionPlatformStateMachine(StateMachine):
     def initialize_deck(
         self, deck_name: str = "weight_well_deck", config_path: str | None = None
     ):
-        """
-        Initialize the deck with weight wells in each slot.
+        """Initialize the deck with mold labware in each slot.
+
+        Loads ``Mold`` objects into slots 0-17 and links each well to a
+        ``mold_ready_N`` position id from config.
 
         Args:
-            deck_name: Name of the deck configuration
-            config_path: Path to the deck configuration files
+            deck_name: Deck configuration name (default ``weight_well_deck``).
+            config_path: Optional path to deck labware JSON files.
+
+        Note:
+            Pick/place coordinates still come from
+            ``motion_platform_positions.json``, not deck labware offsets.
         """
         from src.trickler_labware import Mold
         from science_jubilee.labware.Labware import Labware
@@ -618,12 +863,11 @@ class MotionPlatformStateMachine(StateMachine):
     def initialize_dispensers(
         self, num_piston_dispensers: int = 0, num_pistons_per_dispenser: int = 0
     ):
-        """
-        Initialize piston dispensers.
+        """Initialize piston dispenser inventory tracking.
 
         Args:
-            num_piston_dispensers: Number of piston dispensers
-            num_pistons_per_dispenser: Number of pistons in each dispenser
+            num_piston_dispensers: Number of side-mounted piston dispensers.
+            num_pistons_per_dispenser: Initial piston count per dispenser.
         """
 
         self.context.piston_dispensers = [
@@ -720,7 +964,12 @@ class MotionPlatformStateMachine(StateMachine):
     # ---------------------------------------------------------------------
     @property
     def machine(self) -> Machine:
-        """Read-only access to machine for state queries (position, status, etc)."""
+        """Read-only Jubilee machine access for position and status queries.
+
+        Warning:
+            Do not issue moves through this property. Use :meth:`validated_*`
+            methods so transition rules and coordinate checks stay enforced.
+        """
         return self._executor.machine
 
     @property
@@ -738,12 +987,20 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_pick_mold(
         self, well_id: str, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
-        """
-        Validate and execute picking up a mold from a mold slot.
+        """Validate and execute picking up a mold from a mold slot.
 
         Args:
-            well_id: Mold slot identifier (numerical string "0" through "17")
-            manipulator_config: Configuration dict for the manipulator
+            well_id: Mold slot identifier (numerical string ``"0"`` through ``"17"``).
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``). Use :meth:`~src.Manipulator.Manipulator._get_config_dict`.
+
+        Returns:
+            :class:`MoveValidationResult`. On success, sets ``current_well`` and
+            ``payload_state`` to ``mold_without_top_piston``.
+
+        Note:
+            Requires the machine to already be at ``mold_ready_{well_id}`` with
+            empty payload and manipulator tool active.
         """
         from src.trickler_labware import Mold
 
@@ -807,12 +1064,19 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_place_mold(
         self, well_id: str, manipulator_config: dict[str, object] | None = None
     ) -> MoveValidationResult:
-        """
-        Validate and execute placing a mold in a mold slot.
+        """Validate and execute placing a mold in a mold slot.
 
         Args:
-            well_id: Well identifier (numerical string "0" through "17")
-            manipulator_config: Configuration dict for the manipulator
+            well_id: Mold slot identifier (numerical string ``"0"`` through ``"17"``).
+            manipulator_config: Optional manipulator settings dict (unused for
+                placement; retained for call-site compatibility).
+
+        Returns:
+            :class:`MoveValidationResult`. On success, clears ``current_well`` and
+            sets ``payload_state`` to ``empty``.
+
+        Note:
+            Requires carrying a mold at ``mold_ready_{well_id}``.
         """
         # Domain-specific validation
         if self.context.current_well is None:
@@ -851,7 +1115,21 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_place_mold_on_scale(
         self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
-        """Validate and execute placing mold on scale."""
+        """Validate and execute placing the carried mold on the scale.
+
+        On success, transitions to ``scale_active`` and engages the tool.
+
+        Args:
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``).
+
+        Returns:
+            :class:`MoveValidationResult`.
+
+        Note:
+            Requires ``scale_ready``, mold without top piston, and manipulator
+            tool active. Engages the tool at ``scale_active`` after placement.
+        """
         # Domain-specific validation
         if self.context.scale is None:
             return MoveValidationResult(valid=False, reason="Scale not configured")
@@ -904,7 +1182,21 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_pick_mold_from_scale(
         self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
-        """Validate and execute picking mold from scale."""
+        """Validate and execute picking the mold up from the scale.
+
+        On success, disengages the tool and returns to ``scale_ready``.
+
+        Args:
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``).
+
+        Returns:
+            :class:`MoveValidationResult`.
+
+        Note:
+            Requires ``scale_active`` with tool engaged and ``mold_on_scale``
+            set on the context.
+        """
         # Domain-specific validation
         if self.context.scale is None:
             return MoveValidationResult(valid=False, reason="Scale not configured")
@@ -949,9 +1241,25 @@ class MotionPlatformStateMachine(StateMachine):
         return result
 
     def validated_place_top_piston(
-        self, piston_dispenser, manipulator_config: dict[str, object]
+        self, piston_dispenser: PistonDispenser, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
-        """Validate and execute placing top piston."""
+        """Validate and execute placing a top piston on the carried mold.
+
+        Args:
+            piston_dispenser: :class:`~src.PistonDispenser.PistonDispenser` at
+                the current ``dispenser_ready_N`` position.
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``).
+
+        Returns:
+            :class:`MoveValidationResult`. On success, sets ``has_top_piston``
+            on the carried mold.
+
+        Warning:
+            The underlying executor currently uses absolute coordinates and is
+            validated for a single dispenser layout. Confirm machine config
+            before running on multi-dispenser setups.
+        """
         # Domain-specific validation
         if self.context.current_well is None:
             return MoveValidationResult(valid=False, reason="Not carrying a mold")
@@ -1004,21 +1312,28 @@ class MotionPlatformStateMachine(StateMachine):
         tamp_depth: float,
         tamp_speed: int,
     ) -> MoveValidationResult:
-        """
-        Validate and execute tamping action.
+        """Validate and execute tamping to compress powder in the held mold.
 
-        Tamping compresses powder in a mold held by the manipulator to reduce volume.
-        This is typically done at the scale_ready position before inserting the top piston.
-
-        Parameter bounds are loaded from system_config.json and can be customized.
+        Typically performed at ``scale_ready`` after filling and before piston
+        insertion. Bounds are enforced from ``system_config.json`` via
+        :mod:`src.ConfigLoader`.
 
         Args:
-            manipulator_config: Configuration dict for the manipulator
-            tamp_depth: Target depth for tamping movement in mm (from system_config.json)
-            tamp_speed: Speed for tamping movement in mm/min (from system_config.json)
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``).
+            tamp_depth: Target tamp depth in mm.
+            tamp_speed: Tamper feed rate in mm/min.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Note:
+            Requires a mold without top piston. The V axis is re-homed after
+            tamping for positioning accuracy.
+
+        See Also:
+            :meth:`~src.Manipulator.Manipulator.tamp` raises :class:`~src.Manipulator.ToolStateError`
+            when validation fails.
         """
         from src.ConfigLoader import config
 
@@ -1494,14 +1809,18 @@ class MotionPlatformStateMachine(StateMachine):
     # ---------------------------------------------------------------------
 
     def validated_move_to_mold_slot(self, well_id: str) -> MoveValidationResult:
-        """
-        Validate and execute movement to a specific mold slot.
+        """Validate and execute movement to a specific mold slot.
 
         Args:
-            well_id: Mold slot identifier (numerical string "0" through "17")
+            well_id: Mold slot identifier (numerical string ``"0"`` through ``"17"``).
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult` with updated ``context.position_id``
+            on success.
+
+        Note:
+            Target resolves to ``mold_ready_{well_id}`` from deck labware or
+            config. Requires a valid transition from the current position.
         """
         # Use state machine's deck
         deck = self.context.deck
@@ -1546,11 +1865,14 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     def validated_move_to_scale(self) -> MoveValidationResult:
-        """
-        Validate and execute movement to the scale.
+        """Validate and execute movement to ``scale_ready``.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Note:
+            Requires scale configured on the context, correct active tool, and
+            z-height policy satisfied (typically ``mold_transfer_safe``).
         """
         if self.context.scale is None:
             return MoveValidationResult(valid=False, reason="Scale not configured")
@@ -1628,8 +1950,14 @@ class MotionPlatformStateMachine(StateMachine):
         """
         Validate and execute movement to the sample tray ready position.
 
-        Sample-specific XY/Z positioning is handled by HardnessTester.test_sample(),
-        which runs through the action framework and executor.
+        Per-sample slot moves use :meth:`validated_move_to_hardness_sample`.
+
+        Args:
+            tray_index: Zero-based tray index configured in
+                ``motion_platform_positions.json``.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         try:
             tray_index_int = int(str(tray_index))
@@ -1691,6 +2019,13 @@ class MotionPlatformStateMachine(StateMachine):
         ``sample_tray_{tray_index}_slot_{sample_id}`` identifier. The
         state machine owns all coordinate validation; the executor
         receives only the resolved (x, y, z) floats.
+
+        Args:
+            tray_index: Zero-based tray index.
+            sample_id: Sample index within the tray.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         try:
             tray_index_int = int(str(tray_index))
@@ -1746,14 +2081,25 @@ class MotionPlatformStateMachine(StateMachine):
         tray_index: str | int,
         sample_id: str | int,
         mode: str | None = None,
-        hardness_tester=None,
-        image_save_path=None,
+        hardness_tester: HardnessTester | None = None,
+        image_save_path: str | Path | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute the hardness measurement at the current sample slot.
 
         The machine must already be positioned at the target slot (via
         ``validated_move_to_hardness_sample``) before this action is called.
+
+        Args:
+            tray_index: Zero-based tray index.
+            sample_id: Sample index within the tray.
+            mode: Optional Shore mode (``"shore_a"`` or ``"shore_d"``).
+            hardness_tester: ``HardnessTester`` used for LCD capture.
+            image_save_path: Optional path for a debug camera frame.
+
+        Returns:
+            MoveValidationResult with outcome. OCR results are stored on the
+            executor as ``last_hardness_result`` and ``last_hardness_error``.
         """
         try:
             tray_index_int = int(str(tray_index))
@@ -1842,7 +2188,7 @@ class MotionPlatformStateMachine(StateMachine):
         return channel, int(press_angle), int(release_angle), None
 
     def validated_hardness_turn_on(
-        self, mode: str | None = None, hardness_tester=None
+        self, mode: str | None = None, hardness_tester: HardnessTester | None = None
     ) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-on button actuation.
@@ -1850,6 +2196,13 @@ class MotionPlatformStateMachine(StateMachine):
         Extracts the servo channel and press/release angles from hardness_tester,
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
+
+        Args:
+            mode: Optional Shore mode string (for logging).
+            hardness_tester: ``HardnessTester`` with servo configuration.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         channel, press, release, err = self._extract_servo_angles(
             hardness_tester, "power"
@@ -1866,7 +2219,7 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     def validated_hardness_turn_off(
-        self, mode: str | None = None, hardness_tester=None
+        self, mode: str | None = None, hardness_tester: HardnessTester | None = None
     ) -> MoveValidationResult:
         """
         Validate and execute hardness tester power-off button actuation.
@@ -1874,6 +2227,13 @@ class MotionPlatformStateMachine(StateMachine):
         Extracts the servo channel and press/release angles from hardness_tester,
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
+
+        Args:
+            mode: Optional Shore mode string (for logging).
+            hardness_tester: ``HardnessTester`` with servo configuration.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         channel, press, release, err = self._extract_servo_angles(
             hardness_tester, "power"
@@ -1890,7 +2250,7 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     def validated_hardness_zero(
-        self, mode: str | None = None, hardness_tester=None
+        self, mode: str | None = None, hardness_tester: HardnessTester | None = None
     ) -> MoveValidationResult:
         """
         Validate and execute hardness tester zero button actuation.
@@ -1898,6 +2258,13 @@ class MotionPlatformStateMachine(StateMachine):
         Extracts the servo channel and press/release angles from hardness_tester,
         validates that both angles are in the range [0, 180], then delegates to
         the executor. This action is intentionally allowed at any position.
+
+        Args:
+            mode: Optional Shore mode string (for logging).
+            hardness_tester: ``HardnessTester`` with servo configuration.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         channel, press, release, err = self._extract_servo_angles(
             hardness_tester, "zero"
@@ -1914,14 +2281,18 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     def validated_fill_powder(self, target_weight: float) -> MoveValidationResult:
-        """
-        Validate and execute filling mold with powder.
+        """Validate and execute trickler fill at ``scale_active``.
 
         Args:
-            target_weight: Target weight to fill
+            target_weight: Target powder mass in grams.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`. Final stable weight is available on
+            :attr:`last_fill_weight` after success.
+
+        Note:
+            Requires tool engaged with mold on scale. Jam handling may pause the
+            fill loop until an operator clears the blockage.
         """
         # Domain-specific validation
         if self.context.position_id != "scale_active":
@@ -1977,6 +2348,9 @@ class MotionPlatformStateMachine(StateMachine):
         Validate and execute movement to the global ready position.
 
         Resolves base coordinates from config and moves to global_ready.
+
+        Returns:
+            MoveValidationResult with outcome.
         """
         global_ready_pos = self._registry.find_first_of_type(PositionType.GLOBAL_READY)
         if global_ready_pos is None:
@@ -2007,21 +2381,24 @@ class MotionPlatformStateMachine(StateMachine):
         self,
         tamper_axis: str | None = None,
     ) -> MoveValidationResult:
-        """
-        Validate and execute tamper homing (uses home_manipulator action).
+        """Validate and execute tamper (V-axis) homing.
 
-        Can be performed while holding a mold without a top piston. The homing process
-        uses the mold itself as a reference:
-        - Start position: v=2 (tamper inserted into mold)
-        - End position: v=-7 (tamper touching bottom of mold)
+        Uses the mold cavity as a mechanical reference when carrying a mold
+        **without** a top piston:
 
-        This establishes accurate positioning by using the mold bottom as a reference point.
+        - Start: ``v=2`` (tamper inserted into mold)
+        - End: ``v=-7`` (tamper at mold bottom)
 
         Args:
-            tamper_axis: Axis letter for tamper; defaults to ``manipulator.tamper_axis`` in system config.
+            tamper_axis: Axis letter; defaults to
+                ``manipulator.tamper_axis`` from ``system_config.json``.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Warning:
+            Do not home while the mold has a top piston inserted. The travel
+            path can damage the tamper or piston.
         """
         return self._validate_and_execute(
             action_id="home_manipulator",
@@ -2030,17 +2407,17 @@ class MotionPlatformStateMachine(StateMachine):
         )
 
     def validated_home_all(self) -> MoveValidationResult:
-        """
-        Validate and execute homing for all axes (X, Y, Z, U).
+        """Validate and execute homing for all axes (X, Y, Z, U).
 
-        This action can be conducted from any position, but requires:
-        - No tool picked up (active_tool_id should not be "manipulator")
-        - No mold (payload_state should be "empty")
-
-        Returns machine to global_ready position after homing.
+        Returns the machine to ``global_ready`` and sets ``z_height_id`` to
+        ``mold_transfer_safe`` on success.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Warning:
+            Requires empty payload and no manipulator tool picked up. Homing
+            with a mold or active tool can collide with labware.
         """
         result = self._validate_and_execute(
             action_id="home_all",
@@ -2064,16 +2441,18 @@ class MotionPlatformStateMachine(StateMachine):
         self,
         manipulator_axis: str | None = None,
     ) -> MoveValidationResult:
-        """
-        Validate and execute homing for the manipulator axis (V).
-
-        Requires no mold picked up (payload_state should be "empty").
+        """Validate and execute homing for the manipulator axis (V).
 
         Args:
-            manipulator_axis: Axis letter for manipulator; defaults to ``manipulator.tamper_axis`` in system config.
+            manipulator_axis: Axis letter; defaults to
+                ``manipulator.tamper_axis`` from ``system_config.json``.
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Warning:
+            Requires ``payload_state`` of ``empty``. For homing while holding a
+            mold without top piston, use :meth:`validated_home_tamper` instead.
         """
         return self._validate_and_execute(
             action_id="home_manipulator",
@@ -2226,25 +2605,23 @@ class MotionPlatformStateMachine(StateMachine):
     def validated_retrieve_piston(
         self, manipulator_config: dict[str, object]
     ) -> MoveValidationResult:
-        """
-        Validate and execute retrieving a piston from the current dispenser position.
+        """Validate and execute piston retrieval at the current dispenser.
 
-        Derives which dispenser to use from the current position id
-        (e.g. ``dispenser_ready_0`` → dispenser 0). This means the caller must
-        have already moved to a dispenser ready position via
-        ``validated_move_to_dispenser()``. On success the dispenser's piston
-        count is decremented and the mold's top-piston flag is set.
-
-        Requires:
-        - Manipulator tool to be active
-        - Mold without top piston (payload_state: mold_without_top_piston)
-        - Current position must be a dispenser_ready_N position
+        Derives the dispenser index from ``context.position_id`` (for example
+        ``dispenser_ready_0`` maps to dispenser 0). Call
+        :meth:`validated_move_to_dispenser` first. On success, decrements the
+        dispenser count and sets ``has_top_piston`` on the carried mold.
 
         Args:
-            manipulator_config: Configuration dict for the manipulator.
+            manipulator_config: Manipulator settings dict (must include
+                ``tamper_axis``).
 
         Returns:
-            MoveValidationResult with outcome
+            :class:`MoveValidationResult`.
+
+        Note:
+            Requires manipulator tool active, ``mold_without_top_piston``
+            payload, and a ``dispenser_ready_N`` position with pistons remaining.
         """
         # Derive which dispenser we're at from the current position id
         pos_id = self.context.position_id
@@ -2325,6 +2702,12 @@ class MotionPlatformStateMachine(StateMachine):
         If the request references an action, the FSM validates the action without
         changing state. Otherwise, the FSM transitions into the moving state and
         records the pending move for completion tracking.
+
+        Args:
+            request: Target position and optional action metadata.
+
+        Returns:
+            MoveValidationResult indicating whether the request was accepted.
         """
         if request.action:
             return self.perform_action(request.action)
@@ -2341,7 +2724,16 @@ class MotionPlatformStateMachine(StateMachine):
         return validation
 
     def perform_action(self, action_id: str) -> MoveValidationResult:
-        """Validate whether an auxiliary action is permitted."""
+        """
+        Validate whether an auxiliary action is permitted at the current state.
+
+        Args:
+            action_id: Action identifier from ``motion_platform_positions.json``.
+
+        Returns:
+            MoveValidationResult with ``valid=True`` when all action constraints
+            (tool, engagement, position scope, requirements) are satisfied.
+        """
         descriptor = self._actions.get(action_id)
         if descriptor is None:
             return MoveValidationResult(
@@ -2412,6 +2804,12 @@ class MotionPlatformStateMachine(StateMachine):
           * The transition between current and target positions is permitted.
           * Z-height and contextual requirements are satisfied.
           * Engaged tools remain constrained to their ready points.
+
+        Args:
+            request: Move request with ``target_position_id``.
+
+        Returns:
+            MoveValidationResult with outcome (does not execute motion).
         """
         try:
             target_descriptor = self._registry.get(request.target_position_id)
@@ -2504,7 +2902,12 @@ class MotionPlatformStateMachine(StateMachine):
         self.context.pending_move = None
 
     def request_tool_engagement(self) -> MoveValidationResult:
-        """Attempt to transition from idle to tool engaged state at the current position."""
+        """Transition from idle to tool engaged at the current position.
+
+        Returns:
+            :class:`MoveValidationResult`. Succeeds only when the position
+            ``allows_tool_engagement`` and engagement requirements pass.
+        """
         if self.current_state != self.idle:
             return MoveValidationResult(
                 valid=False,
@@ -2529,7 +2932,12 @@ class MotionPlatformStateMachine(StateMachine):
         return MoveValidationResult(valid=True)
 
     def request_tool_disengagement(self) -> MoveValidationResult:
-        """Attempt to disengage the tool and return to idle."""
+        """Disengage the tool and return the FSM to idle.
+
+        Returns:
+            :class:`MoveValidationResult`. Requires the FSM to be in
+            ``tool_engaged`` with a known ``engaged_ready_position_id``.
+        """
         if self.current_state != self.tool_engaged:
             return MoveValidationResult(
                 valid=False, reason="No tool is currently engaged."
@@ -2569,7 +2977,18 @@ class MotionPlatformStateMachine(StateMachine):
         payload_state: str | None = None,
         z_height_id: str | None = None,
     ) -> None:
-        """Convenience helper to mutate commonly updated context properties."""
+        """Mutate commonly updated :class:`MotionContext` fields.
+
+        Args:
+            active_tool_id: Tool name to record as active, or ``None``.
+            payload_state: Manipulator payload (``empty``,
+                ``mold_without_top_piston``, ``mold_with_top_piston``).
+            z_height_id: Active z-height policy id.
+
+        Warning:
+            Bypasses validation. Use only when the physical machine state is
+            known to match the values being set.
+        """
         if active_tool_id is not None:
             self.context.active_tool_id = active_tool_id
         if payload_state is not None:
@@ -2584,20 +3003,19 @@ class MotionPlatformStateMachine(StateMachine):
         machine_z: float,
         machine_v: float,
     ) -> MoveValidationResult:
-        """
-        Validate that the machine's physical coordinates match the FSM's expected position.
+        """Check physical coordinates against the FSM's expected position.
 
-        This is a safety check to ensure the machine is actually where the FSM thinks it is.
-        Should be called before attempting moves or actions.
+        Called automatically before validated moves and actions.
 
         Args:
-            machine_x: Current X coordinate from machine
-            machine_y: Current Y coordinate from machine
-            machine_z: Current Z coordinate from machine
-            machine_v: Current V (manipulator) coordinate from machine
+            machine_x: Reported X coordinate (mm).
+            machine_y: Reported Y coordinate (mm).
+            machine_z: Reported Z coordinate (mm).
+            machine_v: Reported V coordinate (mm).
 
         Returns:
-            MoveValidationResult indicating if machine state matches expected position
+            :class:`MoveValidationResult` with coordinate mismatch details in
+            ``reason`` when validation fails.
         """
         error = self._registry.validate_machine_position(
             position_id=self.context.position_id,

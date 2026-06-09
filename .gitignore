@@ -1,5 +1,5 @@
 # Security
-jubilee_api_config/service_account.json
+api_config/service_account.json
 
 # Python
 __pycache__/
@@ -33,6 +33,7 @@ jubilee-env/
 env_jubilee/
 .test-venv/
 .venv-docs/
+.venv-docs311/
 
 # IDE
 .vscode/
