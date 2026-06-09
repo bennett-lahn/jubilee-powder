@@ -29,6 +29,7 @@ from src.MotionPlatformStateMachine import PositionType
 from src.ConfigLoader import config as _system_config
 
 logger = logging.getLogger(__name__)
+SHORE_D_SAMPLE_X_OFFSET_MM = 0.5
 
 
 class MovementExecutor:
@@ -500,6 +501,7 @@ class MovementExecutor:
         x: float,
         y: float,
         z: float,
+        mode: str | None = None,
     ) -> bool:
         """
         Move the hardness tester to a specific sample slot position.
@@ -511,14 +513,18 @@ class MovementExecutor:
             x: Resolved X machine coordinate.
             y: Resolved Y machine coordinate.
             z: Resolved Z machine coordinate.
+            mode: Optional Shore mode string (``"shore_a"`` or ``"shore_d"``).
 
         Returns:
             True if successful, False otherwise.
         """
         try:
             feedrate = self._feedrate
-            logger.info("Moving hardness tester to sample: x=%s, y=%s, z=%s", x, y, z)
-            self._machine.move_to(x=x, y=y, z=z, s=feedrate)
+            resolved_x = x
+            normalized_mode = (mode or "").strip().lower()
+            if normalized_mode == "shore_d":
+                resolved_x = x + SHORE_D_SAMPLE_X_OFFSET_MM
+            self._machine.move_to(x=resolved_x, y=y, z=z, s=feedrate)
             return True
         except Exception as e:
             logger.error("Error moving to hardness sample: %s", e)
@@ -731,6 +737,36 @@ class MovementExecutor:
         except Exception as e:
             logger.error("Error actuating servo (mode=%s, action=%s): %s", mode, action, e)
             return False
+
+    def _extract_powder_dispenser_cover_servo_config(
+        self,
+    ) -> tuple[int | None, int | None, int | None, str | None]:
+        """Read and validate powder dispenser cover servo settings from config."""
+        servo_id = _system_config.get_powder_dispenser_cover_servo()
+        open_angle = _system_config.get_powder_dispenser_cover_open_angle()
+        closed_angle = _system_config.get_powder_dispenser_cover_closed_angle()
+
+        for label, angle in (("open", open_angle), ("closed", closed_angle)):
+            if not (0 <= int(angle) <= 90):
+                return (
+                    None,
+                    None,
+                    None,
+                    f"powder_dispenser_cover.{label}_angle {angle} is out of range [0, ]",
+                )
+
+        s = str(servo_id).strip()
+        try:
+            channel = int(s[1:]) if s.upper().startswith("S") else int(s)
+        except ValueError:
+            return (
+                None,
+                None,
+                None,
+                f"Cannot parse powder_dispenser_cover.servo identifier '{servo_id}'",
+            )
+
+        return channel, int(open_angle), int(closed_angle), None
 
     def execute_home_all(self, registry) -> bool:
         """Home all axes and return to global_ready position.
@@ -1138,6 +1174,8 @@ class MovementExecutor:
 
         try:
             self._machine.gcode("M400")  # ensure prior moves are complete
+            if not self.execute_open_powder_dispenser_cover():
+                raise RuntimeError("Failed to open powder dispenser cover servo")
 
             self._scale.tare()
             initial_weight = self._scale.get_weight(stable=True)
@@ -1299,24 +1337,40 @@ class MovementExecutor:
                 self._machine.gcode("G90")  # restore absolute positioning
             except Exception:
                 pass
+            if not self.execute_close_powder_dispenser_cover():
+                logger.warning("Failed to close powder dispenser cover servo")
 
     def execute_open_powder_dispenser_cover(self) -> bool:
-        """
-        Placeholder for powder dispenser cover open actuation.
-
-        Intentionally left as a stub for hardware-specific implementation.
-        """
-        # TODO: Implement powder dispenser cover open actuation.
-        return False
+        """Open the powder dispenser cover using configured servo channel/angle."""
+        channel, open_angle, _, error = (
+            self._extract_powder_dispenser_cover_servo_config()
+        )
+        if error:
+            logger.warning("Cannot open powder dispenser cover: %s", error)
+            return False
+        return self._actuate_servo(
+            mode="powder_dispenser_cover",
+            servo_channel=channel,
+            press_angle=open_angle,
+            release_angle=open_angle,
+            action="open_cover",
+        )
 
     def execute_close_powder_dispenser_cover(self) -> bool:
-        """
-        Placeholder for powder dispenser cover close actuation.
-
-        Intentionally left as a stub for hardware-specific implementation.
-        """
-        # TODO: Implement powder dispenser cover close actuation.
-        return False
+        """Close the powder dispenser cover using configured servo channel/angle."""
+        channel, _, closed_angle, error = (
+            self._extract_powder_dispenser_cover_servo_config()
+        )
+        if error:
+            logger.warning("Cannot close powder dispenser cover: %s", error)
+            return False
+        return self._actuate_servo(
+            mode="powder_dispenser_cover",
+            servo_channel=channel,
+            press_angle=closed_angle,
+            release_angle=closed_angle,
+            action="close_cover",
+        )
 
     def execute_home_tamper(
         self,

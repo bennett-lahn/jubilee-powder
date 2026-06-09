@@ -464,7 +464,7 @@ class HardnessTester(Tool):
             raise RuntimeError(tray_result.reason or "Move to sample tray failed")
 
         sample_result = state_machine.validated_move_to_hardness_sample(
-            tray_index, sample_id
+            tray_index, sample_id, mode=self.tester_mode
         )
         if not sample_result.valid:
             raise RuntimeError(sample_result.reason or "Move to hardness sample failed")

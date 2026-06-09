@@ -2011,6 +2011,7 @@ class MotionPlatformStateMachine(StateMachine):
         self,
         tray_index: str | int,
         sample_id: str | int,
+        mode: str | None = None,
     ) -> MoveValidationResult:
         """
         Validate and execute movement to a specific hardness sample slot.
@@ -2023,6 +2024,7 @@ class MotionPlatformStateMachine(StateMachine):
         Args:
             tray_index: Zero-based tray index.
             sample_id: Sample index within the tray.
+            mode: Optional Shore mode (``"shore_a"`` or ``"shore_d"``).
 
         Returns:
             MoveValidationResult with outcome.
@@ -2074,6 +2076,7 @@ class MotionPlatformStateMachine(StateMachine):
             x=ready_x,
             y=ready_y,
             z=ready_z,
+            mode=mode,
         )
 
     def validated_test_sample(

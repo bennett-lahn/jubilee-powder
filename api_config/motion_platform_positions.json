@@ -164,10 +164,10 @@
       "description": "Ready position for dispenser station 1.",
       "allows_tool_engagement": true,
       "coordinates": {
-        "x": 362.5,
-        "y": 337.0,
-        "z": "USE_Z_HEIGHT_POLICY",
-        "v": 30.0
+        "x": 238.0,
+        "y": 140.0,
+        "z": 95.0,
+        "v": 34.0
       },
       "allowed_origins": [
         "DISPENSER_READY",
@@ -3282,7 +3282,9 @@
       "description": "Open the powder dispenser cover. Requires manipulator tool to be active, a mold to be placed on the scale, and the tool to be engaged at scale_active.",
       "requires_tool_engaged": true,
       "required_tool_id": "manipulator",
-      "position_scope": [],
+      "position_scope": [
+        "scale_active"
+      ],
       "requirements": {
         "active_tool_id": "manipulator",
         "payload_state": "mold_without_top_piston",
@@ -3294,7 +3296,9 @@
       "description": "Close the powder dispenser cover. Requires manipulator tool to be active, a mold to be placed on the scale, and the tool to be engaged at scale_active.",
       "requires_tool_engaged": true,
       "required_tool_id": "manipulator",
-      "position_scope": [],
+      "position_scope": [
+        "scale_active"
+      ],
       "requirements": {
         "active_tool_id": "manipulator",
         "payload_state": "mold_without_top_piston",

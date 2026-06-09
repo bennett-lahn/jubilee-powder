@@ -123,6 +123,14 @@ class TricklerConfig(BaseModel):
     max_dribble_step_mm: float
 
 
+class PowderDispenserCoverConfig(BaseModel):
+    """Servo configuration for powder dispenser cover actuation."""
+
+    servo: str
+    open_angle: int
+    closed_angle: int
+
+
 class GoogleDriveConfig(BaseModel):
     """Optional Google Drive backup settings (``google_drive``)."""
 
@@ -252,6 +260,7 @@ class SystemConfig(BaseModel):
     manipulator: ManipulatorConfig
     hardness_testing: HardnessTestingConfig
     trickler: TricklerConfig
+    powder_dispenser_cover: PowderDispenserCoverConfig
     google_drive: GoogleDriveConfig
     hardness_testers: HardnessTestersConfig
 
@@ -685,6 +694,18 @@ class ConfigLoader:
     def get_trickler_max_dribble_step_mm(self) -> float:
         """Return ``trickler.max_dribble_step_mm``."""
         return self._system.trickler.max_dribble_step_mm
+
+    def get_powder_dispenser_cover_servo(self) -> str:
+        """Return ``powder_dispenser_cover.servo``."""
+        return self._system.powder_dispenser_cover.servo
+
+    def get_powder_dispenser_cover_open_angle(self) -> int:
+        """Return ``powder_dispenser_cover.open_angle``."""
+        return self._system.powder_dispenser_cover.open_angle
+
+    def get_powder_dispenser_cover_closed_angle(self) -> int:
+        """Return ``powder_dispenser_cover.closed_angle``."""
+        return self._system.powder_dispenser_cover.closed_angle
 
 
 config = ConfigLoader()
