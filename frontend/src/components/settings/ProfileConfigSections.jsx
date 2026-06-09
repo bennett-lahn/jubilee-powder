@@ -28,6 +28,7 @@ const TRICKLER_FIELDS = [
 const HARDNESS_FIELDS = [
   ['__section_shared', 'Shared Settings', 'section'],
   ['num_digits', 'Display Digits', 'number'],
+  ['monotonic_drop_threshold', 'Monotonic Drop Threshold', 'number'],
   ['threshold_bias', 'Threshold Bias', 'number'],
   ['sharpen_strength', 'Sharpen Strength', 'number'],
   ['sharpen_blur_radius', 'Sharpen Blur Radius', 'number'],
@@ -36,6 +37,7 @@ const HARDNESS_FIELDS = [
   ['morph_open', 'Morph Open', 'boolean'],
   ['__section_shore_a', 'Shore A Settings', 'section'],
   ['shore_a.use_camera', 'Use Camera', 'boolean'],
+  ['shore_a.bypass_cv', 'Bypass CV', 'boolean'],
   ['shore_a.lcd_calibration_path', 'LCD Calibration Path', 'text'],
   ['shore_a.cam_usb_path', 'Camera USB Path', 'text'],
   ['shore_a.button_servos.servo', 'Servo Channel', 'text'],
@@ -45,6 +47,7 @@ const HARDNESS_FIELDS = [
   ['shore_a.button_servos.zero_release_angle', 'Zero Release Angle', 'number'],
   ['__section_shore_d', 'Shore D Settings', 'section'],
   ['shore_d.use_camera', 'Use Camera', 'boolean'],
+  ['shore_d.bypass_cv', 'Bypass CV', 'boolean'],
   ['shore_d.lcd_calibration_path', 'LCD Calibration Path', 'text'],
   ['shore_d.cam_usb_path', 'Camera USB Path', 'text'],
   ['shore_d.button_servos.servo', 'Servo Channel', 'text'],

@@ -41,6 +41,9 @@
         "tamp_depth_default": 9.0,
         "tamp_speed_default": 500
     },
+    "hardness_testing": {
+        "enable_monotonic_drop_check": false
+    },
     "google_drive": {
         "enabled": false,
         "credentials_file": "api_config/service_account.json",

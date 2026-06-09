@@ -117,6 +117,7 @@ class JubileeManager:
         self.last_hardness_result: float | None = None
         self.last_hardness_error: str | None = None
         self.last_hardness_image_path: str | None = None
+        self.last_hardness_cv_bypassed: bool = False
         self.last_error: str | None = None
         self._on_jam_callback: Callable | None = None
 
@@ -322,18 +323,23 @@ class JubileeManager:
                 state_machine=self.state_machine,
             )
             active_hardness_profile = config.get_active_hardness_profile()
+            enable_monotonic_drop_check = (
+                config.get_hardness_monotonic_drop_check_enabled()
+            )
             testers = config.system.hardness_testers
             self.hardness_tester_shore_a = HardnessTester.from_system_config(
                 tester_mode="shore_a",
                 hardware_cfg=testers.shore_a,
                 profile_cfg=active_hardness_profile,
                 state_machine=self.state_machine,
+                enable_monotonic_drop_check=enable_monotonic_drop_check,
             )
             self.hardness_tester_shore_d = HardnessTester.from_system_config(
                 tester_mode="shore_d",
                 hardware_cfg=testers.shore_d,
                 profile_cfg=active_hardness_profile,
                 state_machine=self.state_machine,
+                enable_monotonic_drop_check=enable_monotonic_drop_check,
             )
             logger.debug("State machine + tools init: %.2fs", time.monotonic() - _t2)
 
@@ -717,6 +723,7 @@ class JubileeManager:
             self.last_hardness_result = None
             self.last_hardness_error = None
             self.last_hardness_image_path = None
+            self.last_hardness_cv_bypassed = False
 
             selected_tester = self._resolve_hardness_tester(mode)
             self.ensure_tool_active(selected_tester)
@@ -730,11 +737,13 @@ class JubileeManager:
                 self.last_hardness_result = measurement.get("result")
                 self.last_hardness_error = measurement.get("sample_error")
                 self.last_hardness_image_path = measurement.get("image_path")
+                self.last_hardness_cv_bypassed = bool(measurement.get("cv_bypassed"))
             else:
                 self.last_hardness_result = None
                 self.last_hardness_error = (
                     "Hardness tester did not return measurement metadata."
                 )
+                self.last_hardness_cv_bypassed = False
 
             if self.active_job_log is not None:
                 self.active_job_log.update_sample(

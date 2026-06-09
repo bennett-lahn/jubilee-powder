@@ -71,6 +71,7 @@ class MovementExecutor:
         self.last_hardness_result: float | None = None
         self.last_hardness_error: str | None = None
         self.last_hardness_image_path: str | None = None
+        self.last_hardness_cv_bypassed: bool = False
 
         # Jam handling: the dispensing loop blocks on this event when a jam is
         # detected; clear_jam() sets it to allow the loop to resume.
@@ -366,7 +367,7 @@ class MovementExecutor:
             self._machine.move_to(y=140, s=feedrate)  # Move away from dispenser
             self._machine.move_to(
                 v=8, s=feedrate
-            )  # Push piston into mold TODO: Should be more like ~v=6
+            )  # Push piston into mold
             self._machine.move_to(
                 x=ready_x, y=ready_y, z=ready_z, v=ready_v, s=feedrate
             )
@@ -564,6 +565,7 @@ class MovementExecutor:
         self.last_hardness_result = None
         self.last_hardness_error = None
         self.last_hardness_image_path = None
+        self.last_hardness_cv_bypassed = False
 
         # TODO: Issue the actual z-probe descent (e.g. G38.2 / vendor
         # probe routine) and capture the contact Z.
@@ -581,6 +583,30 @@ class MovementExecutor:
                 "Hardness tester instance was not provided for OCR."
             )
             return True
+
+        if getattr(hardness_tester, "bypass_cv", False):
+            self.last_hardness_cv_bypassed = True
+            return True
+
+        if getattr(hardness_tester, "enable_monotonic_drop_check", False):
+            numeric_samples = hardness_tester.sample_numeric_readings(
+                frame_count=8,
+                total_duration_s=0.8,
+                debug_prefix=f"hardness_probe_{tray_index}_{sample_id}",
+            )
+            threshold = getattr(hardness_tester, "monotonic_drop_threshold", 0.0)
+            previous_value: float | None = None
+            for value in numeric_samples:
+                if previous_value is not None:
+                    drop_amount = previous_value - value
+                    if drop_amount >= float(threshold):
+                        self.last_hardness_error = (
+                            "Hardness reading dropped sharply during probe descent "
+                            f"(drop={drop_amount:.2f}, threshold={float(threshold):.2f}); "
+                            "sample may have broken."
+                        )
+                        return True
+                previous_value = value
 
         reading = hardness_tester.read_display(
             debug=False,

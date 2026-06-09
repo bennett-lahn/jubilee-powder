@@ -94,6 +94,12 @@ class ManipulatorConfig(BaseModel):
     tamp_speed_default: int
 
 
+class HardnessTestingConfig(BaseModel):
+    """Runtime hardness-testing behavior toggles (``hardness_testing``)."""
+
+    enable_monotonic_drop_check: bool
+
+
 class TricklerConfig(BaseModel):
     """Powder trickler tuning parameters (``trickler``)."""
 
@@ -156,6 +162,7 @@ class HardnessTesterConfig(BaseModel):
     """Per-mode hardness tester hardware and calibration settings."""
 
     use_camera: bool
+    bypass_cv: bool
     tool: HardnessTesterToolConfig
     lcd_calibration_path: str
     button_servos: ButtonServosConfig
@@ -175,6 +182,7 @@ class HardnessTesterProfileConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     use_camera: bool
+    bypass_cv: bool
     lcd_calibration_path: str
     button_servos: ButtonServosConfig
     cam_usb_path: str
@@ -186,6 +194,7 @@ class HardnessProfileConfig(BaseModel):
     num_digits: int
     shore_a: HardnessTesterProfileConfig
     shore_d: HardnessTesterProfileConfig
+    monotonic_drop_threshold: float
     threshold_bias: int
     sharpen_strength: float
     sharpen_blur_radius: int
@@ -241,6 +250,7 @@ class SystemConfig(BaseModel):
     machine: MachineConfig
     tools: ToolsConfig
     manipulator: ManipulatorConfig
+    hardness_testing: HardnessTestingConfig
     trickler: TricklerConfig
     google_drive: GoogleDriveConfig
     hardness_testers: HardnessTestersConfig
@@ -429,6 +439,7 @@ class ConfigLoader:
         hydrated["hardness_testers"] = {
             "shore_a": {
                 "use_camera": active_hardness.shore_a.use_camera,
+                "bypass_cv": active_hardness.shore_a.bypass_cv,
                 "tool": shore_a_tool,
                 "lcd_calibration_path": active_hardness.shore_a.lcd_calibration_path,
                 "button_servos": active_hardness.shore_a.button_servos.model_dump(),
@@ -436,6 +447,7 @@ class ConfigLoader:
             },
             "shore_d": {
                 "use_camera": active_hardness.shore_d.use_camera,
+                "bypass_cv": active_hardness.shore_d.bypass_cv,
                 "tool": shore_d_tool,
                 "lcd_calibration_path": active_hardness.shore_d.lcd_calibration_path,
                 "button_servos": active_hardness.shore_d.button_servos.model_dump(),
@@ -570,6 +582,10 @@ class ConfigLoader:
         """Return default tamp depth and speed from ``manipulator`` config."""
         m = self._system.manipulator
         return m.tamp_depth_default, m.tamp_speed_default
+
+    def get_hardness_monotonic_drop_check_enabled(self) -> bool:
+        """Return ``hardness_testing.enable_monotonic_drop_check``."""
+        return self._system.hardness_testing.enable_monotonic_drop_check
 
     def get_cors_origins(self) -> list[str]:
         """Return a copy of ``server.cors_origins``."""

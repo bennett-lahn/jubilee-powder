@@ -108,6 +108,9 @@ class HardnessTester(Tool):
         num_digits: int = 4,
         cam_usb_path: str | None = None,
         use_camera: bool = True,
+        bypass_cv: bool = False,
+        monotonic_drop_threshold: float = 0.0,
+        enable_monotonic_drop_check: bool = False,
         index: int = 1,
         name: str = "HardnessTester",
         tester_mode: str = "shore_a",
@@ -176,6 +179,9 @@ class HardnessTester(Tool):
         self.num_digits = num_digits
         self.cam_usb_path = cam_usb_path
         self.use_camera = use_camera
+        self.bypass_cv = bypass_cv
+        self.monotonic_drop_threshold = monotonic_drop_threshold
+        self.enable_monotonic_drop_check = enable_monotonic_drop_check
         self.tester_mode = tester_mode
         self.calibration_path = calibration_path
         self.servo = servo
@@ -219,6 +225,7 @@ class HardnessTester(Tool):
         hardware_cfg: "HardnessTesterConfig",
         profile_cfg: "HardnessProfileConfig",
         state_machine: object | None = None,
+        enable_monotonic_drop_check: bool = False,
     ) -> "HardnessTester":
         """Build a configured Shore tester from validated system config.
 
@@ -251,6 +258,9 @@ class HardnessTester(Tool):
             num_digits=profile_cfg.num_digits,
             cam_usb_path=tester_profile.cam_usb_path or None,
             use_camera=tester_profile.use_camera,
+            bypass_cv=hardware_cfg.bypass_cv,
+            monotonic_drop_threshold=profile_cfg.monotonic_drop_threshold,
+            enable_monotonic_drop_check=enable_monotonic_drop_check,
             index=hardware_cfg.tool.index,
             name=hardware_cfg.tool.name,
             tester_mode=tester_mode,
@@ -420,7 +430,7 @@ class HardnessTester(Tool):
         sample_id: str | int,
         state_machine: object,
         image_save_path: str | Path | None = None,
-    ) -> dict[str, float | str | None]:
+    ) -> dict[str, float | str | bool | None]:
         """Execute one hardness sample test via the state machine.
 
         Moves to the sample tray and target sample, then runs the validated
@@ -446,7 +456,8 @@ class HardnessTester(Tool):
         if state_machine is None:
             raise ValueError("state_machine is required for test_sample()")
 
-        self.load_assigned_calibration()
+        if not self.bypass_cv:
+            self.load_assigned_calibration()
 
         tray_result = state_machine.validated_move_to_sample_tray(tray_index)
         if not tray_result.valid:
@@ -475,7 +486,34 @@ class HardnessTester(Tool):
             "result": measured_value,
             "sample_error": sample_error,
             "image_path": image_path,
+            "cv_bypassed": self.bypass_cv,
         }
+
+    def sample_numeric_readings(
+        self,
+        frame_count: int,
+        total_duration_s: float,
+        debug_prefix: str = "hardness_probe",
+    ) -> list[float]:
+        """Capture and parse per-frame numeric readings over a fixed window."""
+        frames = self._collect_timed_frames(
+            frame_count=frame_count,
+            total_duration_s=total_duration_s,
+        )
+        if frames is None:
+            return []
+
+        readings: list[float] = []
+        for idx, frame in enumerate(frames):
+            raw = self._read_display_from_frame(
+                frame,
+                debug=False,
+                debug_prefix=f"{debug_prefix}_{idx}",
+            )
+            value, _ = self._parse_hardness_reading(raw)
+            if value is not None:
+                readings.append(value)
+        return readings
 
     def _default_segment_templates(self):
         """

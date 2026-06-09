@@ -75,13 +75,14 @@ def _apply_hardness_progress_update(
     measured_result: float | None,
     sample_error: str | None,
     image_url: str | None = None,
+    cv_bypassed: bool = False,
 ) -> None:
     """Apply one pass result to a sample item in JobProgress."""
     item = progress.items[index]
     configured_mode = item.get("mode")
     if sample_error:
         pass_status = "error"
-    elif measured_result is not None:
+    elif measured_result is not None or cv_bypassed:
         pass_status = "complete"
     else:
         pass_status = "incomplete"
@@ -368,6 +369,7 @@ class MockHardwareManager:
                         pass_mode,
                         measured_result=simulated_result,
                         sample_error=None,
+                        cv_bypassed=False,
                     )
         finally:
             if self.state == MachineState.RUNNING:
@@ -684,7 +686,10 @@ class HardwareManager:
                         getattr(self._manager, "last_hardness_result", None)
                     )
                     sample_error = getattr(self._manager, "last_hardness_error", None)
-                    if measured_result is None:
+                    cv_bypassed = bool(
+                        getattr(self._manager, "last_hardness_cv_bypassed", False)
+                    )
+                    if measured_result is None and not cv_bypassed:
                         sample_error = (
                             sample_error
                             or "OCR did not return a numeric hardness value."
@@ -702,6 +707,7 @@ class HardwareManager:
                         measured_result=measured_result,
                         sample_error=sample_error,
                         image_url=confirmed_image_url,
+                        cv_bypassed=cv_bypassed,
                     )
         finally:
             if self._manager is not None:
