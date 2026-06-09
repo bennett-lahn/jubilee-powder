@@ -40,6 +40,68 @@ export function fetchMachineConfig() {
   return request('/config')
 }
 
+export function fetchTricklerProfiles() {
+  return request('/config/trickler-profiles')
+}
+
+export function createTricklerProfile(body) {
+  return request('/config/trickler-profiles', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function setActiveTricklerProfile(active_profile) {
+  return request('/config/trickler-profiles/active', {
+    method: 'PUT',
+    body: JSON.stringify({ active_profile }),
+  })
+}
+
+export function updateTricklerProfile(name, profile) {
+  return request(`/config/trickler-profiles/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(profile),
+  })
+}
+
+export function deleteTricklerProfile(name) {
+  return request(`/config/trickler-profiles/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function fetchHardnessProfiles() {
+  return request('/config/hardness-profiles')
+}
+
+export function createHardnessProfile(body) {
+  return request('/config/hardness-profiles', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function setActiveHardnessProfile(active_profile) {
+  return request('/config/hardness-profiles/active', {
+    method: 'PUT',
+    body: JSON.stringify({ active_profile }),
+  })
+}
+
+export function updateHardnessProfile(name, profile) {
+  return request(`/config/hardness-profiles/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(profile),
+  })
+}
+
+export function deleteHardnessProfile(name) {
+  return request(`/config/hardness-profiles/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Hardware lifecycle
 // ---------------------------------------------------------------------------

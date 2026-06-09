@@ -52,7 +52,12 @@ _backend_src = Path(__file__).parent / "src"
 if str(_backend_src) not in sys.path:
     sys.path.insert(0, str(_backend_src))
 
-from src.ConfigLoader import config
+from src.ConfigLoader import (
+    DEFAULT_PROFILE_NAME,
+    HardnessProfileConfig,
+    TricklerConfig,
+    config,
+)
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -142,6 +147,19 @@ class UpdateDispenserRequest(BaseModel):
     """Request body for ``PUT /api/dispensers/{index}``."""
 
     num_pistons: int = Field(ge=0)
+
+
+class CreateProfileRequest(BaseModel):
+    """Request body for profile copy/create endpoints."""
+
+    name: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
+    source_profile: str | None = Field(default=None, min_length=1)
+
+
+class ActiveProfileRequest(BaseModel):
+    """Request body for active profile selection."""
+
+    active_profile: str = Field(min_length=1)
 
 
 class PowderWell(BaseModel):
@@ -268,6 +286,32 @@ hw: MockHardwareManager | HardwareManager = (
 )
 ws_mgr = ConnectionManager()
 progress = JobProgress()
+_profile_edits_locked = False
+
+
+def _is_profile_edit_locked() -> bool:
+    """Return whether profile mutation endpoints are currently locked."""
+    return _profile_edits_locked
+
+
+def _require_profile_edit_unlocked() -> None:
+    """Raise HTTP 409 when profile edits are locked for this server session."""
+    if _is_profile_edit_locked():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Profile edits are locked after connection is initiated. "
+                "Restart to edit profiles again."
+            ),
+        )
+
+
+def _profile_above(name: str, profile_names: list[str]) -> str:
+    """Return the profile name directly above ``name`` in the ordered list."""
+    idx = profile_names.index(name)
+    if idx <= 0:
+        return profile_names[0]
+    return profile_names[idx - 1]
 
 
 # =============================================================================
@@ -369,7 +413,178 @@ async def get_machine_config():
         },
         "google_drive_enabled": config.get_google_drive_enabled(),
         "mock_hardware": _mock_hardware_enabled(),
+        "profile_edits_locked": _is_profile_edit_locked(),
+        "active_trickler_profile": config.trickler_profiles.active_profile,
+        "active_hardness_profile": config.hardness_profiles.active_profile,
     }
+
+
+@app.get("/api/config/trickler-profiles")
+async def get_trickler_profiles():
+    """Return named trickler profile library and lock status."""
+    return {
+        **config.trickler_profiles.model_dump(),
+        "edits_locked": _is_profile_edit_locked(),
+    }
+
+
+@app.post("/api/config/trickler-profiles", status_code=201)
+async def create_trickler_profile(body: CreateProfileRequest):
+    """Copy an existing trickler profile under a new name."""
+    _require_profile_edit_unlocked()
+    payload = config.trickler_profiles.model_dump()
+    if body.name in payload["profiles"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trickler profile '{body.name}' already exists.",
+        )
+    source = body.source_profile or payload["active_profile"]
+    source_cfg = payload["profiles"].get(source)
+    if source_cfg is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trickler source profile '{source}' was not found.",
+        )
+    payload["profiles"][body.name] = source_cfg
+    updated = config.set_trickler_profiles(payload)
+    return updated.model_dump()
+
+
+@app.put("/api/config/trickler-profiles/active")
+async def set_active_trickler_profile(body: ActiveProfileRequest):
+    """Set the active trickler profile."""
+    _require_profile_edit_unlocked()
+    payload = config.trickler_profiles.model_dump()
+    if body.active_profile not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trickler profile '{body.active_profile}' was not found.",
+        )
+    payload["active_profile"] = body.active_profile
+    updated = config.set_trickler_profiles(payload)
+    return updated.model_dump()
+
+
+@app.put("/api/config/trickler-profiles/{name}")
+async def update_trickler_profile(name: str, body: TricklerConfig):
+    """Update one trickler profile."""
+    _require_profile_edit_unlocked()
+    payload = config.trickler_profiles.model_dump()
+    if name not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trickler profile '{name}' was not found.",
+        )
+    payload["profiles"][name] = body.model_dump()
+    updated = config.set_trickler_profiles(payload)
+    return updated.model_dump()
+
+
+@app.delete("/api/config/trickler-profiles/{name}", status_code=200)
+async def delete_trickler_profile(name: str):
+    """Delete one trickler profile, excluding default profile."""
+    _require_profile_edit_unlocked()
+    payload = config.trickler_profiles.model_dump()
+    if name not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trickler profile '{name}' was not found.",
+        )
+    if name == DEFAULT_PROFILE_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {DEFAULT_PROFILE_NAME!r} trickler profile cannot be deleted.",
+        )
+    profile_names = list(payload["profiles"].keys())
+    if name == payload["active_profile"]:
+        payload["active_profile"] = _profile_above(name, profile_names)
+    del payload["profiles"][name]
+    updated = config.set_trickler_profiles(payload)
+    return updated.model_dump()
+
+
+@app.get("/api/config/hardness-profiles")
+async def get_hardness_profiles():
+    """Return named hardness profile library and lock status."""
+    return {
+        **config.hardness_profiles.model_dump(),
+        "edits_locked": _is_profile_edit_locked(),
+    }
+
+
+@app.post("/api/config/hardness-profiles", status_code=201)
+async def create_hardness_profile(body: CreateProfileRequest):
+    """Copy an existing hardness profile under a new name."""
+    _require_profile_edit_unlocked()
+    payload = config.hardness_profiles.model_dump()
+    if body.name in payload["profiles"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Hardness profile '{body.name}' already exists.",
+        )
+    source = body.source_profile or payload["active_profile"]
+    source_cfg = payload["profiles"].get(source)
+    if source_cfg is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hardness source profile '{source}' was not found.",
+        )
+    payload["profiles"][body.name] = source_cfg
+    updated = config.set_hardness_profiles(payload)
+    return updated.model_dump()
+
+
+@app.put("/api/config/hardness-profiles/active")
+async def set_active_hardness_profile(body: ActiveProfileRequest):
+    """Set the active hardness profile."""
+    _require_profile_edit_unlocked()
+    payload = config.hardness_profiles.model_dump()
+    if body.active_profile not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hardness profile '{body.active_profile}' was not found.",
+        )
+    payload["active_profile"] = body.active_profile
+    updated = config.set_hardness_profiles(payload)
+    return updated.model_dump()
+
+
+@app.put("/api/config/hardness-profiles/{name}")
+async def update_hardness_profile(name: str, body: HardnessProfileConfig):
+    """Update one hardness profile."""
+    _require_profile_edit_unlocked()
+    payload = config.hardness_profiles.model_dump()
+    if name not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hardness profile '{name}' was not found.",
+        )
+    payload["profiles"][name] = body.model_dump()
+    updated = config.set_hardness_profiles(payload)
+    return updated.model_dump()
+
+
+@app.delete("/api/config/hardness-profiles/{name}", status_code=200)
+async def delete_hardness_profile(name: str):
+    """Delete one hardness profile, excluding default profile."""
+    _require_profile_edit_unlocked()
+    payload = config.hardness_profiles.model_dump()
+    if name not in payload["profiles"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hardness profile '{name}' was not found.",
+        )
+    if name == DEFAULT_PROFILE_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {DEFAULT_PROFILE_NAME!r} hardness profile cannot be deleted.",
+        )
+    profile_names = list(payload["profiles"].keys())
+    if name == payload["active_profile"]:
+        payload["active_profile"] = _profile_above(name, profile_names)
+    del payload["profiles"][name]
+    updated = config.set_hardness_profiles(payload)
+    return updated.model_dump()
 
 
 @app.get("/api/status")
@@ -410,6 +625,8 @@ async def hardware_connect(config: HardwareConfig):
         raise HTTPException(status_code=400, detail="Already connected to hardware.")
     if hw.state == MachineState.HOMING:
         raise HTTPException(status_code=400, detail="Connection already in progress.")
+    global _profile_edits_locked
+    _profile_edits_locked = True
     merged = _merge_hardware_config(config)
     asyncio.create_task(_run_connect(merged))
     return {

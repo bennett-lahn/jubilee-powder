@@ -1084,7 +1084,7 @@ class MovementExecutor:
             (``trickler`` section). Final weight is stored on
             :attr:`last_fill_weight`.
         """
-        trickler = _system_config.system.trickler
+        trickler = _system_config.get_active_trickler_profile()
 
         flow_alpha = trickler.flow_ema_alpha
         yield_alpha = trickler.yield_ema_alpha

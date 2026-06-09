@@ -1,0 +1,38 @@
+{
+  "active_profile": "Default",
+  "profiles": {
+    "Default": {
+      "num_digits": 4,
+      "shore_a": {
+        "use_camera": false,
+        "lcd_calibration_path": "api_config/lcd_calibration_shore_a.json",
+        "button_servos": {
+          "servo": "S1",
+          "power_press_angle": 90,
+          "power_release_angle": 0,
+          "zero_press_angle": 90,
+          "zero_release_angle": 0
+        },
+        "cam_usb_path": "/dev/shore_a_cam"
+      },
+      "shore_d": {
+        "use_camera": false,
+        "lcd_calibration_path": "api_config/lcd_calibration_shore_d.json",
+        "button_servos": {
+          "servo": "S2",
+          "power_press_angle": 90,
+          "power_release_angle": 0,
+          "zero_press_angle": 90,
+          "zero_release_angle": 0
+        },
+        "cam_usb_path": "/dev/shore_d_cam"
+      },
+      "threshold_bias": 15,
+      "sharpen_strength": 31.0,
+      "sharpen_blur_radius": 90,
+      "morph_kernel_size": 5,
+      "morph_iterations": 3,
+      "morph_open": false
+    }
+  }
+}

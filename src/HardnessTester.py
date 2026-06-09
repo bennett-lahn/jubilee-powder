@@ -30,7 +30,7 @@ import numpy as np
 from science_jubilee.tools.Tool import Tool
 
 if TYPE_CHECKING:
-    from src.ConfigLoader import HardnessTesterConfig
+    from src.ConfigLoader import HardnessProfileConfig, HardnessTesterConfig
 
 # Optional package for creating animated debug GIFs
 try:
@@ -66,7 +66,8 @@ class HardnessTester(Tool):
 
             tester = HardnessTester.from_system_config(
                 tester_mode="shore_a",
-                cfg=config.system.hardness_testers.shore_a,
+                hardware_cfg=config.system.hardness_testers.shore_a,
+                profile_cfg=config.get_active_hardness_profile(),
             )
             if tester.load_assigned_calibration():
                 print(tester.read_display())
@@ -110,7 +111,6 @@ class HardnessTester(Tool):
         index: int = 1,
         name: str = "HardnessTester",
         tester_mode: str = "shore_a",
-        tip_length_mm: float | None = None,
         servo: str | None = None,
         power_press_angle: int | None = None,
         power_release_angle: int | None = None,
@@ -137,7 +137,6 @@ class HardnessTester(Tool):
             index: Jubilee tool index for this tester.
             name: Jubilee tool name for this tester.
             tester_mode: Shore tester mode (``"shore_a"`` or ``"shore_d"``).
-            tip_length_mm: Physical tip length for this tester
             servo: Servo identifier for the shared button servo (e.g. "S1" = servo
                 channel 1). The same physical servo actuates both the power and zero
                 buttons; the button is selected by angle range.
@@ -179,7 +178,6 @@ class HardnessTester(Tool):
         self.use_camera = use_camera
         self.tester_mode = tester_mode
         self.calibration_path = calibration_path
-        self.tip_length_mm = tip_length_mm
         self.servo = servo
         self.power_press_angle = power_press_angle
         self.power_release_angle = power_release_angle
@@ -218,43 +216,57 @@ class HardnessTester(Tool):
     def from_system_config(
         cls,
         tester_mode: str,
-        cfg: "HardnessTesterConfig",
-        num_digits: int = 4,
+        hardware_cfg: "HardnessTesterConfig",
+        profile_cfg: "HardnessProfileConfig",
         state_machine: object | None = None,
     ) -> "HardnessTester":
         """Build a configured Shore tester from validated system config.
 
         Args:
             tester_mode: Shore tester key (``"shore_a"`` or ``"shore_d"``).
-            cfg: Validated ``HardnessTesterConfig`` from ``ConfigLoader.system``.
-            num_digits: Number of LCD digits to read (default 4).
+            hardware_cfg: Physical tester identity and tool config from
+                ``ConfigLoader.system.hardness_testers``.
+            profile_cfg: Shared, named hardness profile selected from
+                ``hardness_profiles.json``.
             state_machine: Optional ``MotionPlatformStateMachine`` for validated
                 button actuation and sample workflows.
 
         Returns:
             Configured ``HardnessTester`` instance.
         """
-        calibration_path = cfg.lcd_calibration_path
+        if tester_mode == "shore_a":
+            tester_profile = profile_cfg.shore_a
+        elif tester_mode == "shore_d":
+            tester_profile = profile_cfg.shore_d
+        else:
+            raise ValueError(f"Unsupported hardness tester mode: {tester_mode}")
+
+        calibration_path = tester_profile.lcd_calibration_path
         if calibration_path and not os.path.isabs(calibration_path):
             project_root = Path(__file__).resolve().parent.parent
             calibration_path = str(project_root / calibration_path)
 
-        servos = cfg.button_servos
+        servos = tester_profile.button_servos
         return cls(
-            num_digits=num_digits,
-            cam_usb_path=cfg.cam_usb_path or None,
-            use_camera=cfg.use_camera,
-            index=cfg.tool.index,
-            name=cfg.tool.name,
+            num_digits=profile_cfg.num_digits,
+            cam_usb_path=tester_profile.cam_usb_path or None,
+            use_camera=tester_profile.use_camera,
+            index=hardware_cfg.tool.index,
+            name=hardware_cfg.tool.name,
             tester_mode=tester_mode,
             calibration_path=calibration_path,
-            tip_length_mm=cfg.tip_length_mm,
             servo=servos.servo,
             power_press_angle=servos.power_press_angle,
             power_release_angle=servos.power_release_angle,
             zero_press_angle=servos.zero_press_angle,
             zero_release_angle=servos.zero_release_angle,
             state_machine=state_machine,
+            threshold_bias=profile_cfg.threshold_bias,
+            sharpen_strength=profile_cfg.sharpen_strength,
+            sharpen_blur_radius=profile_cfg.sharpen_blur_radius,
+            morph_kernel_size=profile_cfg.morph_kernel_size,
+            morph_iterations=profile_cfg.morph_iterations,
+            morph_open=profile_cfg.morph_open,
         )
 
     def load_assigned_calibration(self) -> bool:

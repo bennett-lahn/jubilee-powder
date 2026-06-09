@@ -98,7 +98,8 @@ Both roles are combined in one class because the tester's LCD display is its pri
 
     tester = HardnessTester.from_system_config(
         tester_mode="shore_a",
-        cfg=config.system.hardness_testers.shore_a,
+        hardware_cfg=config.system.hardness_testers.shore_a,
+        profile_cfg=config.get_active_hardness_profile(),
     )
 
     if tester.load_assigned_calibration():
@@ -257,7 +258,6 @@ Both roles are combined in one class because the tester's LCD display is its pri
             "name": "shore_a_hardness_tester"
           },
           "lcd_calibration_path": "jubilee_api_config/lcd_calibration_shore_a.json",
-          "tip_length_mm": 2.0,
           "button_servos": {
             "servo": "S1",
             "power_press_angle": 90,

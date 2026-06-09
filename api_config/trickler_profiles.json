@@ -1,0 +1,25 @@
+{
+  "active_profile": "Default",
+  "profiles": {
+    "Default": {
+      "flow_ema_alpha": 0.5,
+      "yield_ema_alpha": 0.35,
+      "jam_yield_threshold": 0.025,
+      "jam_iter_threshold": 40,
+      "jam_auto_recovery_vibration_amplitude": 0.75,
+      "jam_auto_recovery_wait_seconds": 10.0,
+      "max_step_size_mm": 1.5,
+      "min_step_size_mm": 0.1,
+      "warmup_steps": 5,
+      "warmup_max_step_mm": 0.25,
+      "coarse_threshold_pct": 0.75,
+      "finish_threshold_pct": 0.985,
+      "coarse_target_steps": 8,
+      "coarse_feedrate": 100,
+      "fine_feedrate": 600,
+      "coarse_vibration_amplitude": 0.7,
+      "fine_vibration_amplitude": 0.4,
+      "max_dribble_step_mm": 0.15
+    }
+  }
+}

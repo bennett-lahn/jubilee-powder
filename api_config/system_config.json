@@ -41,66 +41,10 @@
         "tamp_depth_default": 9.0,
         "tamp_speed_default": 500
     },
-    "trickler": {
-        "flow_ema_alpha":           0.5,
-        "yield_ema_alpha":          0.35,
-        "jam_yield_threshold":      0.025,
-        "jam_iter_threshold":       40,
-        "jam_auto_recovery_vibration_amplitude": 0.75,
-        "jam_auto_recovery_wait_seconds": 10,
-        "max_step_size_mm":         1.5,
-        "min_step_size_mm":         0.1,
-        "warmup_steps":             5,
-        "warmup_max_step_mm":       0.25,
-        "coarse_threshold_pct":     0.75,
-        "finish_threshold_pct":     0.985,
-        "coarse_target_steps":      8,
-        "coarse_feedrate":            100,
-        "fine_feedrate":              600,
-        "coarse_vibration_amplitude": 0.7,
-        "fine_vibration_amplitude":   0.4,
-        "max_dribble_step_mm":      0.15
-    },
     "google_drive": {
         "enabled": false,
         "credentials_file": "api_config/service_account.json",
         "drive_folder_id": "",
         "retry_interval_seconds": 60
-    },
-    "hardness_testers": {
-        "shore_a": {
-            "use_camera": false,
-            "tool": {
-                "index": 1,
-                "name": "shore_a_hardness_tester"
-            },
-            "lcd_calibration_path": "api_config/lcd_calibration_shore_a.json",
-            "tip_length_mm": 2.0,
-            "button_servos": {
-                "servo": "S1",
-                "power_press_angle": 90,
-                "power_release_angle": 0,
-                "zero_press_angle": 90,
-                "zero_release_angle": 0
-            },
-            "cam_usb_path": "/dev/shore_a_cam"
-        },
-        "shore_d": {
-            "use_camera": false,
-            "tool": {
-                "index": 2,
-                "name": "shore_d_hardness_tester"
-            },
-            "lcd_calibration_path": "api_config/lcd_calibration_shore_d.json",
-            "tip_length_mm": 3.0,
-            "button_servos": {
-                "servo": "S2",
-                "power_press_angle": 90,
-                "power_release_angle": 0,
-                "zero_press_angle": 90,
-                "zero_release_angle": 0
-            },
-            "cam_usb_path": "/dev/shore_d_cam"
-        }
     }
 }

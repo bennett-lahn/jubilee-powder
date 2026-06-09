@@ -16,6 +16,10 @@ import { useEffect, useState } from 'react'
 import { useJubileeStore } from '../store/jubileeStore'
 import { fetchMachineConfig } from '../api/jubileeApi'
 import { Button, Card, TextInput, StatusBadge } from '../components/ui'
+import {
+  HardnessProfilesSection,
+  TricklerProfilesSection,
+} from '../components/settings/ProfileConfigSections'
 
 // ---------------------------------------------------------------------------
 // Google Drive section
@@ -213,6 +217,7 @@ export default function SettingsScreen() {
   const [scalePort,           setScalePort]           = useState('')
   const [statusMsg,           setStatusMsg]           = useState('')
   const [configError,         setConfigError]         = useState(null)
+  const [profileEditsLocked,  setProfileEditsLocked]  = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -223,6 +228,7 @@ export default function SettingsScreen() {
         setPistonsPerDispenser(String(cfg.pistons_per_dispenser ?? ''))
         setJubileeIp(cfg.duet_ip ?? '')
         setScalePort(cfg.scale_port ?? '')
+        setProfileEditsLocked(Boolean(cfg.profile_edits_locked))
         setConfigError(null)
       })
       .catch((err) => {
@@ -385,6 +391,9 @@ export default function SettingsScreen() {
         {statusMsg && (
           <p className="text-center text-xs text-slate-500 pb-2">{statusMsg}</p>
         )}
+
+        <TricklerProfilesSection locked={profileEditsLocked || inputsLocked} />
+        <HardnessProfilesSection locked={profileEditsLocked || inputsLocked} />
 
         <GoogleDriveSection />
 

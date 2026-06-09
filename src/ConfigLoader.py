@@ -30,6 +30,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 
+DEFAULT_PROFILE_NAME = "Default"
+
+
 class ConfigError(Exception):
     """Raised when ``system_config.json`` is missing, malformed, or fails validation."""
 
@@ -155,7 +158,6 @@ class HardnessTesterConfig(BaseModel):
     use_camera: bool
     tool: HardnessTesterToolConfig
     lcd_calibration_path: str
-    tip_length_mm: float
     button_servos: ButtonServosConfig
     cam_usb_path: str
 
@@ -165,6 +167,69 @@ class HardnessTestersConfig(BaseModel):
 
     shore_a: HardnessTesterConfig
     shore_d: HardnessTesterConfig
+
+
+class HardnessTesterProfileConfig(BaseModel):
+    """Per-tester hardness settings inside a shared named profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_camera: bool
+    lcd_calibration_path: str
+    button_servos: ButtonServosConfig
+    cam_usb_path: str
+
+
+class HardnessProfileConfig(BaseModel):
+    """Shared hardness profile with per-tester hardware sections."""
+
+    num_digits: int
+    shore_a: HardnessTesterProfileConfig
+    shore_d: HardnessTesterProfileConfig
+    threshold_bias: int
+    sharpen_strength: float
+    sharpen_blur_radius: int
+    morph_kernel_size: int
+    morph_iterations: int
+    morph_open: bool
+
+
+class TricklerProfilesConfig(BaseModel):
+    """Named trickler profile library with active selection."""
+
+    active_profile: str
+    profiles: dict[str, TricklerConfig]
+
+    @model_validator(mode="after")
+    def validate_profile_library(self) -> "TricklerProfilesConfig":
+        if DEFAULT_PROFILE_NAME not in self.profiles:
+            raise ValueError(
+                f"trickler_profiles must include a '{DEFAULT_PROFILE_NAME}' profile"
+            )
+        if self.active_profile not in self.profiles:
+            raise ValueError(
+                f"active_profile '{self.active_profile}' is not defined in trickler profiles"
+            )
+        return self
+
+
+class HardnessProfilesConfig(BaseModel):
+    """Named hardness profile library with active selection."""
+
+    active_profile: str
+    profiles: dict[str, HardnessProfileConfig]
+
+    @model_validator(mode="after")
+    def validate_profile_library(self) -> "HardnessProfilesConfig":
+        if DEFAULT_PROFILE_NAME not in self.profiles:
+            raise ValueError(
+                f"hardness_profiles must include a '{DEFAULT_PROFILE_NAME}' profile"
+            )
+        if self.active_profile not in self.profiles:
+            raise ValueError(
+                f"active_profile '{self.active_profile}' is not defined in hardness profiles"
+            )
+        return self
 
 
 class SystemConfig(BaseModel):
@@ -182,10 +247,31 @@ class SystemConfig(BaseModel):
 
 
 def _parse_system_config(raw: dict[str, Any], path: Path) -> SystemConfig:
+    """Validate raw system config payload and raise ``ConfigError`` on failure."""
     try:
         return SystemConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"Invalid system_config ({path}): {exc}") from exc
+
+
+def _parse_trickler_profiles(
+    raw: dict[str, Any], path: Path
+) -> TricklerProfilesConfig:
+    """Validate raw trickler profile payload and raise ``ConfigError`` on failure."""
+    try:
+        return TricklerProfilesConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"Invalid trickler_profiles ({path}): {exc}") from exc
+
+
+def _parse_hardness_profiles(
+    raw: dict[str, Any], path: Path
+) -> HardnessProfilesConfig:
+    """Validate raw hardness profile payload and raise ``ConfigError`` on failure."""
+    try:
+        return HardnessProfilesConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"Invalid hardness_profiles ({path}): {exc}") from exc
 
 
 class ConfigLoader:
@@ -220,6 +306,14 @@ class ConfigLoader:
         self._system_config_path = (
             self._project_root / "api_config" / "system_config.json"
         )
+        self._trickler_profiles_path = (
+            self._project_root / "api_config" / "trickler_profiles.json"
+        )
+        self._hardness_profiles_path = (
+            self._project_root / "api_config" / "hardness_profiles.json"
+        )
+        self._trickler_profiles: TricklerProfilesConfig | None = None
+        self._hardness_profiles: HardnessProfilesConfig | None = None
         self._load_config()
         self._initialized = True
 
@@ -248,6 +342,14 @@ class ConfigLoader:
         else:
             loader._project_root = Path(__file__).parent.parent
         loader._system_config_path = config_path
+        loader._trickler_profiles_path = (
+            loader._project_root / "api_config" / "trickler_profiles.json"
+        )
+        loader._hardness_profiles_path = (
+            loader._project_root / "api_config" / "hardness_profiles.json"
+        )
+        loader._trickler_profiles = None
+        loader._hardness_profiles = None
         loader._load_config()
         loader._initialized = True
         return loader
@@ -268,9 +370,86 @@ class ConfigLoader:
         return self._system
 
     def _load_config(self) -> None:
+        """Load config files and hydrate runtime system sections from profiles."""
         with open(self._system_config_path, "r", encoding="utf-8") as f:
+            system_raw = json.load(f)
+        self._trickler_profiles = self._load_trickler_profiles()
+        self._hardness_profiles = self._load_hardness_profiles()
+        hydrated_raw = self._hydrate_system_config(
+            system_raw=system_raw,
+            trickler_profiles=self._trickler_profiles,
+            hardness_profiles=self._hardness_profiles,
+        )
+        self._system = _parse_system_config(hydrated_raw, self._system_config_path)
+
+    def _load_trickler_profiles(self) -> TricklerProfilesConfig:
+        """Load trickler profiles from the dedicated profile JSON file."""
+        if not self._trickler_profiles_path.exists():
+            raise ConfigError(
+                f"Missing trickler_profiles file: {self._trickler_profiles_path}"
+            )
+        with open(self._trickler_profiles_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        self._system = _parse_system_config(raw, self._system_config_path)
+        return _parse_trickler_profiles(raw, self._trickler_profiles_path)
+
+    def _load_hardness_profiles(self) -> HardnessProfilesConfig:
+        """Load hardness profiles from the dedicated profile JSON file."""
+        if not self._hardness_profiles_path.exists():
+            raise ConfigError(
+                f"Missing hardness_profiles file: {self._hardness_profiles_path}"
+            )
+        with open(self._hardness_profiles_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return _parse_hardness_profiles(raw, self._hardness_profiles_path)
+
+    def _hydrate_system_config(
+        self,
+        system_raw: dict[str, Any],
+        trickler_profiles: TricklerProfilesConfig,
+        hardness_profiles: HardnessProfilesConfig,
+    ) -> dict[str, Any]:
+        """Inject active profile values into ``system_raw`` before validation."""
+        active_trickler = trickler_profiles.profiles[trickler_profiles.active_profile]
+        active_hardness = hardness_profiles.profiles[hardness_profiles.active_profile]
+        tools = system_raw.get("tools", {})
+
+        shore_a_tool = tools.get("shore_a_hardness_tester")
+        if shore_a_tool is None:
+            raise ConfigError(
+                "tools.shore_a_hardness_tester is required in system_config.json"
+            )
+        shore_d_tool = tools.get("shore_d_hardness_tester")
+        if shore_d_tool is None:
+            raise ConfigError(
+                "tools.shore_d_hardness_tester is required in system_config.json"
+            )
+
+        hydrated = dict(system_raw)
+        hydrated["trickler"] = active_trickler.model_dump()
+        hydrated["hardness_testers"] = {
+            "shore_a": {
+                "use_camera": active_hardness.shore_a.use_camera,
+                "tool": shore_a_tool,
+                "lcd_calibration_path": active_hardness.shore_a.lcd_calibration_path,
+                "button_servos": active_hardness.shore_a.button_servos.model_dump(),
+                "cam_usb_path": active_hardness.shore_a.cam_usb_path,
+            },
+            "shore_d": {
+                "use_camera": active_hardness.shore_d.use_camera,
+                "tool": shore_d_tool,
+                "lcd_calibration_path": active_hardness.shore_d.lcd_calibration_path,
+                "button_servos": active_hardness.shore_d.button_servos.model_dump(),
+                "cam_usb_path": active_hardness.shore_d.cam_usb_path,
+            },
+        }
+        return hydrated
+
+    def _write_json_file(self, path: Path, payload: dict[str, Any]) -> None:
+        """Write JSON payload with stable formatting, creating parent directories."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.write("\n")
 
     def get_api_config_dir(self) -> Path:
         """Return the ``api_config`` directory under :attr:`project_root`."""
@@ -280,9 +459,57 @@ class ConfigLoader:
         """Return the resolved path to the loaded ``system_config.json``."""
         return self._system_config_path
 
+    def get_trickler_profiles_path(self) -> Path:
+        """Return the resolved path to ``trickler_profiles.json``."""
+        return self._trickler_profiles_path
+
+    def get_hardness_profiles_path(self) -> Path:
+        """Return the resolved path to ``hardness_profiles.json``."""
+        return self._hardness_profiles_path
+
     def get_motion_config_path(self) -> Path:
         """Return the path to ``motion_platform_positions.json``."""
         return self.get_api_config_dir() / "motion_platform_positions.json"
+
+    @property
+    def trickler_profiles(self) -> TricklerProfilesConfig:
+        """Validated trickler profile library."""
+        if self._trickler_profiles is None:
+            raise ConfigError("trickler profiles were not loaded")
+        return self._trickler_profiles
+
+    @property
+    def hardness_profiles(self) -> HardnessProfilesConfig:
+        """Validated hardness profile library."""
+        if self._hardness_profiles is None:
+            raise ConfigError("hardness profiles were not loaded")
+        return self._hardness_profiles
+
+    def get_active_trickler_profile(self) -> TricklerConfig:
+        """Return the currently selected trickler profile."""
+        active_name = self._trickler_profiles.active_profile
+        return self._trickler_profiles.profiles[active_name]
+
+    def get_active_hardness_profile(self) -> HardnessProfileConfig:
+        """Return the currently selected hardness profile."""
+        active_name = self._hardness_profiles.active_profile
+        return self._hardness_profiles.profiles[active_name]
+
+    def set_trickler_profiles(self, payload: dict[str, Any]) -> TricklerProfilesConfig:
+        """Validate and persist full trickler profile library payload."""
+        validated = _parse_trickler_profiles(payload, self._trickler_profiles_path)
+        self._write_json_file(self._trickler_profiles_path, validated.model_dump())
+        self._trickler_profiles = validated
+        self._load_config()
+        return validated
+
+    def set_hardness_profiles(self, payload: dict[str, Any]) -> HardnessProfilesConfig:
+        """Validate and persist full hardness profile library payload."""
+        validated = _parse_hardness_profiles(payload, self._hardness_profiles_path)
+        self._write_json_file(self._hardness_profiles_path, validated.model_dump())
+        self._hardness_profiles = validated
+        self._load_config()
+        return validated
 
     def get_job_files_dir(self) -> Path:
         """Return ``paths.job_files_dir``, resolved relative to :attr:`project_root` when needed."""

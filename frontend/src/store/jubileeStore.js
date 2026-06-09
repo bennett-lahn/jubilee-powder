@@ -48,6 +48,16 @@ import {
   fetchJobLog as apiFetchJobLog,
   updateDispenser as apiUpdateDispenser,
   fetchDriveStatus as apiFetchDriveStatus,
+  fetchTricklerProfiles as apiFetchTricklerProfiles,
+  createTricklerProfile as apiCreateTricklerProfile,
+  setActiveTricklerProfile as apiSetActiveTricklerProfile,
+  updateTricklerProfile as apiUpdateTricklerProfile,
+  deleteTricklerProfile as apiDeleteTricklerProfile,
+  fetchHardnessProfiles as apiFetchHardnessProfiles,
+  createHardnessProfile as apiCreateHardnessProfile,
+  setActiveHardnessProfile as apiSetActiveHardnessProfile,
+  updateHardnessProfile as apiUpdateHardnessProfile,
+  deleteHardnessProfile as apiDeleteHardnessProfile,
 } from '../api/jubileeApi'
 
 function wsUrl() {
@@ -379,6 +389,128 @@ export const useJubileeStore = create((set, get) => ({
       return { ok: true }
     } catch (err) {
       set({ driveStatusError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Trickler profile library
+  // -------------------------------------------------------------------------
+  tricklerProfiles: null,
+  tricklerProfilesError: null,
+
+  async fetchTricklerProfiles() {
+    try {
+      const data = await apiFetchTricklerProfiles()
+      set({ tricklerProfiles: data, tricklerProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ tricklerProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async createTricklerProfile(name, sourceProfile = null) {
+    try {
+      const data = await apiCreateTricklerProfile({ name, source_profile: sourceProfile })
+      set({ tricklerProfiles: data, tricklerProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ tricklerProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async setActiveTricklerProfile(activeProfile) {
+    try {
+      const data = await apiSetActiveTricklerProfile(activeProfile)
+      set({ tricklerProfiles: data, tricklerProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ tricklerProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async updateTricklerProfile(name, profile) {
+    try {
+      const data = await apiUpdateTricklerProfile(name, profile)
+      set({ tricklerProfiles: data, tricklerProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ tricklerProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async deleteTricklerProfile(name) {
+    try {
+      const data = await apiDeleteTricklerProfile(name)
+      set({ tricklerProfiles: data, tricklerProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ tricklerProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Hardness profile library
+  // -------------------------------------------------------------------------
+  hardnessProfiles: null,
+  hardnessProfilesError: null,
+
+  async fetchHardnessProfiles() {
+    try {
+      const data = await apiFetchHardnessProfiles()
+      set({ hardnessProfiles: data, hardnessProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ hardnessProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async createHardnessProfile(name, sourceProfile = null) {
+    try {
+      const data = await apiCreateHardnessProfile({ name, source_profile: sourceProfile })
+      set({ hardnessProfiles: data, hardnessProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ hardnessProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async setActiveHardnessProfile(activeProfile) {
+    try {
+      const data = await apiSetActiveHardnessProfile(activeProfile)
+      set({ hardnessProfiles: data, hardnessProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ hardnessProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async updateHardnessProfile(name, profile) {
+    try {
+      const data = await apiUpdateHardnessProfile(name, profile)
+      set({ hardnessProfiles: data, hardnessProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ hardnessProfilesError: err.message })
+      return { ok: false, error: err.message }
+    }
+  },
+
+  async deleteHardnessProfile(name) {
+    try {
+      const data = await apiDeleteHardnessProfile(name)
+      set({ hardnessProfiles: data, hardnessProfilesError: null })
+      return { ok: true, data }
+    } catch (err) {
+      set({ hardnessProfilesError: err.message })
       return { ok: false, error: err.message }
     }
   },

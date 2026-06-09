@@ -321,15 +321,18 @@ class JubileeManager:
                 name=tool.name,
                 state_machine=self.state_machine,
             )
+            active_hardness_profile = config.get_active_hardness_profile()
             testers = config.system.hardness_testers
             self.hardness_tester_shore_a = HardnessTester.from_system_config(
                 tester_mode="shore_a",
-                cfg=testers.shore_a,
+                hardware_cfg=testers.shore_a,
+                profile_cfg=active_hardness_profile,
                 state_machine=self.state_machine,
             )
             self.hardness_tester_shore_d = HardnessTester.from_system_config(
                 tester_mode="shore_d",
-                cfg=testers.shore_d,
+                hardware_cfg=testers.shore_d,
+                profile_cfg=active_hardness_profile,
                 state_machine=self.state_machine,
             )
             logger.debug("State machine + tools init: %.2fs", time.monotonic() - _t2)
