@@ -14,7 +14,7 @@
           "zero_press_angle": 90,
           "zero_release_angle": 0
         },
-        "cam_usb_path": "/dev/shore_a_cam"
+        "cam_usb_path": "/dev/shore-a-camera"
       },
       "shore_d": {
         "use_camera": false,
@@ -27,7 +27,7 @@
           "zero_press_angle": 90,
           "zero_release_angle": 0
         },
-        "cam_usb_path": "/dev/shore_d_cam"
+        "cam_usb_path": "/dev/shore-d-camera"
       },
       "monotonic_drop_threshold": 5.0,
       "threshold_bias": 15,
