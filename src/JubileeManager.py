@@ -365,10 +365,38 @@ class JubileeManager:
 
             # Load tool definitions (register only; do not pick up yet).
             # The machine must know every tool object before validated pickup.
+            #
+            # Some firmware setups only expose a z-offset entry for the currently
+            # active/default tool. In that case, science_jubilee raises KeyError
+            # while loading additional tool indices. Seed missing entries so tool
+            # registration can proceed.
+            def _load_registered_tool(tool_obj: object) -> None:
+                try:
+                    self.machine_read_only.load_tool(tool_obj)
+                except KeyError as exc:
+                    missing_idx = exc.args[0] if exc.args else None
+                    tool_idx = getattr(tool_obj, "index", None)
+                    if missing_idx != tool_idx:
+                        raise
+
+                    tool_offsets = getattr(self.machine_read_only, "tool_z_offsets", None)
+                    if not isinstance(tool_offsets, dict):
+                        raise RuntimeError(
+                            f"Machine missing tool_z_offsets while registering tool index {tool_idx}"
+                        ) from exc
+
+                    logger.warning(
+                        "Missing machine z-offset entry for tool index %s; "
+                        "defaulting to 0.0 for registration",
+                        tool_idx,
+                    )
+                    tool_offsets[tool_idx] = 0.0
+                    self.machine_read_only.load_tool(tool_obj)
+
             _t4 = time.monotonic()
-            self.machine_read_only.load_tool(self.manipulator)
-            self.machine_read_only.load_tool(self.hardness_tester_shore_a)
-            self.machine_read_only.load_tool(self.hardness_tester_shore_d)
+            _load_registered_tool(self.manipulator)
+            _load_registered_tool(self.hardness_tester_shore_a)
+            _load_registered_tool(self.hardness_tester_shore_d)
             logger.debug("load_tool: %.2fs", time.monotonic() - _t4)
             logger.debug("Total connect: %.2fs", time.monotonic() - _t0)
 
