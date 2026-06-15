@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom'
 
 import { useJubileeStore } from './store/jubileeStore'
@@ -19,8 +19,21 @@ import SettingsScreen         from './screens/SettingsScreen'
 function RootLayout() {
   const connectWs          = useJubileeStore((s) => s.connectWs)
   const disconnectWs       = useJubileeStore((s) => s.disconnectWs)
+  const telemetry          = useJubileeStore((s) => s.telemetry)
+  const clearJam           = useJubileeStore((s) => s.clearJam)
   const errorDialog        = useJubileeStore((s) => s.errorDialog)
   const dismissErrorDialog = useJubileeStore((s) => s.dismissErrorDialog)
+  const [jamClearing, setJamClearing] = useState(false)
+
+  const job = telemetry.job
+  const jamDetected = (telemetry.state === 'running') && (job?.jam_detected ?? false)
+  const jamWellId = job?.jam_well_id ?? null
+
+  const handleClearJam = useCallback(async () => {
+    setJamClearing(true)
+    await clearJam()
+    setJamClearing(false)
+  }, [clearJam])
 
   useEffect(() => {
     connectWs()
@@ -51,6 +64,35 @@ function RootLayout() {
       >
         <p className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed">
           {errorDialog.message}
+        </p>
+      </Dialog>
+
+      {/* Global jam intervention dialog - consistent with global error policy */}
+      <Dialog
+        open={jamDetected}
+        title="Powder Flow Jam"
+        footer={
+          <Button
+            variant="filled"
+            onClick={handleClearJam}
+            disabled={jamClearing}
+          >
+            {jamClearing ? 'Resuming...' : 'Blockage Cleared - Resume'}
+          </Button>
+        }
+      >
+        <p className="text-sm text-slate-300 mb-2">
+          Powder flow has stalled{jamWellId != null
+            ? <> on well <span className="font-semibold text-slate-100">{jamWellId}</span></>
+            : null
+          }.
+        </p>
+        <p className="text-sm text-slate-400 mb-2">
+          Clear the blockage in the trickler hopper, then press the button below
+          to resume dispensing.
+        </p>
+        <p className="text-xs text-slate-500">
+          To abandon this job entirely, use the Cancel or Abort buttons instead.
         </p>
       </Dialog>
     </div>

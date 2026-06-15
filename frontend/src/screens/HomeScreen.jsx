@@ -56,7 +56,6 @@ export default function HomeScreen() {
   const telemetry   = useJubileeStore((s) => s.telemetry)
   const cancelJob   = useJubileeStore((s) => s.cancelJob)
   const abortJob    = useJubileeStore((s) => s.abortJob)
-  const clearJam    = useJubileeStore((s) => s.clearJam)
   const fetchJobLog = useJubileeStore((s) => s.fetchJobLog)
   const jobLog      = useJubileeStore((s) => s.jobLog)
 
@@ -92,17 +91,6 @@ export default function HomeScreen() {
 
   // ── Cancel confirmation dialog ───────────────────────────────────────────
   const [cancelOpen, setCancelOpen] = useState(false)
-
-  // ── Jam intervention ─────────────────────────────────────────────────────
-  const jamDetected = (telemetry.state === 'running') && (job?.jam_detected ?? false)
-  const jamWellId   = job?.jam_well_id ?? null
-  const [jamClearing, setJamClearing] = useState(false)
-
-  const handleClearJam = useCallback(async () => {
-    setJamClearing(true)
-    await clearJam()
-    setJamClearing(false)
-  }, [clearJam])
 
   const [actionStatus, setActionStatus] = useState('')
 
@@ -319,35 +307,6 @@ export default function HomeScreen() {
         </p>
         <p className="text-sm text-slate-500">
           The machine will return to idle and be ready for a new job.
-        </p>
-      </Dialog>
-
-      {/* ── Jam intervention dialog ───────────────────────────────────────── */}
-      <Dialog
-        open={jamDetected}
-        title="Powder Flow Jam"
-        footer={
-          <Button
-            variant="outlined"
-            onClick={handleClearJam}
-            disabled={jamClearing}
-          >
-            {jamClearing ? 'Resuming...' : 'Blockage Cleared - Resume'}
-          </Button>
-        }
-      >
-        <p className="text-sm text-slate-300 mb-2">
-          Powder flow has stalled{jamWellId != null
-            ? <> on well <span className="font-semibold text-slate-100">{jamWellId}</span></>
-            : null
-          }.
-        </p>
-        <p className="text-sm text-slate-400 mb-2">
-          Clear the blockage in the trickler hopper, then press the button below
-          to resume dispensing.
-        </p>
-        <p className="text-xs text-slate-500">
-          To abandon this job entirely, use the Cancel or Abort buttons instead.
         </p>
       </Dialog>
 
