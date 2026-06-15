@@ -363,9 +363,12 @@ class JubileeManager:
             if not result.valid:
                 raise RuntimeError(f"Failed to home all axes: {result.reason}")
 
-            # Load the manipulator tool (this registers it but doesn't pick it up)
+            # Load tool definitions (register only; do not pick up yet).
+            # The machine must know every tool object before validated pickup.
             _t4 = time.monotonic()
             self.machine_read_only.load_tool(self.manipulator)
+            self.machine_read_only.load_tool(self.hardness_tester_shore_a)
+            self.machine_read_only.load_tool(self.hardness_tester_shore_d)
             logger.debug("load_tool: %.2fs", time.monotonic() - _t4)
             logger.debug("Total connect: %.2fs", time.monotonic() - _t0)
 
