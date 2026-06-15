@@ -204,16 +204,16 @@ class Scale:
 
     HANDLED_RETRY_ERRORS = (ScaleError.E02, ScaleError.E03, ScaleError.E11)
     SPECIFIC_ERROR_RETRY_CONFIG = {
-        ScaleError.E02: [(10, 1), (10, 1)],
-        ScaleError.E03: [(3, 3)],
-        ScaleError.E11: [(5, 3)],
+        ScaleError.E02: [(15, 3)],
+        ScaleError.E03: [(15, 3)],
+        ScaleError.E11: [(15, 3)],
     }
     SPECIFIC_ERROR_DESCRIPTIONS = {
         ScaleError.E02: "Not ready",
         ScaleError.E03: "Timeout error",
         ScaleError.E11: "Stability error",
     }
-    NO_ACK_RESPONSE_WAIT = 0.20
+    NO_ACK_RESPONSE_WAIT = 2.0
 
     def __init__(
         self,

@@ -253,7 +253,6 @@ class MovementExecutor:
             )  # Move bed up so well fits under trickler, relax z-limit to do so
             self._machine.move_to(z=34.5, s=feedrate)
             self._machine.move(dy=7, s=feedrate)
-            # TODO: open chute
             self._machine.move_to(z=32.5, s=feedrate)
             self._machine.move(dy=19, s=feedrate)
             self._machine.gcode(

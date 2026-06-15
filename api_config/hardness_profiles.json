@@ -8,7 +8,7 @@
         "bypass_cv": false,
         "lcd_calibration_path": "api_config/lcd_calibration_shore_a.json",
         "button_servos": {
-          "servo": "S1",
+          "servo": "S2",
           "power_press_angle": 90,
           "power_release_angle": 0,
           "zero_press_angle": 90,
@@ -21,7 +21,7 @@
         "bypass_cv": false,
         "lcd_calibration_path": "api_config/lcd_calibration_shore_d.json",
         "button_servos": {
-          "servo": "S2",
+          "servo": "S3",
           "power_press_angle": 90,
           "power_release_angle": 0,
           "zero_press_angle": 90,
