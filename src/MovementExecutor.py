@@ -425,7 +425,7 @@ class MovementExecutor:
 
             # Return tamper to safe position
             self._machine.move_to(
-                v=_system_config.get_tamper_travel_position(),
+                v=saved_v,
                 s=feedrate,
             )
 

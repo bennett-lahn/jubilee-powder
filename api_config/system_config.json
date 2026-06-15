@@ -35,10 +35,10 @@
     "manipulator": {
         "tamper_axis": "V",
         "tamp_depth_min": 0.0,
-        "tamp_depth_max": 14.0,
+        "tamp_depth_max": 22.0,
         "tamp_speed_min": 500,
         "tamp_speed_max": 5000,
-        "tamp_depth_default": 14.0,
+        "tamp_depth_default": 22.0,
         "tamp_speed_default": 500
     },
     "hardness_testing": {
