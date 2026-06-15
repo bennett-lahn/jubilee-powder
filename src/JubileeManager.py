@@ -432,7 +432,7 @@ class JubileeManager:
 
     def _record_scale_baseline_weight(self) -> float:
         """
-        Capture a stable baseline reading before placing a mold on the scale.
+        Capture a stable gross mold weight after placement, before taring.
 
         Returns:
             Stable baseline weight in grams.
@@ -440,7 +440,7 @@ class JubileeManager:
         baseline_weight = self.get_weight_stable()
         if baseline_weight is None:
             raise RuntimeError("Scale did not return a stable baseline weight")
-        print(f"[Safety] Baseline scale weight before mold placement: {baseline_weight:.4f}g")
+        print(f"[Safety] Baseline scale weight with mold on pan: {baseline_weight:.4f}g")
         return baseline_weight
 
     def _validate_scale_clear_after_pickup(self, baseline_weight: float) -> None:
@@ -662,12 +662,14 @@ class JubileeManager:
             self.manipulator.pick_mold(well_id)
             self.move_to_global_ready()
             self.move_to_scale()
-            self.scale.tare() # Tare scale to baseline weight is always exactly the weight of the mold.
+            self.scale.zero()
             self.manipulator.place_mold_on_scale()
             baseline_weight = self._record_scale_baseline_weight()
+            self.scale.tare()
             self.fill_powder(target_weight)
             self.manipulator.pick_mold_from_scale()
             self._validate_scale_clear_after_pickup(baseline_weight)
+            self.scale.zero()
             tamp_depth, tamp_speed = config.get_tamp_defaults()
             tamp_depth = min(float(tamp_depth), config.get_tamp_depth_max())
             self.manipulator.tamp(tamp_depth=tamp_depth, tamp_speed=tamp_speed)

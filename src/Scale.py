@@ -51,6 +51,7 @@ ACK_COMMANDS = {
     "R": True,  # Re-zero - sends ACK when received, then ACK when executed
     "SMP": True,  # Sample - sends ACK
     "T": True,  # Tare - sends ACK when received, then ACK when executed
+    "Z": True,  # Zero - sends ACK when received, then ACK when executed
     "U": True,  # Mode change - sends ACK
     "?ID": False,  # Get ID - no ACK, returns data
     "?SN": False,  # Get serial number - no ACK, returns data
@@ -945,6 +946,14 @@ class Scale:
         """
         return self._send_command("R")
 
+    def zero(self) -> str:
+        """Zero the scale with an empty pan (``Z`` command).
+
+        Returns:
+            Raw response string from the scale.
+        """
+        return self._send_command("Z")
+
     def sample(self) -> str:
         """Trigger a sample capture (``SMP`` command).
 
@@ -954,7 +963,7 @@ class Scale:
         return self._send_command("SMP")
 
     def tare(self) -> str:
-        """Tare (zero) the scale (``T`` command).
+        """Tare the scale (``T`` command).
 
         Returns:
             Raw response string from the scale.

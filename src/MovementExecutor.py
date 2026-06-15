@@ -18,7 +18,6 @@ See Also:
 
 import logging
 import threading
-import time
 
 from typing import Callable
 from science_jubilee.Machine import Machine
@@ -26,6 +25,7 @@ from src.Scale import Scale
 from src.HardnessTester import HardnessTester
 from src.PistonDispenser import PistonDispenser
 from src.MotionPlatformStateMachine import PositionType
+from src.TricklerExecutor import TricklerExecutor
 from src.ConfigLoader import config as _system_config
 
 logger = logging.getLogger(__name__)
@@ -410,6 +410,7 @@ class MovementExecutor:
             logger.info("Executing tamp at scale_ready position...")
 
             feedrate = tamp_speed
+            max_tamp_depth = _system_config.get_tamp_depth_max()
 
             # Save current v value to return to after tamping
             current_position = self._machine.get_position()
@@ -417,16 +418,20 @@ class MovementExecutor:
 
             # Move tamper until it is just outside mold
             self._machine.move_to(v=2, s=feedrate)
+            self._machine.gcode(f"M208 V-{max_tamp_depth}:155")
 
-            # Move by requested tamp depth
-            self._machine.move(dv=tamp_depth, s=feedrate)
-            self._machine.gcode("M400")
+            try:
+                # Move by requested tamp depth
+                self._machine.move(dv=tamp_depth, s=feedrate)
+                self._machine.gcode("M400")
 
-            # Return tamper to safe position
-            self._machine.move_to(
-                v=saved_v,
-                s=feedrate,
-            )
+                # Return tamper to safe position
+                self._machine.move_to(
+                    v=saved_v,
+                    s=feedrate,
+                )
+            finally:
+                self._machine.gcode("M208 V0:155")
 
             # Home V axis after tamping to ensure axis accuracy
             logger.info("Homing V axis after tamp to ensure accuracy...")
@@ -1064,65 +1069,6 @@ class MovementExecutor:
         """Resume dispensing after a jam has been physically cleared by the operator."""
         self._jam_resume_event.set()
 
-    def _set_trickler_vibration(self, amplitude: float) -> None:
-        """Set trickler vibration servo amplitude (M42 P0). Amplitude 0 turns it off."""
-        self._machine.gcode(f"M42 P0 S{amplitude:.2f} F20000")
-
-    def _auto_recover_jam(self, vibration_amplitude: float, wait_seconds: float) -> None:
-        """First jam in a fill iteration: bump vibration and wait before retrying."""
-        logger.warning(
-            "[Jam] Powder jam detected - auto-recovery: vibration %.2f for %.0fs",
-            vibration_amplitude,
-            wait_seconds,
-        )
-        try:
-            self._set_trickler_vibration(vibration_amplitude)
-            self._machine.gcode("M400")
-        except Exception as e:
-            logger.warning("[Jam] Could not set recovery vibration: %s", e)
-        time.sleep(wait_seconds)
-        self._set_trickler_vibration(0.0)
-        logger.info("[Jam] Auto-recovery complete - resuming dispensing.")
-
-    def _handle_jam(self) -> None:
-        """Called when a jam requires operator clearance.
-
-        Stops vibration, fires the on_jam_detected callback (which
-        signals the UI), then blocks until clear_jam() is called by the
-        operator-facing REST endpoint.
-        """
-        try:
-            self._set_trickler_vibration(0.0)
-            self._machine.gcode("M400")
-        except Exception as e:
-            logger.warning("[Jam] Could not stop vibration: %s", e)
-
-        self._jam_resume_event.clear()
-        logger.warning("[Jam] Powder jam detected - waiting for operator clearance.")
-
-        if self._on_jam_detected is not None:
-            try:
-                self._on_jam_detected()
-            except Exception as e:
-                logger.warning("[Jam] on_jam_detected callback raised: %s", e)
-
-        self._jam_resume_event.wait()
-        logger.info("[Jam] Jam cleared by operator - resuming dispensing.")
-
-    def _recover_from_jam_stall(
-        self,
-        *,
-        jam_auto_recovered: bool,
-        recovery_vib_amp: float,
-        recovery_wait_seconds: float,
-    ) -> bool:
-        """Handle a detected jam stall. Returns updated jam_auto_recovered flag."""
-        if not jam_auto_recovered:
-            self._auto_recover_jam(recovery_vib_amp, recovery_wait_seconds)
-            return True
-        self._handle_jam()
-        return True
-
     # ===== POWDER FILL =====
 
     def execute_fill_powder(self, target_weight: float) -> bool:
@@ -1131,8 +1077,8 @@ class MovementExecutor:
         Uses stable weight reads in the fine phase and unstable reads in the
         coarse phase. Per-step EMAs (flow and yield, g/mm) drive adaptive step
         sizing and jam detection. The first jam in each fill attempt auto-recovers
-        via increased vibration; later jams block until
-        :meth:`clear_jam` is called.
+        by closing and reopening the chute cover, then increased vibration; later
+        jams block until :meth:`clear_jam` is called.
 
         Args:
             target_weight: Target powder mass in grams.
@@ -1145,199 +1091,20 @@ class MovementExecutor:
             (``trickler`` section). Final weight is stored on
             :attr:`last_fill_weight`.
         """
-        trickler = _system_config.get_active_trickler_profile()
-
-        flow_alpha = trickler.flow_ema_alpha
-        yield_alpha = trickler.yield_ema_alpha
-        jam_threshold = trickler.jam_yield_threshold
-        jam_iter_limit = trickler.jam_iter_threshold
-        jam_recovery_vib_amp = trickler.jam_auto_recovery_vibration_amplitude
-        jam_recovery_wait_seconds = trickler.jam_auto_recovery_wait_seconds
-        max_step = trickler.max_step_size_mm
-        min_step = trickler.min_step_size_mm
-        warmup_steps = trickler.warmup_steps
-        warmup_max_step = trickler.warmup_max_step_mm
-        coarse_pct = trickler.coarse_threshold_pct
-        finish_pct = trickler.finish_threshold_pct
-        coarse_tgt_steps = trickler.coarse_target_steps
-        coarse_feedrate = trickler.coarse_feedrate
-        fine_feedrate = trickler.fine_feedrate
-        coarse_vib_amp = trickler.coarse_vibration_amplitude
-        fine_vib_amp = trickler.fine_vibration_amplitude
-        max_dribble_step = trickler.max_dribble_step_mm
-
-        coarse_feedrate_str = f"F{coarse_feedrate}"
-        fine_feedrate_str = f"F{fine_feedrate}"
-        coarse_threshold = coarse_pct * target_weight
-        finish_threshold = finish_pct * target_weight
-
-        try:
-            self._machine.gcode("M400")  # ensure prior moves are complete
-            if not self.execute_open_powder_dispenser_cover():
-                raise RuntimeError("Failed to open powder dispenser cover servo")
-
-            self._scale.tare()
-            initial_weight = self._scale.get_weight(stable=True)
-            logger.info("[Fill] Initial weight after tare: %.4fg", initial_weight)
-            logger.info(
-                "[Fill] Target: %.4fg coarse: %.4fg finish: %.4fg",
-                target_weight,
-                coarse_threshold,
-                finish_threshold,
-            )
-
-            self._machine.gcode("G92 W0")  # reset trickler axis
-            self._machine.gcode("G91")  # relative positioning
-
-            current_vib_amp = coarse_vib_amp
-            self._set_trickler_vibration(current_vib_amp)
-
-            flow_ema = 0.0
-            yield_ema = 0.0
-            step_count = 0
-            stagnant_count = 0
-            motor_has_moved = False
-            threshold_crossed = False
-            jam_auto_recovered = False
-
-            while True:
-                if threshold_crossed:
-                    time.sleep(0.15)
-                    current_weight = self._scale.get_weight(stable=True)
-                    logger.debug("[FillTrace] stable sample: weight=%.4f", current_weight)
-                else:
-                    current_weight = self._scale.get_weight(stable=False)
-                    logger.debug("[FillTrace] unstable sample: weight=%.4f", current_weight)
-
-                if current_weight >= coarse_threshold:
-                    if not threshold_crossed:
-                        threshold_crossed = True
-                        current_vib_amp = fine_vib_amp
-                        logger.info(
-                            "[Fill] Coarse threshold crossed at %.4fg", current_weight
-                        )
-                        self._set_trickler_vibration(current_vib_amp)
-                        time.sleep(0.15)
-                        current_weight = self._scale.get_weight(stable=True)
-                        logger.debug(
-                            "[FillTrace] stable sample after coarse crossing: weight=%.4f",
-                            current_weight,
-                        )
-
-                    remaining = max(0.0, finish_threshold - current_weight)
-                    if yield_ema > 0 and remaining > 0:
-                        step_size = remaining / yield_ema
-                    else:
-                        step_size = min_step
-                    step_size = max(min_step, min(max_dribble_step, step_size))
-
-                    weight_before_step = current_weight
-                    # High-speed "flick" at fine_feedrate; vibration already running.
-                    self._machine.gcode(f"G1 W{step_size:.4f} {fine_feedrate_str}")
-                    self._machine.gcode("M400")
-                    motor_has_moved = True
-
-                    weight_after_step = self._scale.get_weight(stable=True)
-                    logger.debug(
-                        "[FillTrace] stable sample after fine step: weight=%.4f",
-                        weight_after_step,
-                    )
-                    weight_gained = max(0.0, weight_after_step - weight_before_step)
-                    step_yield = weight_gained / step_size
-
-                    flow_ema = flow_alpha * step_yield + (1 - flow_alpha) * flow_ema
-                    yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
-                    step_count += 1
-
-                    if flow_ema < jam_threshold:
-                        stagnant_count += 1
-                    else:
-                        stagnant_count = 0
-                    if stagnant_count >= jam_iter_limit:
-                        jam_auto_recovered = self._recover_from_jam_stall(
-                            jam_auto_recovered=jam_auto_recovered,
-                            recovery_vib_amp=jam_recovery_vib_amp,
-                            recovery_wait_seconds=jam_recovery_wait_seconds,
-                        )
-                        stagnant_count = 0
-                        flow_ema = 0.0
-                        yield_ema = 0.0
-                        self._set_trickler_vibration(current_vib_amp)
-                        continue
-
-                    current_weight = weight_after_step
-
-                    if current_weight >= finish_threshold:
-                        self._set_trickler_vibration(0.0)
-                        time.sleep(4)
-                        final_weight = self._scale.get_weight(stable=True)
-                        logger.info("[Fill] Stable confirmation: %.4fg", final_weight)
-                        if final_weight >= finish_threshold:
-                            logger.info("[Fill] Target reached: %.4fg", final_weight)
-                            self.last_fill_weight = final_weight
-                            break
-                        logger.info(
-                            "[Fill] Stable weight %.4fg below threshold, continuing...",
-                            final_weight,
-                        )
-                        self._set_trickler_vibration(current_vib_amp)
-
-                else:
-                    if step_count < warmup_steps or yield_ema == 0.0:
-                        progress = max(0.0, current_weight / coarse_threshold)
-                        step_size = max_step - (max_step - min_step) * progress
-                        step_size = min(
-                            step_size,
-                            warmup_max_step if step_count < warmup_steps else max_step,
-                        )
-                    else:
-                        target_remaining = coarse_threshold - current_weight
-                        step_size = target_remaining / (yield_ema * coarse_tgt_steps)
-                        step_size = max(min_step, min(max_step, step_size))
-
-                    weight_before_step = current_weight
-                    self._machine.gcode(f"G1 W{step_size:.4f} {coarse_feedrate_str}")
-                    self._machine.gcode("M400")
-                    motor_has_moved = True
-
-                    weight_after_step = self._scale.get_weight(stable=False)
-                    weight_gained = max(0.0, weight_after_step - weight_before_step)
-                    step_yield = weight_gained / step_size
-
-                    flow_ema = flow_alpha * step_yield + (1 - flow_alpha) * flow_ema
-                    yield_ema = yield_alpha * step_yield + (1 - yield_alpha) * yield_ema
-                    step_count += 1
-
-                    if motor_has_moved and step_count > warmup_steps:
-                        if flow_ema < jam_threshold:
-                            stagnant_count += 1
-                        else:
-                            stagnant_count = 0
-                        if stagnant_count >= jam_iter_limit:
-                            jam_auto_recovered = self._recover_from_jam_stall(
-                                jam_auto_recovered=jam_auto_recovered,
-                                recovery_vib_amp=jam_recovery_vib_amp,
-                                recovery_wait_seconds=jam_recovery_wait_seconds,
-                            )
-                            stagnant_count = 0
-                            flow_ema = 0.0
-                            yield_ema = 0.0
-                            self._set_trickler_vibration(current_vib_amp)
-                            continue
-
-            return True
-
-        except Exception as e:
-            logger.error("[Fill] Error filling mold with powder: %s", e)
+        if self._scale is None:
+            logger.error("[Fill] Scale not configured in MovementExecutor")
             return False
-        finally:
-            try:
-                self._set_trickler_vibration(0.0)
-                self._machine.gcode("G90")  # restore absolute positioning
-            except Exception:
-                pass
-            if not self.execute_close_powder_dispenser_cover():
-                logger.warning("Failed to close powder dispenser cover servo")
+        success, final_weight = TricklerExecutor.execute_fill_powder(
+            machine=self._machine,
+            scale=self._scale,
+            target_weight=target_weight,
+            jam_resume_event=self._jam_resume_event,
+            on_jam_detected=self._on_jam_detected,
+            open_cover=self.execute_open_powder_dispenser_cover,
+            close_cover=self.execute_close_powder_dispenser_cover,
+        )
+        self.last_fill_weight = final_weight
+        return success
 
     def execute_open_powder_dispenser_cover(self) -> bool:
         """Open the powder dispenser cover using configured servo channel/angle."""
