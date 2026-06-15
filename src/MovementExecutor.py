@@ -417,7 +417,7 @@ class MovementExecutor:
             saved_v = float(current_position.get("V"))
 
             # Move tamper until it is just outside mold
-            self._machine.move_to(v=2, s=feedrate)
+            self._machine.move_to(v=0, s=feedrate)
             self._machine.gcode(f"M208 V-{max_tamp_depth}:155")
 
             try:
